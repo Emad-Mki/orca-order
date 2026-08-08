@@ -1,0 +1,2 @@
+user_id,username,password_hash,salt,full_name,phone,role,customer_id,status,must_change_password,created_at,last_login
+USR-00001,Nsr.adm,,,نصر نصر وطفة,0947766076,admin,,active,yes,,
