@@ -11,6 +11,122 @@ import 'package:printing/printing.dart';
 import 'dart:typed_data';
 
 // --- النماذج (Models) ---
+class User {
+  final String username;
+  final String fullName;
+  final String role;
+  final bool isActive;
+  final String? customerId;
+
+  User({
+    required this.username,
+    required this.fullName,
+    required this.role,
+    this.isActive = true,
+    this.customerId,
+  });
+
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      username: json['username'] ?? '',
+      fullName: json['full_name'] ?? '',
+      role: json['role'] ?? 'customer',
+      isActive: json['is_active'] == true || json['is_active'] == '1',
+      customerId: json['customer_id'],
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'username': username,
+        'full_name': fullName,
+        'role': role,
+        'is_active': isActive ? '1' : '0',
+        'customer_id': customerId,
+      };
+}
+
+class AuditLogEntry {
+  final int id;
+  final String username;
+  final String action;
+  final String entityType;
+  final String entityId;
+  final Map<String, dynamic> oldValues;
+  final Map<String, dynamic> newValues;
+  final DateTime timestamp;
+  final String ipAddress;
+
+  AuditLogEntry({
+    required this.id,
+    required this.username,
+    required this.action,
+    required this.entityType,
+    required this.entityId,
+    this.oldValues = const {},
+    this.newValues = const {},
+    required this.timestamp,
+    this.ipAddress = '',
+  });
+
+  factory AuditLogEntry.fromJson(Map<String, dynamic> json) {
+    return AuditLogEntry(
+      id: json['id'] ?? 0,
+      username: json['username'] ?? '',
+      action: json['action'] ?? '',
+      entityType: json['entity_type'] ?? '',
+      entityId: json['entity_id'] ?? '',
+      oldValues: json['old_values'] != null ? Map<String, dynamic>.from(json['old_values']) : {},
+      newValues: json['new_values'] != null ? Map<String, dynamic>.from(json['new_values']) : {},
+      timestamp: json['timestamp'] != null 
+          ? (json['timestamp'] is DateTime ? json['timestamp'] : DateTime.parse(json['timestamp']))
+          : DateTime.now(),
+      ipAddress: json['ip_address'] ?? '',
+    );
+  }
+}
+
+class SystemSettings {
+  String companyNameAr;
+  String companyNameEn;
+  String logoUrl;
+  String defaultCurrency;
+  double creditLimit;
+  double lowStockThreshold;
+  String invoiceNumberFormat;
+
+  SystemSettings({
+    this.companyNameAr = 'أوركا أوردر',
+    this.companyNameEn = 'ORCA ORDER',
+    this.logoUrl = '',
+    this.defaultCurrency = 'USD',
+    this.creditLimit = 0,
+    this.lowStockThreshold = 10,
+    this.invoiceNumberFormat = 'INV-{YYYY}-{####}',
+  });
+
+  factory SystemSettings.fromJson(Map<String, dynamic> json) {
+    return SystemSettings(
+      companyNameAr: json['company_name_ar'] ?? 'أوركا أوردر',
+      companyNameEn: json['company_name_en'] ?? 'ORCA ORDER',
+      logoUrl: json['logo_url'] ?? '',
+      defaultCurrency: json['default_currency'] ?? 'USD',
+      creditLimit: (json['credit_limit'] ?? 0).toDouble(),
+      lowStockThreshold: (json['low_stock_threshold'] ?? 10).toDouble(),
+      invoiceNumberFormat: json['invoice_number_format'] ?? 'INV-{YYYY}-{####}',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'company_name_ar': companyNameAr,
+        'company_name_en': companyNameEn,
+        'logo_url': logoUrl,
+        'default_currency': defaultCurrency,
+        'credit_limit': creditLimit,
+        'low_stock_threshold': lowStockThreshold,
+        'invoice_number_format': invoiceNumberFormat,
+      };
+}
+
 class Product {
   final String code;
   final String name;
@@ -363,32 +479,63 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<NavItem> _getNavItemsForRole(String role) {
-    final List<NavItem> items = [
-      NavItem('الرئيسية', Icons.home_outlined, const DashboardScreen()),
-      NavItem('المنتجات', Icons.inventory_2_outlined, const ProductsScreen()),
-      NavItem('الطلبات', Icons.shopping_cart_outlined, OrdersScreen(session: widget.session)),
-    ];
+    final List<NavItem> items = [];
+    
+    // العناصر الأساسية لكل الأدوار
+    items.add(NavItem('الرئيسية', Icons.home_outlined, DashboardScreen(session: widget.session)));
+    
+    // المحاسب والعميل والمدير لهم منتجات وطلبات
+    if (role == 'admin' || role == 'accountant' || role == 'customer') {
+      items.add(NavItem('المنتجات', Icons.inventory_2_outlined, const ProductsScreen()));
+      items.add(NavItem('الطلبات', Icons.shopping_cart_outlined, OrdersScreen(session: widget.session)));
+    }
 
+    // الإشعارات للجميع
     items.add(NavItem('الإشعارات', Icons.notifications_none_outlined, const NotificationsScreen()));
 
+    // عناصر خاصة بالمحاسب والمدير
     if (role == 'admin' || role == 'accountant') {
       items.addAll([
-        NavItem('العملاء', Icons.people_outline, const CustomersScreen()),
+        NavItem('قائمة الطلبات الجديدة', Icons.playlist_add_check_outlined, NewOrdersListScreen(session: widget.session)),
+        NavItem('تسعير الطلبات', Icons.calculate_outlined, PricingQueueScreen(session: widget.session)),
+        NavItem('الفواتير بانتظار الاعتماد', Icons.verified_user_outlined, PendingApprovalScreen(session: widget.session)),
+        NavItem('العملاء', Icons.people_outline, CustomersScreen()),
         NavItem('كشف حساب', Icons.account_balance_outlined, const CustomerStatementScreen()),
-        NavItem('الدفعات', Icons.payments_outlined, const PaymentsScreen()),
-        NavItem('الشحن', Icons.local_shipping_outlined, const ShippingScreen()),
+        NavItem('الدفعات', Icons.payments_outlined, PaymentsScreen()),
+        NavItem('الشحن', Icons.local_shipping_outlined, ShippingScreen()),
+        NavItem('استيراد من Excel', Icons.import_export_outlined, ImportExportScreen(session: widget.session)),
       ]);
     }
+    
+    // عناصر خاصة بالمخزن والمدير
     if (role == 'admin' || role == 'warehouse') {
       items.add(NavItem('المخزون', Icons.warehouse_outlined, const InventoryScreen()));
+      items.add(NavItem('أوامر التجهيز', Icons.assignment_outlined, PreparationOrdersScreen(session: widget.session)));
     }
+    
+    // عناصر خاصة بالعميل
     if (role == 'customer') {
       items.add(NavItem('كشف حسابي', Icons.account_balance_outlined, const CustomerStatementScreen()));
     }
-    if (role == 'admin') {
-      items.add(NavItem('التقارير', Icons.analytics_outlined, const ReportsScreen()));
+    
+    // التقارير للمدير والمحاسب
+    if (role == 'admin' || role == 'accountant') {
+      items.add(NavItem('التقارير', Icons.analytics_outlined, ReportsScreen(session: widget.session)));
     }
+    
+    // عناصر خاصة بالمدير فقط
+    if (role == 'admin') {
+      items.addAll([
+        NavItem('إدارة المستخدمين', Icons.manage_accounts_outlined, UserManagementScreen(session: widget.session)),
+        NavItem('إعدادات النظام', Icons.settings_suggest_outlined, SystemSettingsScreen(session: widget.session)),
+        NavItem('سجل التدقيق', Icons.history_edu_outlined, AuditLogScreen(session: widget.session)),
+        NavItem('النسخ الاحتياطي', Icons.backup_outlined, BackupSettingsScreen(session: widget.session)),
+      ]);
+    }
+    
+    // الإعدادات والملف الشخصي للجميع
     items.add(NavItem('الإعدادات', Icons.settings_outlined, const SettingsScreen()));
+    
     return items;
   }
 
@@ -611,7 +758,8 @@ class NavItem {
 // --- الشاشات ---
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final Map<String, dynamic> session;
+  const DashboardScreen({super.key, required this.session});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -631,10 +779,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _fetchDashboardData() async {
     setState(() => _isLoading = true);
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
       final params = {
-        'username': session?['username'],
-        'token': session?['token'],
+        'username': widget.session['username'],
+        'token': widget.session['token'],
       };
 
       final statsData = await ApiService().post({'action': 'getDashboardStats', ...params});
@@ -767,8 +914,14 @@ class ProductsScreen extends StatefulWidget {
 
 class _ProductsScreenState extends State<ProductsScreen> {
   List<Product> _products = [];
+  List<Product> _filteredProducts = [];
   bool _isLoading = true;
-
+  String _searchQuery = '';
+  String _selectedCategory = 'الكل';
+  String _selectedOrigin = 'الكل';
+  Set<String> _categories = {'الكل'};
+  Set<String> _origins = {'الكل'};
+  
   @override
   void initState() {
     super.initState();
@@ -782,6 +935,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
       if (mounted) {
         setState(() {
           _products = (list as List).map((p) => Product.fromJson(p)).toList();
+          _extractFilters();
+          _applyFilters();
           _isLoading = false;
         });
       }
@@ -790,21 +945,42 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
-  void _importDummyData() async {
-    final dummy = [
-      {'code': 'P001', 'name': 'محرك 10 حصان', 'group': 'محركات', 'price': 150.0},
-      {'code': 'P002', 'name': 'مضخة مياه 2 انش', 'group': 'مضخات', 'price': 85.0},
-    ];
-    try {
-      setState(() => _isLoading = true);
-      await ApiService().post({
-        'action': 'importProducts',
-        'products': dummy,
-      });
-      _fetchProducts();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+  void _extractFilters() {
+    _categories = {'الكل'};
+    _origins = {'الكل'};
+    for (var p in _products) {
+      _categories.add(p.category);
+      _origins.add(p.origin);
     }
+  }
+
+  void _applyFilters() {
+    setState(() {
+      _filteredProducts = _products.where((p) {
+        final matchesSearch = _searchQuery.isEmpty || 
+            p.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+            p.code.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+            p.category.toLowerCase().contains(_searchQuery.toLowerCase());
+        final matchesCategory = _selectedCategory == 'الكل' || p.category == _selectedCategory;
+        final matchesOrigin = _selectedOrigin == 'الكل' || p.origin == _selectedOrigin;
+        return matchesSearch && matchesCategory && matchesOrigin;
+      }).toList();
+    });
+  }
+
+  void _showProductDetails(Product product) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
+    );
+  }
+
+  void _addToCart(Product product) {
+    // إرسال حدث إضافة للسلة
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product, addToCart: true)),
+    );
   }
 
   @override
@@ -1885,7 +2061,12 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
   Future<void> _fetchCustomers() async {
     try {
-      final data = await ApiService().post({'action': 'getCustomers'});
+      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final data = await ApiService().post({
+        'action': 'getCustomers',
+        'username': session?['username'],
+        'token': session?['token'],
+      });
       if (mounted) {
         setState(() {
           _customers = data['customers'] ?? [];
@@ -2116,7 +2297,12 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
 
   Future<void> _fetchPayments() async {
     try {
-      final data = await ApiService().post({'action': 'getPayments'});
+      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final data = await ApiService().post({
+        'action': 'getPayments',
+        'username': session?['username'],
+        'token': session?['token'],
+      });
       if (mounted) {
         setState(() {
           _payments = data['payments'] ?? [];
@@ -2168,7 +2354,12 @@ class _ShippingScreenState extends State<ShippingScreen> {
   Future<void> _fetchShipments() async {
     setState(() => _isLoading = true);
     try {
-      final data = await ApiService().post({'action': 'getShipments'});
+      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final data = await ApiService().post({
+        'action': 'getShipments',
+        'username': session?['username'],
+        'token': session?['token'],
+      });
       if (mounted) {
         setState(() {
           _shipments = data['shipments'] ?? [];
@@ -2458,7 +2649,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 }
 class ReportsScreen extends StatefulWidget {
-  const ReportsScreen({super.key});
+  final Map<String, dynamic> session;
+  const ReportsScreen({super.key, required this.session});
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
@@ -2477,11 +2669,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Future<void> _fetchReports() async {
     setState(() => _isLoading = true);
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
       final data = await ApiService().post({
         'action': 'getReports',
-        'username': session?['username'],
-        'token': session?['token'],
+        'username': widget.session['username'],
+        'token': widget.session['token'],
       });
       if (mounted) {
         setState(() {
@@ -3047,6 +3238,651 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ============================================================
+// شاشات المدير (Admin Screens)
+// ============================================================
+
+// --- إدارة المستخدمين ---
+class UserManagementScreen extends StatefulWidget {
+  final Map<String, dynamic> session;
+  const UserManagementScreen({super.key, required this.session});
+  
+  @override
+  State<UserManagementScreen> createState() => _UserManagementScreenState();
+}
+
+class _UserManagementScreenState extends State<UserManagementScreen> {
+  List<dynamic> _users = [];
+  bool _isLoading = true;
+  String _filterRole = 'all';
+  
+  @override
+  void initState() {
+    super.initState();
+    _fetchUsers();
+  }
+  
+  Future<void> _fetchUsers() async {
+    setState(() => _isLoading = true);
+    try {
+      final data = await ApiService().post({
+        'action': 'getUsers',
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+      if (mounted) {
+        setState(() {
+          _users = data['users'] ?? [];
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+  
+  void _showUserDialog([dynamic user]) {
+    final nameCtrl = TextEditingController(text: user?['full_name'] ?? '');
+    final usernameCtrl = TextEditingController(text: user?['username'] ?? '');
+    final phoneCtrl = TextEditingController(text: user?['phone'] ?? '');
+    final passCtrl = TextEditingController();
+    String selectedRole = user?['role'] ?? 'customer';
+    bool isActive = user?['is_active'] == true || user?['is_active'] == '1';
+    
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(user == null ? 'إضافة مستخدم جديد' : 'تعديل المستخدم'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'اسم المستخدم', border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'الاسم الكامل', border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'الهاتف', border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              if (user == null)
+                TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'كلمة المرور الأولية', border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedRole,
+                decoration: const InputDecoration(labelText: 'الدور', border: OutlineInputBorder()),
+                items: ['admin', 'accountant', 'warehouse', 'customer'].map((r) => DropdownMenuItem(value: r, child: Text(_getRoleName(r)))).toList(),
+                onChanged: (v) => selectedRole = v!,
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                title: const Text('نشط'),
+                value: isActive,
+                onChanged: (v) => setState(() => isActive = v),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () async {
+              try {
+                await ApiService().post({
+                  'action': user == null ? 'createUser' : 'updateUser',
+                  'username': usernameCtrl.text.trim(),
+                  'full_name': nameCtrl.text.trim(),
+                  'phone': phoneCtrl.text.trim(),
+                  'role': selectedRole,
+                  'is_active': isActive ? '1' : '0',
+                  if (user == null && passCtrl.text.isNotEmpty) 'password': passCtrl.text,
+                  'target_username': user?['username'],
+                  'username': widget.session['username'],
+                  'token': widget.session['token'],
+                });
+                if (mounted) {
+                  Navigator.pop(context);
+                  _fetchUsers();
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم الحفظ بنجاح')));
+                }
+              } catch (e) {
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  String _getRoleName(String role) {
+    switch (role) {
+      case 'admin': return 'مدير';
+      case 'accountant': return 'محاسب';
+      case 'warehouse': return 'مستودع';
+      case 'customer': return 'عميل';
+      default: return role;
+    }
+  }
+  
+  void _resetPassword(String username) async {
+    final newPass = DateTime.now().millisecondsSinceEpoch.toString().substring(5, 11);
+    try {
+      await ApiService().post({
+        'action': 'resetPassword',
+        'target_username': username,
+        'new_password': newPass,
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('تم إعادة تعيين كلمة المرور'),
+            content: Text('كلمة المرور الجديدة: $newPass\n\nيرجى إبلاغ المستخدم بها وتغييرها عند أول دخول'),
+            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('موافق'))],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    
+    final filteredUsers = _filterRole == 'all' 
+        ? _users 
+        : _users.where((u) => u['role'] == _filterRole).toList();
+    
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              const Text('تصفية حسب الدور: '),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButton<String>(
+                  value: _filterRole,
+                  isExpanded: true,
+                  items: [('all', 'الكل'), ('admin', 'مدير'), ('accountant', 'محاسب'), ('warehouse', 'مستودع'), ('customer', 'عميل')]
+                      .map((e) => DropdownMenuItem(value: e.$1, child: Text(e.$2))).toList(),
+                  onChanged: (v) => setState(() => _filterRole = v!),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: filteredUsers.length,
+            itemBuilder: (_, i) {
+              final u = filteredUsers[i];
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: u['is_active'] == true || u['is_active'] == '1' ? Colors.green : Colors.grey,
+                    child: Icon(Icons.person, color: Colors.white),
+                  ),
+                  title: Text(u['full_name'] ?? ''),
+                  subtitle: Text('${u['username']} - ${_getRoleName(u['role'])}'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(icon: const Icon(Icons.edit), onPressed: () => _showUserDialog(u)),
+                      IconButton(icon: const Icon(Icons.lock_reset), onPressed: () => _resetPassword(u['username'])),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// --- إعدادات النظام ---
+class SystemSettingsScreen extends StatefulWidget {
+  final Map<String, dynamic> session;
+  const SystemSettingsScreen({super.key, required this.session});
+  
+  @override
+  State<SystemSettingsScreen> createState() => _SystemSettingsScreenState();
+}
+
+class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
+  final _companyArCtrl = TextEditingController();
+  final _companyEnCtrl = TextEditingController();
+  final _logoUrlCtrl = TextEditingController();
+  final _creditLimitCtrl = TextEditingController();
+  final _lowStockCtrl = TextEditingController();
+  final _invoiceFormatCtrl = TextEditingController();
+  String _defaultCurrency = 'USD';
+  bool _isLoading = true;
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+  
+  Future<void> _loadSettings() async {
+    setState(() => _isLoading = true);
+    try {
+      final data = await ApiService().post({
+        'action': 'getSystemSettings',
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+      if (mounted) {
+        final settings = data['settings'] ?? {};
+        setState(() {
+          _companyArCtrl.text = settings['company_name_ar'] ?? 'أوركا أوردر';
+          _companyEnCtrl.text = settings['company_name_en'] ?? 'ORCA ORDER';
+          _logoUrlCtrl.text = settings['logo_url'] ?? '';
+          _defaultCurrency = settings['default_currency'] ?? 'USD';
+          _creditLimitCtrl.text = (settings['credit_limit'] ?? 0).toString();
+          _lowStockCtrl.text = (settings['low_stock_threshold'] ?? 10).toString();
+          _invoiceFormatCtrl.text = settings['invoice_number_format'] ?? 'INV-{YYYY}-{####}';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+  
+  void _saveSettings() async {
+    setState(() => _isLoading = true);
+    try {
+      await ApiService().post({
+        'action': 'saveSystemSettings',
+        'company_name_ar': _companyArCtrl.text.trim(),
+        'company_name_en': _companyEnCtrl.text.trim(),
+        'logo_url': _logoUrlCtrl.text.trim(),
+        'default_currency': _defaultCurrency,
+        'credit_limit': double.tryParse(_creditLimitCtrl.text) ?? 0,
+        'low_stock_threshold': double.tryParse(_lowStockCtrl.text) ?? 10,
+        'invoice_number_format': _invoiceFormatCtrl.text.trim(),
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الإعدادات بنجاح')));
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        TextField(controller: _companyArCtrl, decoration: const InputDecoration(labelText: 'اسم الشركة (عربي)', border: OutlineInputBorder())),
+        const SizedBox(height: 16),
+        TextField(controller: _companyEnCtrl, decoration: const InputDecoration(labelText: 'اسم الشركة (إنكليزي)', border: OutlineInputBorder())),
+        const SizedBox(height: 16),
+        TextField(controller: _logoUrlCtrl, decoration: const InputDecoration(labelText: 'رابط الشعار (URL)', border: OutlineInputBorder(), helperText: 'رابط صورة من Google Drive أو أي مصدر آخر')),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<String>(
+          value: _defaultCurrency,
+          decoration: const InputDecoration(labelText: 'العملة الافتراضية', border: OutlineInputBorder()),
+          items: ['USD', 'SYP'].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+          onChanged: (v) => setState(() => _defaultCurrency = v!),
+        ),
+        const SizedBox(height: 16),
+        TextField(controller: _creditLimitCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'حد الرصيد المسموح للعميل', border: OutlineInputBorder(), helperText: 'عند تجاوزه يتم إيقاف البيع')),
+        const SizedBox(height: 16),
+        TextField(controller: _lowStockCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'حد تنبيه نقص المخزون', border: OutlineInputBorder())),
+        const SizedBox(height: 16),
+        TextField(controller: _invoiceFormatCtrl, decoration: const InputDecoration(labelText: 'تنسيق أرقام الفواتير', border: OutlineInputBorder(), helperText: 'مثال: INV-{YYYY}-{####}')),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: FilledButton.icon(
+            onPressed: _isLoading ? null : _saveSettings,
+            icon: const Icon(Icons.save),
+            label: const Text('حفظ الإعدادات'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// --- سجل التدقيق (Audit Log) ---
+class AuditLogScreen extends StatefulWidget {
+  final Map<String, dynamic> session;
+  const AuditLogScreen({super.key, required this.session});
+  
+  @override
+  State<AuditLogScreen> createState() => _AuditLogScreenState();
+}
+
+class _AuditLogScreenState extends State<AuditLogScreen> {
+  List<dynamic> _logs = [];
+  bool _isLoading = true;
+  String _filterUser = 'all';
+  String _filterEntity = 'all';
+  DateTime? _startDate;
+  DateTime? _endDate;
+  
+  @override
+  void initState() {
+    super.initState();
+    _fetchLogs();
+  }
+  
+  Future<void> _fetchLogs() async {
+    setState(() => _isLoading = true);
+    try {
+      final data = await ApiService().post({
+        'action': 'getAuditLog',
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+        if (_filterUser != 'all') 'filter_user': _filterUser,
+        if (_filterEntity != 'all') 'filter_entity': _filterEntity,
+        if (_startDate != null) 'start_date': _startDate!.toIso8601String().split('T')[0],
+        if (_endDate != null) 'end_date': _endDate!.toIso8601String().split('T')[0],
+      });
+      if (mounted) {
+        setState(() {
+          _logs = data['logs'] ?? [];
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+  
+  Future<void> _selectDate(bool isStart) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        if (isStart) _startDate = picked;
+        else _endDate = picked;
+      });
+      _fetchLogs();
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              DropdownButton<String>(
+                value: _filterUser,
+                hint: const Text('المستخدم'),
+                items: [('all', 'الكل'), ('admin', 'مدير'), ('accountant', 'محاسب'), ('warehouse', 'مستودع')]
+                    .map((e) => DropdownMenuItem(value: e.$1, child: Text(e.$2))).toList(),
+                onChanged: (v) => setState(() { _filterUser = v!; _fetchLogs(); }),
+              ),
+              DropdownButton<String>(
+                value: _filterEntity,
+                hint: const Text('الكيان'),
+                items: [('all', 'الكل'), ('product', 'منتج'), ('invoice', 'فاتورة'), ('customer', 'عميل'), ('user', 'مستخدم'), ('payment', 'دفعة')]
+                    .map((e) => DropdownMenuItem(value: e.$1, child: Text(e.$2))).toList(),
+                onChanged: (v) => setState(() { _filterEntity = v!; _fetchLogs(); }),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.calendar_today),
+                label: Text(_startDate != null ? _startDate!.toIso8601String().split('T')[0] : 'من تاريخ'),
+                onPressed: () => _selectDate(true),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.calendar_today),
+                label: Text(_endDate != null ? _endDate!.toIso8601String().split('T')[0] : 'إلى تاريخ'),
+                onPressed: () => _selectDate(false),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('تحديث'),
+                onPressed: _fetchLogs,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _logs.length,
+            itemBuilder: (_, i) {
+              final log = _logs[i];
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: ExpansionTile(
+                  leading: Icon(_getActionIcon(log['action']), color: Colors.blue),
+                  title: Text('${log['username']} - ${log['action']}'),
+                  subtitle: Text('${log['entity_type']}: ${log['entity_id']}'),
+                  trailing: Text(_formatDate(log['timestamp']), style: const TextStyle(fontSize: 12)),
+                  children: [
+                    if (log['old_values'] != null && (log['old_values'] as Map).isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('القيم السابقة:', style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text(log['old_values'].toString()),
+                          ],
+                        ),
+                      ),
+                    if (log['new_values'] != null && (log['new_values'] as Map).isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('القيم الجديدة:', style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text(log['new_values'].toString()),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+  
+  IconData _getActionIcon(String action) {
+    if (action.contains('create') || action.contains('إضافة')) return Icons.add_circle;
+    if (action.contains('update') || action.contains('تعديل')) return Icons.edit;
+    if (action.contains('delete') || action.contains('حذف')) return Icons.delete;
+    return Icons.history;
+  }
+  
+  String _formatDate(dynamic timestamp) {
+    if (timestamp == null) return '';
+    DateTime dt;
+    if (timestamp is DateTime) {
+      dt = timestamp;
+    } else if (timestamp is String) {
+      dt = DateTime.parse(timestamp);
+    } else {
+      return timestamp.toString();
+    }
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+// --- إعدادات النسخ الاحتياطي ---
+class BackupSettingsScreen extends StatefulWidget {
+  final Map<String, dynamic> session;
+  const BackupSettingsScreen({super.key, required this.session});
+  
+  @override
+  State<BackupSettingsScreen> createState() => _BackupSettingsScreenState();
+}
+
+class _BackupSettingsScreenState extends State<BackupSettingsScreen> {
+  bool _isBackingUp = false;
+  String _lastBackupDate = 'غير متوفر';
+  
+  @override
+  void initState() {
+    super.initState();
+    _getLastBackupDate();
+  }
+  
+  Future<void> _getLastBackupDate() async {
+    try {
+      final data = await ApiService().post({
+        'action': 'getLastBackupDate',
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+      if (mounted) {
+        setState(() {
+          _lastBackupDate = data['last_backup_date'] ?? 'غير متوفر';
+        });
+      }
+    } catch (e) {
+      // تجاهل الخطأ
+    }
+  }
+  
+  Future<void> _createBackup() async {
+    setState(() => _isBackingUp = true);
+    try {
+      final data = await ApiService().post({
+        'action': 'createBackup',
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إنشاء النسخة الاحتياطية بنجاح')));
+        _getLastBackupDate();
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    } finally {
+      if (mounted) setState(() => _isBackingUp = false);
+    }
+  }
+  
+  Future<void> _exportData(String entityType) async {
+    try {
+      final data = await ApiService().post({
+        'action': 'exportToCsv',
+        'entity_type': entityType,
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+      if (mounted) {
+        final csvContent = data['csv_content'] ?? '';
+        // عرض محتوى CSV أو تحميله
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: Text('تصدير $entityType'),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 300,
+              child: SingleChildScrollView(
+                child: SelectableText(csvContent, style: const TextStyle(fontFamily: 'monospace', fontSize: 10)),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('إغلاق')),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('آخر نسخة احتياطية', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(_lastBackupDate, style: const TextStyle(fontSize: 18, color: Colors.blue)),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton.icon(
+                    onPressed: _isBackingUp ? null : _createBackup,
+                    icon: _isBackingUp ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.backup),
+                    label: Text(_isBackingUp ? 'جاري الإنشاء...' : 'إنشاء نسخة احتياطية الآن'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('تصدير البيانات كـ CSV', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        ListTile(
+          leading: const Icon(Icons.people),
+          title: const Text('تصدير العملاء'),
+          trailing: const Icon(Icons.download),
+          onTap: () => _exportData('customers'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.inventory),
+          title: const Text('تصدير المنتجات'),
+          trailing: const Icon(Icons.download),
+          onTap: () => _exportData('products'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.receipt),
+          title: const Text('تصدير الفواتير'),
+          trailing: const Icon(Icons.download),
+          onTap: () => _exportData('invoices'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.payments),
+          title: const Text('تصدير الدفعات'),
+          trailing: const Icon(Icons.download),
+          onTap: () => _exportData('payments'),
+        ),
+      ],
     );
   }
 }
