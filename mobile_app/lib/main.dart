@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io';
 import 'package:fl_chart/fl_chart.dart';
 import 'app_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,7 +10,10 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'dart:typed_data';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 // --- النماذج (Models) ---
 class User {
@@ -224,12 +228,92 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
-  Future<Map<String, dynamic>> post(Map<String, dynamic> body) async {
+  // Cache manager for product images and data
+  static final CacheManager _cacheManager = CacheManager(
+    Config(
+      'orca_product_cache',
+      stalePeriod: const Duration(days: 7),
+      maxNrOfCacheObjects: 1000,
+      repo: JsonCacheInfoRepository(databaseName: 'orca_product_cache'),
+      fileService: HttpFileService(),
+    ),
+  );
+
+  /// Check if device is online
+  Future<bool> isOnline() async {
+    try {
+      final connectivityResult = await Connectivity().checkConnectivity();
+      return !connectivityResult.contains(ConnectivityResult.none);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Get cached products from local storage
+  Future<List<Map<String, dynamic>>> getCachedProducts() async {
+    try {
+      final file = await _cacheManager.getFileFromCache('products_cache.json');
+      if (file != null) {
+        final content = await file.file.readAsString();
+        final data = jsonDecode(content) as Map<String, dynamic>;
+        return List<Map<String, dynamic>>.from(data['products'] ?? []);
+      }
+    } catch (e) {
+      print('Error reading cached products: $e');
+    }
+    return [];
+  }
+
+  /// Save products to cache
+  Future<void> cacheProducts(List<Map<String, dynamic>> products) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final cacheFile = File('${tempDir.path}/products_cache.json');
+      await cacheFile.writeAsString(jsonEncode({'products': products, 'timestamp': DateTime.now().toIso8601String()}));
+      await _cacheManager.putFile('products_cache.json', cacheFile);
+    } catch (e) {
+      print('Error caching products: $e');
+    }
+  }
+
+  /// Get last cache timestamp
+  Future<DateTime?> getLastCacheTimestamp() async {
+    try {
+      final file = await _cacheManager.getFileFromCache('products_cache.json');
+      if (file != null) {
+        final content = await file.file.readAsString();
+        final data = jsonDecode(content) as Map<String, dynamic>;
+        if (data['timestamp'] != null) {
+          return DateTime.parse(data['timestamp']);
+        }
+      }
+    } catch (e) {
+      print('Error reading cache timestamp: $e');
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> post(Map<String, dynamic> body, {bool useCache = true, bool forceRefresh = false}) async {
     // تنظيف الرابط من أي مسافات زائدة قد تسبب خطأ SocketException
     final String cleanUrl = AppConfig.apiUrl.trim().replaceAll(' ', '');
     
     if (cleanUrl.isEmpty || cleanUrl.contains('PASTE_')) {
       throw Exception('الرجاء ضبط رابط API في ملف app_config.dart');
+    }
+
+    // Check for offline mode and try to use cache for getProducts
+    final bool online = await isOnline();
+    if (!online && useCache && body['action'] == 'getProducts') {
+      final cachedProducts = await getCachedProducts();
+      if (cachedProducts.isNotEmpty) {
+        return {'ok': true, 'products': cachedProducts, 'cached': true};
+      } else {
+        throw Exception('لا يوجد اتصال بالإنترنت ولا توجد بيانات مخزنة محلياً');
+      }
+    }
+
+    if (!online) {
+      throw Exception('لا يوجد اتصال بالإنترنت');
     }
 
     try {
@@ -272,6 +356,14 @@ class ApiService {
 
       final dynamic data = jsonDecode(bodyText);
       bool isOk = data['ok'] == true || data['success'] == true;
+      
+      // Cache products if this is a getProducts action
+      if (useCache && body['action'] == 'getProducts' && isOk) {
+        var products = data['products'] ?? data['data'] ?? data['items'] ?? data['result'];
+        if (products is List) {
+          await cacheProducts(List<Map<String, dynamic>>.from(products));
+        }
+      }
       
       if (!isOk) {
         throw Exception(data['error'] ?? data['message'] ?? 'حدث خطأ في الخادم');
@@ -974,6 +1066,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     try {
       final data = await ApiService().post({'action': 'getProducts'});
       var list = data['products'] ?? data['data'] ?? data['items'] ?? data['result'];
+      final isCached = data['cached'] == true;
       if (mounted) {
         setState(() {
           _products = (list as List).map((p) => Product.fromJson(p)).toList();
@@ -981,6 +1074,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
           _applyFilters();
           _isLoading = false;
         });
+        // Show notification if using cached data
+        if (isCached) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('عرض البيانات المخزنة محلياً (وضع عدم الاتصال)'), backgroundColor: Colors.orange, duration: Duration(seconds: 2)),
+          );
+        }
       }
     } catch (e) {
       if (mounted) setState(() => _isLoading = false);
