@@ -200,6 +200,7 @@ class OrderItem {
   String? selectedUnit;
 
   OrderItem({required this.product, this.quantity = 1.0, this.note, this.selectedUnit});
+  OrderItem({required this.product, this.quantity = 1, this.note, this.selectedUnit});
 
   double get total => (product.price ?? 0) * quantity;
 
@@ -209,6 +210,7 @@ class OrderItem {
         'quantity': quantity,
         'unit': selectedUnit ?? product.unit,
         'price': product.price ?? 0,
+        'price': product.price,
         'note': note ?? '',
         'total': total,
       };
