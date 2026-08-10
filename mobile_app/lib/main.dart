@@ -142,6 +142,7 @@ class Product {
   final int stock;
   final String? description;
   final List<String>? units;
+  final String? uomName;
 
   Product({
     required this.code,
@@ -157,6 +158,7 @@ class Product {
     this.stock = 0,
     this.description,
     this.units,
+    this.uomName,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -189,6 +191,7 @@ class Product {
       stock: json['stock_available'] ?? json['stock'] ?? 0,
       description: json['description'],
       units: unitsList,
+      uomName: json['uomName']?.toString(),
     );
   }
 }
@@ -200,7 +203,6 @@ class OrderItem {
   String? selectedUnit;
 
   OrderItem({required this.product, this.quantity = 1.0, this.note, this.selectedUnit});
-  OrderItem({required this.product, this.quantity = 1, this.note, this.selectedUnit});
 
   double get total => (product.price ?? 0) * quantity;
 
@@ -1129,7 +1131,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     : const Icon(Icons.info_outline, color: Colors.orange),
                   isThreeLine: true,
                   onTap: () => _showProductDetails(p),
-                  onLongPress: () => _addToCart(p),
+                  onLongPress: () => _addToCartFromGrid(p),
                 ),
               );
             },
@@ -1139,7 +1141,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
   }
 
-  void _addToCart(Product product) {
+  void _addToCartFromGrid(Product product) {
     // إضافة سريعة للسلة عند الضغط المطول
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -4372,6 +4374,45 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     super.dispose();
   }
   
+  Widget _buildProductImage(Product product, {double? size, double? height}) {
+    final imageUrl = product.imageUrl != null && product.imageUrl!.isNotEmpty
+        ? (product.imageUrl!.startsWith('http') 
+            ? product.imageUrl! 
+            : 'https://drive.google.com/thumbnail?id=${product.imageUrl!}&sz=w${size != null ? size.toInt() : 400}')
+        : null;
+    
+    if (imageUrl == null) {
+      return Container(
+        width: size,
+        height: height ?? size,
+        color: Colors.grey[300],
+        child: const Icon(Icons.image, size: 50, color: Colors.grey),
+      );
+    }
+    
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: CachedNetworkImage(
+        imageUrl: imageUrl,
+        width: size,
+        height: height ?? size,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => Container(
+          width: size,
+          height: height ?? size,
+          color: Colors.grey[200],
+          child: const Center(child: CircularProgressIndicator()),
+        ),
+        errorWidget: (context, url, error) => Container(
+          width: size,
+          height: height ?? size,
+          color: Colors.grey[300],
+          child: const Icon(Icons.broken_image, size: 50, color: Colors.grey),
+        ),
+      ),
+    );
+  }
+  
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -4398,11 +4439,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   context: context,
                   builder: (_) => Dialog(
                     backgroundColor: Colors.transparent,
-                    child: ImageUtils.getProductImage(widget.product, size: 400),
+                    child: _buildProductImage(widget.product, size: 400),
                   ),
                 );
               },
-              child: ImageUtils.getProductImage(widget.product, height: 300),
+              child: _buildProductImage(widget.product, height: 300),
             ),
             Padding(
               padding: const EdgeInsets.all(16.0),
