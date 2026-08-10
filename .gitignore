@@ -1,8 +1,15 @@
 ```
-# Build artifacts
-build/
+# Dart/Flutter build artifacts
 .dart_tool/
+.build/
+build/
+*.g.dart
+*.freezed.dart
+*.config.dart
+
+# Dependencies
 .pub/
+.dart_server/
 
 # Logs
 *.log
@@ -18,12 +25,7 @@ build/
 *.swp
 *.swo
 
-# OS files
+# OS generated files
 .DS_Store
 Thumbs.db
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
 ```
