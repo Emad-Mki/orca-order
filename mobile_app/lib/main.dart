@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:typed_data';
 
 // --- النماذج (Models) ---
@@ -667,7 +668,7 @@ class _HomePageState extends State<HomePage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(controller: customerIdCtrl, decoration: const InputDecoration(labelText: 'معرف العميل (ID)')),
-              TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المبلغ ($)')),
+              TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المبلغ (\$)')),
               TextField(controller: noteCtrl, decoration: const InputDecoration(labelText: 'ملاحظات')),
             ],
           ),
