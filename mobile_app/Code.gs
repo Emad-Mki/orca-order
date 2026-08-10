@@ -94,6 +94,15 @@ function doPost(e) {
         case 'products':
           result = _handleProducts(body, user);
           break;
+        case 'getProductImages':
+          result = _handleGetProductImages(body, user);
+          break;
+        case 'getProductImage':
+          result = _handleGetProductImage(body, user);
+          break;
+        case 'syncProductImages':
+          result = _handleSyncProductImages(body, user);
+          break;
         case 'getOrders':
           result = _handleGetOrders(body, user);
           break;
@@ -231,9 +240,191 @@ function _handleProducts(body, user) {
       quantity: Number(p.quantity || 0),
       price: Number(p.display_price || 0),
       image_url: p.image_name,
+      image_id: p.image_id || '',
       notes: p.notes
     }));
   return { products: products };
+}
+
+/**
+ * جلب قائمة الصور من مجلد Google Drive المحدد
+ * Returns array of {file_id, file_name, thumbnail_url, web_url}
+ */
+function _getProductImagesFromDrive() {
+  const folderId = PropertiesService.getScriptProperties().getProperty('PRODUCT_IMAGES_FOLDER_ID') 
+    || '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
+  
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const files = folder.getFilesByType('image/jpeg,image/png,image/webp,image/gif');
+    const images = [];
+    
+    while (files.hasNext()) {
+      const file = files.next();
+      images.push({
+        file_id: file.getId(),
+        file_name: file.getName(),
+        thumbnail_url: 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w400',
+        web_url: 'https://drive.google.com/file/d/' + file.getId() + '/view',
+        download_url: 'https://drive.google.com/uc?export=download&id=' + file.getId(),
+        mime_type: file.getBlob().getContentType(),
+        size: file.getSize(),
+        updated_at: file.getLastUpdated().toISOString()
+      });
+    }
+    
+    return images;
+  } catch (e) {
+    throw new Error('خطأ في جلب الصور من Drive: ' + e.message);
+  }
+}
+
+/**
+ * API endpoint لجلب قائمة صور المنتجات من Drive
+ */
+function _handleGetProductImages(body, user) {
+  // السماح لأي مستخدم مسجل بجلب الصور
+  if (!user) {
+    // يمكن السماح بدون مصادقة للزبائن إذا لزم الأمر
+    // throw new Error('المستخدم غير معروف');
+  }
+  
+  const images = _getProductImagesFromDrive();
+  
+  // ربط الصور بالمنتجات بناءً على اسم الملف
+  const products = _all('Products');
+  const linkedImages = images.map(img => {
+    const productName = img.file_name.replace(/\.[^/.]+$/, ''); // إزالة الامتداد
+    const product = products.find(p => 
+      String(p.image_name).toLowerCase() === String(productName).toLowerCase() ||
+      String(p.code).toLowerCase() === String(productName).toLowerCase() ||
+      img.file_name.toLowerCase().includes(String(p.code).toLowerCase())
+    );
+    
+    return {
+      ...img,
+      product_code: product ? product.code : null,
+      product_name: product ? product.name : null
+    };
+  });
+  
+  return { images: linkedImages, count: linkedImages.length };
+}
+
+/**
+ * الحصول على رابط صورة منتج معين
+ */
+function _handleGetProductImage(body, user) {
+  const productId = body.product_id || body.code;
+  if (!productId) {
+    throw new Error('معرف المنتج مطلوب');
+  }
+  
+  const folderId = PropertiesService.getScriptProperties().getProperty('PRODUCT_IMAGES_FOLDER_ID') 
+    || '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
+  
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const files = folder.getFilesByType('image/jpeg,image/png,image/webp,image/gif');
+    
+    while (files.hasNext()) {
+      const file = files.next();
+      const fileName = file.getName().replace(/\.[^/.]+$/, '');
+      
+      if (String(fileName).toLowerCase() === String(productId).toLowerCase() ||
+          file.getName().toLowerCase().includes(String(productId).toLowerCase())) {
+        
+        return {
+          file_id: file.getId(),
+          file_name: file.getName(),
+          thumbnail_url: 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w400',
+          high_res_url: 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w1200',
+          download_url: 'https://drive.google.com/uc?export=download&id=' + file.getId(),
+          mime_type: file.getBlob().getContentType(),
+          size: file.getSize()
+        };
+      }
+    }
+    
+    return { error: 'لم يتم العثور على صورة للمنتج' };
+  } catch (e) {
+    throw new Error('خطأ في جلب صورة المنتج: ' + e.message);
+  }
+}
+
+/**
+ * مزامنة معلومات الصور مع Sheet المنتجات
+ * يخزن معرفات الصور في عمود image_id
+ */
+function _handleSyncProductImages(body, user) {
+  _needRole(user, ['admin', 'accountant']);
+  
+  const folderId = PropertiesService.getScriptProperties().getProperty('PRODUCT_IMAGES_FOLDER_ID') 
+    || '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
+  
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const files = folder.getFilesByType('image/jpeg,image/png,image/webp,image/gif');
+    const imagesMap = {};
+    
+    while (files.hasNext()) {
+      const file = files.next();
+      const fileName = file.getName().replace(/\.[^/.]+$/, '');
+      imagesMap[fileName.toLowerCase()] = {
+        file_id: file.getId(),
+        file_name: file.getName(),
+        updated_at: file.getLastUpdated().toISOString()
+      };
+    }
+    
+    const ss = _ss();
+    const productsSheet = ss.getSheetByName('Products');
+    const data = productsSheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    // التأكد من وجود عمود image_id
+    let imageIdIdx = headers.indexOf('image_id');
+    let imageUpdatedAtIdx = headers.indexOf('image_updated_at');
+    
+    if (imageIdIdx === -1) {
+      // إضافة الأعمدة الجديدة
+      productsSheet.getRange(1, headers.length + 1).setValue('image_id');
+      productsSheet.getRange(1, headers.length + 2).setValue('image_updated_at');
+      imageIdIdx = headers.length;
+      imageUpdatedAtIdx = headers.length + 1;
+      headers.push('image_id', 'image_updated_at');
+    }
+    
+    let updatedCount = 0;
+    
+    for (let i = 1; i < data.length; i++) {
+      const codeIdx = headers.indexOf('code');
+      const code = String(data[i][codeIdx]).toLowerCase();
+      
+      // البحث عن صورة مطابقة للكود أو اسم المنتج
+      let imageData = imagesMap[code];
+      if (!imageData) {
+        const nameIdx = headers.indexOf('name');
+        const name = String(data[i][nameIdx]).toLowerCase();
+        imageData = imagesMap[name];
+      }
+      
+      if (imageData) {
+        productsSheet.getRange(i + 1, imageIdIdx + 1).setValue(imageData.file_id);
+        productsSheet.getRange(i + 1, imageUpdatedAtIdx + 1).setValue(imageData.updated_at);
+        updatedCount++;
+      }
+    }
+    
+    return {
+      success: true,
+      message: 'تمت مزامنة ' + updatedCount + ' صورة مع المنتجات',
+      total_images: Object.keys(imagesMap).length,
+      updated_count: updatedCount
+    };
+  } catch (e) {
+    throw new Error('خطأ في مزامنة الصور: ' + e.message);
+  }
 }
 
 function _handleGetOrders(body, user) {

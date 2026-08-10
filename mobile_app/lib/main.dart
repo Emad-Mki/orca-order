@@ -1008,10 +1008,41 @@ class _ProductsScreenState extends State<ProductsScreen> {
               final p = _products[index];
               return Card(
                 child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: const Color(0xff00658f).withOpacity(0.1),
-                    child: const Icon(Icons.inventory_2, color: Color(0xff00658f)),
-                  ),
+                  leading: p.imageUrl != null && p.imageUrl!.isNotEmpty
+                    ? ClipOval(
+                        child: CachedNetworkImage(
+                          imageUrl: p.imageUrl!.startsWith('http') 
+                            ? p.imageUrl! 
+                            : 'https://drive.google.com/thumbnail?id=${p.imageUrl!}&sz=w200',
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            width: 50,
+                            height: 50,
+                            color: const Color(0xff00658f).withOpacity(0.1),
+                            child: const CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            width: 50,
+                            height: 50,
+                            decoration: BoxDecoration(
+                              color: const Color(0xff00658f).withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.inventory_2, color: Color(0xff00658f)),
+                          ),
+                        ),
+                      )
+                    : Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color: const Color(0xff00658f).withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.inventory_2, color: Color(0xff00658f)),
+                      ),
                   title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text('${p.code} | ${p.category}\nالمنشأ: ${p.origin}'),
                   trailing: Text('\$${p.price.toStringAsFixed(2)}', 
