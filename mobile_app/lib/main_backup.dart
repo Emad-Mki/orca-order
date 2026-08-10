@@ -141,7 +141,6 @@ class Product {
   final String currency;
   final int stock;
   final String? description;
-  final List<String>? units;
 
   Product({
     required this.code,
@@ -156,18 +155,9 @@ class Product {
     this.currency = 'USD',
     this.stock = 0,
     this.description,
-    this.units,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
-    var unitsData = json['units'];
-    List<String>? unitsList;
-    if (unitsData is List) {
-      unitsList = unitsData.map((u) => u.toString()).toList();
-    } else if (unitsData is String) {
-      unitsList = unitsData.split(',').map((u) => u.trim()).toList();
-    }
-    
     return Product(
       code: json['code']?.toString() ?? '',
       name: json['name'] ?? '',
@@ -176,12 +166,11 @@ class Product {
       unit: json['unit'] ?? json['unit_1'] ?? '',
       price: (json['price'] ?? json['display_price'] ?? 0).toDouble(),
       quantity: (json['quantity'] ?? 0).toDouble(),
-      imageUrl: json['image_url'] ?? json['image_name'] ?? json['imageUrl'],
+      imageUrl: json['image_url'] ?? json['image_name'],
       notes: json['notes'],
       currency: json['currency'] ?? 'USD',
       stock: json['stock_available'] ?? json['stock'] ?? 0,
       description: json['description'],
-      units: unitsList,
     );
   }
 }
@@ -190,9 +179,8 @@ class OrderItem {
   final Product product;
   int quantity;
   String? note;
-  String? selectedUnit;
 
-  OrderItem({required this.product, this.quantity = 1, this.note, this.selectedUnit});
+  OrderItem({required this.product, this.quantity = 1, this.note});
 
   double get total => product.price * quantity;
 
@@ -200,7 +188,7 @@ class OrderItem {
         'code': product.code,
         'name': product.name,
         'quantity': quantity,
-        'unit': selectedUnit ?? product.unit,
+        'unit': product.unit,
         'price': product.price,
         'note': note ?? '',
         'total': total,
@@ -973,9 +961,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في تحميل المنتجات: $e'), backgroundColor: Colors.red),
-      );
     }
   }
 
@@ -1041,31 +1026,19 @@ class _ProductsScreenState extends State<ProductsScreen> {
           padding: const EdgeInsets.all(8.0),
           child: Row(
             children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  decoration: const InputDecoration(
-                    hintText: 'ابحث عن منتج...',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
-                    filled: true,
-                  ),
-                ),
-              ),
+              const Expanded(child: SearchBar(hintText: 'ابحث عن منتج...', leading: Icon(Icons.search))),
               if (role == 'admin')
                 IconButton(icon: const Icon(Icons.file_upload), onPressed: _importDummyData, tooltip: 'استيراد تجريبي'),
-              IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchProducts, tooltip: 'تحديث'),
             ],
           ),
         ),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(8),
-            itemCount: _filteredProducts.length,
+            itemCount: _products.length,
             itemBuilder: (context, index) {
-              final p = _filteredProducts[index];
+              final p = _products[index];
               return Card(
-                margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                 child: ListTile(
                   leading: p.imageUrl != null && p.imageUrl!.isNotEmpty
                     ? ClipOval(
@@ -1103,24 +1076,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         child: const Icon(Icons.inventory_2, color: Color(0xff00658f)),
                       ),
                   title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('${p.code} | ${p.category}'),
-                      Text('المنشأ: ${p.origin}'),
-                      if (p.price == 0)
-                        const Text('يرجى التواصل لمعرفة السعر', style: TextStyle(color: Colors.orange, fontSize: 12)),
-                      if (p.units != null && p.units!.isNotEmpty)
-                        Text('الوحدات: ${p.units!.join(', ')}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                    ],
-                  ),
-                  trailing: p.price > 0 
-                    ? Text('\$${p.price.toStringAsFixed(2)}', 
-                        style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16))
-                    : const Icon(Icons.info_outline, color: Colors.orange),
+                  subtitle: Text('${p.code} | ${p.category}\nالمنشأ: ${p.origin}'),
+                  trailing: Text('\$${p.price.toStringAsFixed(2)}', 
+                    style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16)),
                   isThreeLine: true,
-                  onTap: () => _showProductDetails(p),
-                  onLongPress: () => _addToCart(p),
                 ),
               );
             },
@@ -1129,24 +1088,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
       ],
     );
   }
-
-  void _addToCart(Product product) {
-    // إضافة سريعة للسلة عند الضغط المطول
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('تمت إضافة "${product.name}" للسلة'),
-        backgroundColor: Colors.green,
-        action: SnackBarAction(
-          label: 'عرض',
-          textColor: Colors.white,
-          onPressed: () {
-            // الانتقال للسلة
-          },
-        ),
-      ),
-    );
-  }
 }
+
 class OrdersScreen extends StatefulWidget {
   final Map<String, dynamic> session;
   const OrdersScreen({super.key, required this.session});
@@ -1268,12 +1211,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Map<String, dynamic>? _fullOrder;
   Map<String, dynamic>? _shipmentData;
   Map<String, dynamic>? _balanceInfo;
-  late String role;
 
   @override
   void initState() {
     super.initState();
-    role = widget.session['role']?.toString().toLowerCase() ?? 'customer';
     _fetchOrderItems();
   }
 
@@ -2089,106 +2030,33 @@ class NewOrderScreen extends StatefulWidget {
 class _NewOrderScreenState extends State<NewOrderScreen> {
   final List<OrderItem> _cart = [];
   List<Product> _allProducts = [];
-  List<Product> _filteredProducts = [];
   bool _loading = true;
   final _orderNoteCtrl = TextEditingController();
-  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadProducts();
-    _searchCtrl.addListener(_filterProducts);
-  }
-
-  @override
-  void dispose() {
-    _orderNoteCtrl.dispose();
-    _searchCtrl.dispose();
-    super.dispose();
-  }
-
-  void _filterProducts() {
-    setState(() {
-      final query = _searchCtrl.text.toLowerCase();
-      _filteredProducts = _allProducts.where((p) => 
-        p.name.toLowerCase().contains(query) || 
-        p.code.toLowerCase().contains(query) ||
-        p.category.toLowerCase().contains(query)
-      ).toList();
-    });
   }
 
   Future<void> _loadProducts() async {
     try {
       final data = await ApiService().post({'action': 'getProducts'});
       var list = data['products'] ?? data['data'] ?? data['items'] ?? data['result'];
-      if (mounted) {
-        setState(() { 
-          _allProducts = (list as List).map((p) => Product.fromJson(p)).toList();
-          _filteredProducts = _allProducts;
-          _loading = false; 
-        });
-      }
+      if (mounted) setState(() { _allProducts = (list as List).map((p) => Product.fromJson(p)).toList(); _loading = false; });
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _addToCart(Product product) {
-    // التحقق من وجود المنتج مسبقاً
-    final existingIndex = _cart.indexWhere((item) => item.product.code == product.code);
-    if (existingIndex >= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('هذا المنتج موجود مسبقاً في السلة'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-    
-    setState(() => _cart.add(OrderItem(product: product)));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('تمت إضافة "${product.name}" للسلة'),
-        backgroundColor: Colors.green,
-        action: SnackBarAction(
-          label: 'عرض',
-          textColor: Colors.white,
-          onPressed: () {
-            // يمكن الانتقال لعرض السلة هنا
-          },
-        ),
-      ),
-    );
-  }
-
   void _submitOrder() async {
     if (_cart.isEmpty) return;
-    
-    // التحقق من عدم تكرار المنتجات
-    final Map<String, OrderItem> uniqueCart = {};
-    for (var item in _cart) {
-      final key = '${item.product.code}_${item.selectedUnit ?? item.product.unit}';
-      if (uniqueCart.containsKey(key)) {
-        // تحديث الكمية إذا كان المنتج موجود مسبقاً
-        uniqueCart[key]!.quantity += item.quantity;
-        if (item.note != null && item.note!.isNotEmpty) {
-          uniqueCart[key]!.note = item.note;
-        }
-      } else {
-        uniqueCart[key] = item;
-      }
-    }
-    
     try {
       await ApiService().post({
         'action': 'createOrder',
         'username': widget.session['username'],
         'token': widget.session['token'],
-        'items': uniqueCart.values.map((i) => i.toJson()).toList(),
+        'items': _cart.map((i) => i.toJson()).toList(),
         'note': _orderNoteCtrl.text,
       });
       if (!mounted) return;
@@ -4099,14 +3967,9 @@ class ProductDetailScreen extends StatefulWidget {
 }
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
-  int _quantity = 1;
-  String _selectedUnit = '';
-  final TextEditingController _noteCtrl = TextEditingController();
-  
   @override
   void initState() {
     super.initState();
-    _selectedUnit = widget.product.unit;
     if (widget.addToCart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4117,178 +3980,47 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
   
   @override
-  void dispose() {
-    _noteCtrl.dispose();
-    super.dispose();
-  }
-  
-  @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.product.name),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => setState(() {}),
-            tooltip: 'تحديث',
-          ),
-        ],
-      ),
+      appBar: AppBar(title: Text(widget.product.name)),
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // صورة المنتج الكبيرة
             if (widget.product.imageUrl != null && widget.product.imageUrl!.isNotEmpty)
-              GestureDetector(
-                onTap: () {
-                  showDialog(
-                    context: context,
-                    builder: (_) => Dialog(
-                      backgroundColor: Colors.transparent,
-                      child: CachedNetworkImage(
-                        imageUrl: widget.product.imageUrl!.startsWith('http') 
-                          ? widget.product.imageUrl! 
-                          : 'https://drive.google.com/thumbnail?id=${widget.product.imageUrl!}&sz=w800',
-                        fit: BoxFit.contain,
-                        placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                        errorWidget: (context, url, error) => const Icon(Icons.error, size: 100),
-                      ),
-                    ),
-                  );
-                },
-                child: CachedNetworkImage(
-                  imageUrl: widget.product.imageUrl!,
-                  height: 300,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                  errorWidget: (context, url, error) => Container(
-                    height: 300,
-                    color: isDark ? Colors.grey[800] : Colors.grey[200],
-                    child: const Icon(Icons.image, size: 100, color: Colors.grey),
-                  ),
-                ),
+              CachedNetworkImage(
+                imageUrl: widget.product.imageUrl!,
+                height: 300,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
+                errorWidget: (context, url, error) => const Icon(Icons.error),
               ),
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // السعر
-                  widget.product.price > 0
-                    ? Text('السعر: ${widget.product.price.toStringAsFixed(2)} ${widget.product.currency}', 
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.green, fontWeight: FontWeight.bold))
-                    : const Text('يرجى التواصل لمعرفة السعر', 
-                        style: TextStyle(color: Colors.orange, fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  
-                  // المعلومات الأساسية
-                  _buildInfoRow('الرمز', widget.product.code),
-                  _buildInfoRow('التصنيف', widget.product.category),
-                  _buildInfoRow('المنشأ', widget.product.origin),
-                  _buildInfoRow('المخزون', '${widget.product.stock}'),
-                  _buildInfoRow('الوحدة الافتراضية', widget.product.unit),
-                  
-                  // اختيار الوحدة
-                  const SizedBox(height: 16),
-                  Text('اختر الوحدة:', style: Theme.of(context).textTheme.titleMedium),
+                  Text(widget.product.name, style: Theme.of(context).textTheme.headlineMedium),
                   const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: _selectedUnit,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      filled: true,
-                    ),
-                    items: (widget.product.units ?? [widget.product.unit]).toSet().map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
-                    onChanged: (val) => setState(() => _selectedUnit = val!),
-                  ),
-                  
-                  // اختيار الكمية
-                  const SizedBox(height: 16),
-                  Text('الكمية:', style: Theme.of(context).textTheme.titleMedium),
+                  Text('السعر: ${widget.product.price} ${widget.product.currency}', 
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.green)),
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          keyboardType: TextInputType.number,
-                          controller: TextEditingController(text: '$_quantity'),
-                          textAlign: TextAlign.center,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            filled: true,
-                          ),
-                          onChanged: (val) => _quantity = int.tryParse(val) ?? 1,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(onPressed: () => setState(() => _quantity = (_quantity - 1).clamp(1, 9999)), icon: const Icon(Icons.remove)),
-                      IconButton.filled(onPressed: () => setState(() => _quantity = (_quantity + 1).clamp(1, 9999)), icon: const Icon(Icons.add)),
-                    ],
-                  ),
-                  
-                  // ملاحظة على المنتج
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _noteCtrl,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'ملاحظة على المنتج (اختياري)',
-                      border: OutlineInputBorder(),
-                      filled: true,
-                    ),
-                  ),
-                  
-                  // الوصف
+                  Text('الرمز: ${widget.product.code}'),
+                  const SizedBox(height: 8),
+                  Text('التصنيف: ${widget.product.category}'),
+                  const SizedBox(height: 8),
+                  Text('المخزون: ${widget.product.stock}'),
                   if (widget.product.description != null && widget.product.description!.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     Text('الوصف:', style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    Text(widget.product.description!, style: TextStyle(color: isDark ? Colors.white70 : Colors.black87)),
+                    Text(widget.product.description!),
                   ],
-                  
-                  // زر الإضافة للسلة
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: FilledButton.icon(
-                      onPressed: () {
-                        // هنا يتم إضافة المنتج للسلة
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('تمت إضافة ${_quantity} $_selectedUnit من "${widget.product.name}" للسلة'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                        Navigator.pop(context);
-                      },
-                      icon: const Icon(Icons.shopping_cart),
-                      label: const Text('إضافة للسلة'),
-                    ),
-                  ),
                 ],
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-  
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text('$label:', style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text(value),
-        ],
       ),
     );
   }
