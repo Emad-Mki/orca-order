@@ -1,0 +1,29 @@
+```
+# Build artifacts
+build/
+.dart_tool/
+.pub/
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+```
