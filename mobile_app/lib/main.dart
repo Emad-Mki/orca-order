@@ -579,30 +579,31 @@ class _HomePageState extends State<HomePage> {
             IconButton(icon: const Icon(Icons.logout), onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()))),
           ],
         ),
-      drawer: Drawer(
-        child: Column(
-          children: [
-            UserAccountsDrawerHeader(
-              accountName: Text(widget.session['full_name'] ?? 'مستخدم أوركا'),
-              accountEmail: Text('الدور: ${widget.session['role']}'),
-              decoration: const BoxDecoration(color: Color(0xff00658f)),
-            ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _navItems.length,
-                itemBuilder: (context, index) => ListTile(
-                  leading: Icon(_navItems[index].icon),
-                  title: Text(_navItems[index].title),
-                  selected: _selectedIndex == index,
-                  onTap: () { setState(() => _selectedIndex = index); Navigator.pop(context); },
+        drawer: Drawer(
+          child: Column(
+            children: [
+              UserAccountsDrawerHeader(
+                accountName: Text(widget.session['full_name'] ?? 'مستخدم أوركا'),
+                accountEmail: Text('الدور: ${widget.session['role']}'),
+                decoration: const BoxDecoration(color: Color(0xff00658f)),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _navItems.length,
+                  itemBuilder: (context, index) => ListTile(
+                    leading: Icon(_navItems[index].icon),
+                    title: Text(_navItems[index].title),
+                    selected: _selectedIndex == index,
+                    onTap: () { setState(() => _selectedIndex = index); Navigator.pop(context); },
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+        body: item.screen,
+        floatingActionButton: _buildFab(item.title),
       ),
-      body: item.screen,
-      floatingActionButton: _buildFab(item.title),
     );
   }
 
