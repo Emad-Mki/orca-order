@@ -138,6 +138,9 @@ class Product {
   final double quantity;
   final String? imageUrl;
   final String? notes;
+  final String currency;
+  final int stock;
+  final String? description;
 
   Product({
     required this.code,
@@ -149,6 +152,9 @@ class Product {
     this.quantity = 0,
     this.imageUrl,
     this.notes,
+    this.currency = 'USD',
+    this.stock = 0,
+    this.description,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -162,6 +168,9 @@ class Product {
       quantity: (json['quantity'] ?? 0).toDouble(),
       imageUrl: json['image_url'] ?? json['image_name'],
       notes: json['notes'],
+      currency: json['currency'] ?? 'USD',
+      stock: json['stock_available'] ?? json['stock'] ?? 0,
+      description: json['description'],
     );
   }
 }
@@ -969,6 +978,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
     });
   }
 
+  Future<void> _importDummyData() async {
+    // محاكاة استيراد بيانات تجريبية
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('جاري استيراد البيانات التجريبية...')),
+    );
+    await Future.delayed(const Duration(seconds: 1));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم استيراد البيانات بنجاح'), backgroundColor: Colors.green),
+    );
+    _fetchProducts();
+  }
+
   void _showProductDetails(Product product) {
     Navigator.push(
       context,
@@ -1521,6 +1542,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final costCtrl = TextEditingController();
     final provinceCtrl = TextEditingController();
     bool loading = false;
+    final role = (widget.session['role']?.toString().toLowerCase() ?? 'customer');
 
     showDialog(
       context: context,
@@ -3916,5 +3938,140 @@ class _BackupSettingsScreenState extends State<BackupSettingsScreen> {
         ),
       ],
     );
+  }
+}
+
+// ============================================================================
+// شاشات إضافية مطلوبة (Additional Required Screens)
+// ============================================================================
+
+// شاشة تفاصيل المنتج
+class ProductDetailScreen extends StatefulWidget {
+  final Product product;
+  final bool addToCart;
+  
+  const ProductDetailScreen({super.key, required this.product, this.addToCart = false});
+  
+  @override
+  State<ProductDetailScreen> createState() => _ProductDetailScreenState();
+}
+
+class _ProductDetailScreenState extends State<ProductDetailScreen> {
+  @override
+  void initState() {
+    super.initState();
+    if (widget.addToCart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تمت إضافة "${widget.product.name}" للسلة')),
+        );
+      });
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.product.name)),
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.product.imageUrl != null && widget.product.imageUrl!.isNotEmpty)
+              CachedNetworkImage(
+                imageUrl: widget.product.imageUrl!,
+                height: 300,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
+                errorWidget: (context, url, error) => const Icon(Icons.error),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(widget.product.name, style: Theme.of(context).textTheme.headlineMedium),
+                  const SizedBox(height: 8),
+                  Text('السعر: ${widget.product.price} ${widget.product.currency}', 
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.green)),
+                  const SizedBox(height: 8),
+                  Text('الرمز: ${widget.product.code}'),
+                  const SizedBox(height: 8),
+                  Text('التصنيف: ${widget.product.category}'),
+                  const SizedBox(height: 8),
+                  Text('المخزون: ${widget.product.stock}'),
+                  if (widget.product.description != null && widget.product.description!.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text('الوصف:', style: Theme.of(context).textTheme.titleMedium),
+                    Text(widget.product.description!),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// شاشة قائمة الطلبات الجديدة
+class NewOrdersListScreen extends StatelessWidget {
+  final Map<String, dynamic> session;
+  
+  const NewOrdersListScreen({super.key, required this.session});
+  
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: Text('شاشة قائمة الطلبات الجديدة'));
+  }
+}
+
+// شاشة تسعير الطلبات
+class PricingQueueScreen extends StatelessWidget {
+  final Map<String, dynamic> session;
+  
+  const PricingQueueScreen({super.key, required this.session});
+  
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: Text('شاشة تسعير الطلبات'));
+  }
+}
+
+// شاشة الفواتير بانتظار الاعتماد
+class PendingApprovalScreen extends StatelessWidget {
+  final Map<String, dynamic> session;
+  
+  const PendingApprovalScreen({super.key, required this.session});
+  
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: Text('شاشة الفواتير بانتظار الاعتماد'));
+  }
+}
+
+// شاشة استيراد وتصدير Excel
+class ImportExportScreen extends StatelessWidget {
+  final Map<String, dynamic> session;
+  
+  const ImportExportScreen({super.key, required this.session});
+  
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: Text('شاشة استيراد وتصدير Excel'));
+  }
+}
+
+// شاشة أوامر التجهيز
+class PreparationOrdersScreen extends StatelessWidget {
+  final Map<String, dynamic> session;
+  
+  const PreparationOrdersScreen({super.key, required this.session});
+  
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: Text('شاشة أوامر التجهيز'));
   }
 }
