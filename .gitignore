@@ -1,4 +1,33 @@
 ```
-# Backup files
-*_backup.dart
+# Dart/Flutter specific ignores
+**/lib/**/*.g.dart
+**/lib/**/*.freezed.dart
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iws
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+# Environment files
+.env
+.env.local
+*.env.*
+# IDE files
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+# Log files
+*.log
+# Temporary files
+*.tmp
+*.temp
 ```
