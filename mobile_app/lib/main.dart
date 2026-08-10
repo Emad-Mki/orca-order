@@ -168,6 +168,13 @@ class Product {
       unitsList = unitsData.split(',').map((u) => u.trim()).toList();
     }
     
+    // معالجة الصورة:尝试 من حقول مختلفة أو استخدام الكود كاسم ملف
+    String? img = json['image_url'] ?? json['image_name'] ?? json['imageUrl'];
+    if (img == null || img.isEmpty) {
+      // إذا لم توجد صورة، نستخدم الكود كاسم للملف (سيتم ربطه لاحقاً بـ Google Drive)
+      img = json['code']?.toString();
+    }
+    
     return Product(
       code: json['code']?.toString() ?? '',
       name: json['name'] ?? '',
@@ -176,7 +183,7 @@ class Product {
       unit: json['unit'] ?? json['unit_1'] ?? '',
       price: (json['price'] ?? json['display_price'] ?? 0).toDouble(),
       quantity: (json['quantity'] ?? 0).toDouble(),
-      imageUrl: json['image_url'] ?? json['image_name'] ?? json['imageUrl'],
+      imageUrl: img,
       notes: json['notes'],
       currency: json['currency'] ?? 'USD',
       stock: json['stock_available'] ?? json['stock'] ?? 0,
@@ -2093,10 +2100,12 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
   bool _loading = true;
   final _orderNoteCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
+  String? _customerName;
 
   @override
   void initState() {
     super.initState();
+    _loadCustomerName();
     _loadProducts();
     _searchCtrl.addListener(_filterProducts);
   }
@@ -2106,6 +2115,15 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
     _orderNoteCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _loadCustomerName() {
+    // محاولة جلب اسم الزبون من الجلسة أو عبر API
+    setState(() {
+      _customerName = widget.session['name'] ?? 
+                      widget.session['customer_name'] ?? 
+                      widget.session['username'];
+    });
   }
 
   void _filterProducts() {
@@ -2135,34 +2153,53 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
     }
   }
 
-  void _addToCart(Product product) {
-    // التحقق من وجود المنتج مسبقاً
-    final existingIndex = _cart.indexWhere((item) => item.product.code == product.code);
-    if (existingIndex >= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('هذا المنتج موجود مسبقاً في السلة'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-    
-    setState(() => _cart.add(OrderItem(product: product)));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('تمت إضافة "${product.name}" للسلة'),
-        backgroundColor: Colors.green,
-        action: SnackBarAction(
-          label: 'عرض',
-          textColor: Colors.white,
-          onPressed: () {
-            // يمكن الانتقال لعرض السلة هنا
+  void _showProductDetails(Product product) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProductDetailScreen(
+          product: product,
+          onAddToCart: (item) {
+            // التحقق من عدم التكرار
+            final existingIndex = _cart.indexWhere((i) => 
+              i.product.code == item.product.code && 
+              (i.selectedUnit ?? i.product.unit) == (item.selectedUnit ?? item.product.unit)
+            );
+            
+            if (existingIndex >= 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('هذا المنتج موجود مسبقاً في السلة بنفس الوحدة'),
+                  backgroundColor: Colors.orange,
+                  duration: Duration(seconds: 2),
+                ),
+              );
+              return;
+            }
+            
+            setState(() => _cart.add(item));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('تمت إضافة "${product.name}" للسلة'),
+                backgroundColor: Colors.green,
+                action: SnackBarAction(
+                  label: 'عرض',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    // يمكن الانتقال لعرض السلة هنا
+                  },
+                ),
+              ),
+            );
           },
         ),
       ),
     );
+  }
+
+  void _addToCartSimple(Product product) {
+    // إضافة سريعة بدون تفاصيل (للتوافق مع الكود القديم)
+    _showProductDetails(product);
   }
 
   void _submitOrder() async {
@@ -2201,33 +2238,250 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     return Scaffold(
-      appBar: AppBar(title: const Text('طلب جديد')),
+      appBar: AppBar(
+        title: const Text('طلب جديد'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadProducts,
+            tooltip: 'تحديث',
+          ),
+        ],
+      ),
       body: Column(
         children: [
-          Expanded(
-            child: _loading ? const Center(child: CircularProgressIndicator()) : ListView.builder(
-              itemCount: _allProducts.length,
-              itemBuilder: (context, index) {
-                final p = _allProducts[index];
-                return ListTile(
-                  title: Text(p.name),
-                  subtitle: Text('\$${p.price}'),
-                  trailing: IconButton(icon: const Icon(Icons.add_circle, color: Colors.blue), onPressed: () => setState(() => _cart.add(OrderItem(product: p)))),
-                );
-              },
+          // شريط اسم الزبون
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            color: isDark ? Colors.blueGrey[900] : Colors.blue[50],
+            child: Row(
+              children: [
+                const Icon(Icons.person, color: Colors.blue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'الزبون: ${_customerName ?? "جاري التحميل..."}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ],
             ),
           ),
+          
+          // حقل البحث
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: _searchCtrl,
+              decoration: const InputDecoration(
+                hintText: 'ابحث عن منتج...',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+                filled: true,
+              ),
+            ),
+          ),
+          
+          // قائمة المنتجات
+          Expanded(
+            child: _loading 
+              ? const Center(child: CircularProgressIndicator()) 
+              : _filteredProducts.isEmpty
+                ? const Center(child: Text('لا توجد منتجات'))
+                : GridView.builder(
+                    padding: const EdgeInsets.all(8),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      childAspectRatio: 0.75,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                    ),
+                    itemCount: _filteredProducts.length,
+                    itemBuilder: (context, index) {
+                      final p = _filteredProducts[index];
+                      return Card(
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: () => _showProductDetails(p),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // صورة المنتج
+                              Expanded(
+                                child: p.imageUrl != null && p.imageUrl!.isNotEmpty
+                                  ? Image.network(
+                                      p.imageUrl!.startsWith('http') 
+                                        ? p.imageUrl! 
+                                        : 'https://drive.google.com/thumbnail?id=${p.imageUrl!}&sz=w200',
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      loadingBuilder: (context, child, progress) {
+                                        if (progress == null) return child;
+                                        return Container(
+                                          color: Colors.grey[200],
+                                          child: const Center(child: CircularProgressIndicator()),
+                                        );
+                                      },
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return Container(
+                                          color: Colors.grey[200],
+                                          child: const Icon(Icons.inventory_2, size: 40, color: Colors.grey),
+                                        );
+                                      },
+                                    )
+                                  : Container(
+                                      color: Colors.grey[200],
+                                      child: const Icon(Icons.inventory_2, size: 40, color: Colors.grey),
+                                    ),
+                              ),
+                              
+                              // معلومات المنتج
+                              Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      p.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      p.code,
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    p.price > 0
+                                      ? Text(
+                                          '\$${p.price.toStringAsFixed(2)}',
+                                          style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                                        )
+                                      : const Text(
+                                          'يرجى التواصل للسعر',
+                                          style: TextStyle(color: Colors.orange, fontSize: 11),
+                                        ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          
+          // منطقة السلة والإرسال
           Container(
             padding: const EdgeInsets.all(16),
-            color: Colors.grey[200],
+            decoration: BoxDecoration(
+              color: isDark ? Colors.grey[900] : Colors.grey[100],
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4, offset: const Offset(0, -2))],
+            ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: _orderNoteCtrl, decoration: const InputDecoration(labelText: 'ملاحظات عامة للطلب', border: OutlineInputBorder())),
+                // عرض السلة
+                Row(
+                  children: [
+                    const Icon(Icons.shopping_cart, color: Colors.blue),
+                    const SizedBox(width: 8),
+                    Text(
+                      'السلة: ${_cart.length} أصناف',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    const Spacer(),
+                    if (_cart.isNotEmpty)
+                      TextButton(
+                        onPressed: () {
+                          // عرض تفاصيل السلة للمراجعة
+                          showDialog(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('مراجعة الطلب قبل الإرسال'),
+                              content: SizedBox(
+                                width: double.maxFinite,
+                                child: ListView.builder(
+                                  shrinkWrap: true,
+                                  itemCount: _cart.length,
+                                  itemBuilder: (context, index) {
+                                    final item = _cart[index];
+                                    return ListTile(
+                                      leading: item.product.imageUrl != null && item.product.imageUrl!.isNotEmpty
+                                        ? ClipRRect(
+                                            borderRadius: BorderRadius.circular(4),
+                                            child: Image.network(
+                                              item.product.imageUrl!.startsWith('http') 
+                                                ? item.product.imageUrl! 
+                                                : 'https://drive.google.com/thumbnail?id=${item.product.imageUrl!}&sz=w100',
+                                              width: 50,
+                                              height: 50,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (context, error, stackTrace) => const Icon(Icons.inventory_2),
+                                            ),
+                                          )
+                                        : const Icon(Icons.inventory_2),
+                                      title: Text(item.product.name),
+                                      subtitle: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text('الكمية: ${item.quantity} ${item.selectedUnit ?? item.product.unit}'),
+                                          if (item.note != null && item.note!.isNotEmpty)
+                                            Text('ملاحظة: ${item.note}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                        ],
+                                      ),
+                                      trailing: Text('\$${item.total.toStringAsFixed(2)}'),
+                                    );
+                                  },
+                                ),
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('إغلاق'),
+                                ),
+                                FilledButton(
+                                  onPressed: _submitOrder,
+                                  child: const Text('تأكيد وإرسال'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        child: const Text('مراجعة'),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 8),
-                Text('السلة: ${_cart.length} أصناف', style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                SizedBox(width: double.infinity, height: 50, child: FilledButton(onPressed: _cart.isEmpty ? null : _submitOrder, child: const Text('إرسال الطلب للمراجعة'))),
+                
+                // ملاحظات عامة
+                TextField(
+                  controller: _orderNoteCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات عامة للطلب (اختياري)',
+                    border: OutlineInputBorder(),
+                    filled: true,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                
+                // زر الإرسال
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton.icon(
+                    onPressed: _cart.isEmpty ? null : _submitOrder,
+                    icon: const Icon(Icons.send),
+                    label: const Text('إرسال الطلب للمراجعة'),
+                  ),
+                ),
               ],
             ),
           ),
