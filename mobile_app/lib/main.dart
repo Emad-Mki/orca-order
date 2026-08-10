@@ -188,19 +188,21 @@ class Product {
 
 class OrderItem {
   final Product product;
-  int quantity;
+  double quantity;
   String? note;
   String? selectedUnit;
 
+  OrderItem({required this.product, this.quantity = 1.0, this.note, this.selectedUnit});
   OrderItem({required this.product, this.quantity = 1, this.note, this.selectedUnit});
 
-  double get total => product.price * quantity;
+  double get total => (product.price ?? 0) * quantity;
 
   Map<String, dynamic> toJson() => {
-        'code': product.code,
-        'name': product.name,
+        'code': product.code ?? '',
+        'name': product.name ?? '',
         'quantity': quantity,
         'unit': selectedUnit ?? product.unit,
+        'price': product.price ?? 0,
         'price': product.price,
         'note': note ?? '',
         'total': total,
@@ -4091,8 +4093,9 @@ class _BackupSettingsScreenState extends State<BackupSettingsScreen> {
 class ProductDetailScreen extends StatefulWidget {
   final Product product;
   final bool addToCart;
+  final Function(OrderItem)? onAddToCart;
   
-  const ProductDetailScreen({super.key, required this.product, this.addToCart = false});
+  const ProductDetailScreen({super.key, required this.product, this.addToCart = false, this.onAddToCart});
   
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
@@ -4107,13 +4110,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   void initState() {
     super.initState();
     _selectedUnit = widget.product.unit;
-    if (widget.addToCart) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تمت إضافة "${widget.product.name}" للسلة')),
-        );
-      });
-    }
   }
   
   @override
@@ -4142,56 +4138,36 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // صورة المنتج الكبيرة
-            if (widget.product.imageUrl != null && widget.product.imageUrl!.isNotEmpty)
-              GestureDetector(
-                onTap: () {
-                  showDialog(
-                    context: context,
-                    builder: (_) => Dialog(
-                      backgroundColor: Colors.transparent,
-                      child: CachedNetworkImage(
-                        imageUrl: widget.product.imageUrl!.startsWith('http') 
-                          ? widget.product.imageUrl! 
-                          : 'https://drive.google.com/thumbnail?id=${widget.product.imageUrl!}&sz=w800',
-                        fit: BoxFit.contain,
-                        placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                        errorWidget: (context, url, error) => const Icon(Icons.error, size: 100),
-                      ),
-                    ),
-                  );
-                },
-                child: CachedNetworkImage(
-                  imageUrl: widget.product.imageUrl!,
-                  height: 300,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                  errorWidget: (context, url, error) => Container(
-                    height: 300,
-                    color: isDark ? Colors.grey[800] : Colors.grey[200],
-                    child: const Icon(Icons.image, size: 100, color: Colors.grey),
+            GestureDetector(
+              onTap: () {
+                showDialog(
+                  context: context,
+                  builder: (_) => Dialog(
+                    backgroundColor: Colors.transparent,
+                    child: ImageUtils.getProductImage(widget.product, size: 400),
                   ),
-                ),
-              ),
+                );
+              },
+              child: ImageUtils.getProductImage(widget.product, height: 300),
+            ),
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // السعر
-                  widget.product.price > 0
-                    ? Text('السعر: ${widget.product.price.toStringAsFixed(2)} ${widget.product.currency}', 
+                  (widget.product.price ?? 0) > 0
+                    ? Text('السعر: ${widget.product.price} ${widget.product.currency ?? ""}', 
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.green, fontWeight: FontWeight.bold))
                     : const Text('يرجى التواصل لمعرفة السعر', 
                         style: TextStyle(color: Colors.orange, fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 16),
                   
                   // المعلومات الأساسية
-                  _buildInfoRow('الرمز', widget.product.code),
-                  _buildInfoRow('التصنيف', widget.product.category),
-                  _buildInfoRow('المنشأ', widget.product.origin),
-                  _buildInfoRow('المخزون', '${widget.product.stock}'),
-                  _buildInfoRow('الوحدة الافتراضية', widget.product.unit),
+                  _buildInfoRow('الرمز', widget.product.code ?? ''),
+                  _buildInfoRow('التصنيف', widget.product.category ?? ''),
+                  _buildInfoRow('المخزون', '${widget.product.stock ?? 0}'),
+                  _buildInfoRow('الوحدة الافتراضية', widget.product.uomName ?? widget.product.unit),
                   
                   // اختيار الوحدة
                   const SizedBox(height: 16),
@@ -4258,13 +4234,22 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     height: 50,
                     child: FilledButton.icon(
                       onPressed: () {
-                        // هنا يتم إضافة المنتج للسلة
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('تمت إضافة ${_quantity} $_selectedUnit من "${widget.product.name}" للسلة'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
+                        if (widget.onAddToCart != null) {
+                          final item = OrderItem(
+                            product: widget.product,
+                            quantity: _quantity.toDouble(),
+                            selectedUnit: _selectedUnit,
+                            note: _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
+                          );
+                          widget.onAddToCart!(item);
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('تمت إضافة $_quantity $_selectedUnit من "${widget.product.name}" للسلة'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
                         Navigator.pop(context);
                       },
                       icon: const Icon(Icons.shopping_cart),
