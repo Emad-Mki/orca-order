@@ -2272,7 +2272,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       buttons.add(
         Expanded(
           child: FilledButton.icon(
-            onPressed: () => _updateStatus('customer_confirmed'),
+            onPressed: () => _updateStatus('approved'),
             icon: const Icon(Icons.check_circle),
             label: const Text('تأكيد الفاتورة'),
             style: FilledButton.styleFrom(backgroundColor: Colors.green),
@@ -2292,7 +2292,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     // محاسب: تسعير الطلبية
-    if ((role == 'admin' || role == 'accountant') && (status == 'submitted' || status == 'customer_changed')) {
+    if ((role == 'admin' || role == 'manager' || role == 'accountant') && (status == 'pending' || status == 'customer_changed')) {
        buttons.add(
         Expanded(
           child: FilledButton.icon(
@@ -2305,11 +2305,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
     
     // محاسب/مدير: اعتماد نهائي
-    if ((role == 'admin' || role == 'accountant') && status == 'customer_confirmed') {
+    if ((role == 'admin' || role == 'manager' || role == 'accountant') && status == 'approved') {
        buttons.add(
         Expanded(
           child: FilledButton.icon(
-            onPressed: () => _updateStatus('approved'),
+            onPressed: () => _updateStatus('preparing'),
             icon: const Icon(Icons.verified),
             label: const Text('اعتماد نهائي وحجز المخزون'),
             style: FilledButton.styleFrom(backgroundColor: Colors.blue.shade800),
@@ -2319,7 +2319,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     // مستودع: تجهيز الطلبية
-    if ((role == 'admin' || role == 'warehouse') && status == 'approved') {
+    if ((role == 'admin' || role == 'manager' || role == 'warehouse') && status == 'preparing') {
       buttons.add(
         Expanded(
           child: FilledButton.icon(
@@ -2333,14 +2333,30 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     // شحن (بعد التجهيز)
-    if ((role == 'admin' || role == 'accountant') && status == 'prepared') {
+    if ((role == 'admin' || role == 'manager' || role == 'accountant') && status == 'preparing') {
       buttons.add(
         Expanded(
           child: FilledButton.icon(
-            onPressed: () => _showCreateShipmentDialog(),
+            onPressed: () => _updateStatus('shipping'),
             icon: const Icon(Icons.local_shipping),
-            label: const Text('تأكيد بيانات الشحن'),
+            label: const Text('تأكيد الشحن'),
             style: FilledButton.styleFrom(backgroundColor: Colors.indigo),
+          ),
+        ),
+      );
+    }
+
+    // إلغاء الطلب (للمدير والمحاسب فقط) - يظهر في حالات معينة
+    if ((role == 'admin' || role == 'manager' || role == 'accountant') && 
+        (status == 'pending' || status == 'priced' || status == 'customer_changed')) {
+      buttons.add(const SizedBox(width: 8));
+      buttons.add(
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => _showCancelOrderDialog(),
+            icon: const Icon(Icons.cancel, color: Colors.red),
+            label: const Text('إلغاء الطلب', style: TextStyle(color: Colors.red)),
+            style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red)),
           ),
         ),
       );
@@ -2355,6 +2371,90 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         boxShadow: [BoxShadow(color: Colors.black.withAlpha(12), blurRadius: 10, offset: const Offset(0, -5))],
       ),
       child: Row(children: buttons),
+    );
+  }
+
+  // حوار إلغاء الطلب مع سبب الإلغاء
+  void _showCancelOrderDialog() {
+    final reasonCtrl = TextEditingController();
+    bool isDeletePermanent = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('إلغاء الطلب'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('هل أنت متأكد من إلغاء هذا الطلب؟', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: reasonCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'سبب الإلغاء',
+                  hintText: 'مثال: طلب مكرر، زبون تراجع...',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Checkbox(
+                    value: isDeletePermanent,
+                    onChanged: (val) => setDialogState(() => isDeletePermanent = val ?? false),
+                  ),
+                  const Expanded(
+                    child: Text('حذف نهائي (بدلاً من الإلغاء)', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('تراجع')),
+            FilledButton(
+              onPressed: () async {
+                if (reasonCtrl.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('يرجى إدخال سبب الإلغاء'), backgroundColor: Colors.orange),
+                  );
+                  return;
+                }
+                try {
+                  setState(() => _isLoading = true);
+                  await ApiService().post({
+                    'action': isDeletePermanent ? 'deleteOrder' : 'cancelOrder',
+                    'orderId': widget.order['id'],
+                    'cancellation_reason': reasonCtrl.text,
+                    'username': widget.session['username'],
+                    'token': widget.session['token'],
+                  });
+                  if (!mounted) return;
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(isDeletePermanent ? 'تم حذف الطلب نهائياً' : 'تم إلغاء الطلب بنجاح'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                  Navigator.pop(context, true);
+                } catch (e) {
+                  if (mounted) {
+                    setState(() => _isLoading = false);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              child: Text(isDeletePermanent ? 'حذف نهائي' : 'إلغاء الطلب'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
