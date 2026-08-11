@@ -1,24 +1,15 @@
 ```
-# Flutter/Dart specific ignores
-.dart_tool/
-.packages
-pubspec.lock
-build/
-ios/.symlinks
-**/ios/Pods/
-**/ios/Flutter/.symlinks
-*.g.dart
-*.freezed.dart
-
 # Dependencies
-**/node_modules/
+node_modules/
+.pub-cache/
+.build/
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Environment variables
+# Environment
 .env
 .env.local
 *.env.*
@@ -26,19 +17,16 @@ ios/.symlinks
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
+*.iml
+*.iws
 
-# OS generated files
-.DS_Store
-Thumbs.db
+# Dart specific
+.dart_tool/
+.packages
+*.g.dart
+*.freezed.dart
 
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Build artifacts
-dist/
-target/
+# Flutter specific
+flutter/
+packages/flutter_tools/.last_gc
 ```
