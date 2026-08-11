@@ -4,11 +4,13 @@ const H = {
   Products: ['code','name','image_name','group','origin','unit_1','quantity','unit_2','factor_2','quantity_2','factor_3','unit_3','quantity_3','display_price','currency','notes','updated_at','updated_by'],
   Orders: ['order_id','customer_id','customer_name','status','currency','note','accounting_invoice_no','is_read','is_new','cancellation_reason','created_at','updated_at','created_by'],
   Order_Items: ['item_id','order_id','code','unit','quantity_requested','quantity_approved','display_price_snapshot','final_price','status','customer_note','accountant_note','warehouse_note'],
-  Payments: ['payment_id','customer_id','order_id','amount','currency','method','payment_date','note','created_by'],
+  Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type'],
+  Boxes_Balance: ['box_id','box_name','currency','balance','last_updated'],
+  Sham_Cash_Balance: ['id','currency','balance','last_updated'],
   Inventory_Movements: ['movement_id','code','type','quantity','note','created_by','created_at'],
   Shipments: ['shipment_id','order_id','delivery_method','carrier','tracking_no','province','shipping_cost_internal','shipping_date','status','note'],
   Low_Stock_Requests: ['request_id','code','requested_qty','status','note','created_by','created_at'],
-  Notifications: ['notification_id','user_id','title','body','read_at','created_at'],
+  Notifications: ['notification_id','user_id','title','body','type','entity_type','entity_id','read_at','created_at'],
   Audit_Log: ['log_id','user_id','action','entity','entity_id','details','created_at'],
   Sessions: ['token','user_id','expires_at'],
 };
@@ -148,6 +150,24 @@ function doPost(e) {
           break;
         case 'getCustomers':
           result = _handleGetCustomers(body, user);
+          break;
+        case 'getPayments':
+          result = _handleGetPayments(body, user);
+          break;
+        case 'recordPayment':
+          result = _handleRecordPayment(body, user);
+          break;
+        case 'updatePayment':
+          result = _handleUpdatePayment(body, user);
+          break;
+        case 'deletePayment':
+          result = _handleDeletePayment(body, user);
+          break;
+        case 'getBoxBalances':
+          result = _handleGetBoxBalances(body, user);
+          break;
+        case 'sendNotification':
+          result = _handleSendNotification(body, user);
           break;
         default:
           throw new Error('عملية غير معروفة: ' + body.action);
@@ -759,4 +779,413 @@ function _handleCreateOrderOld(body, user) {
   });
 
   return { order_id: orderId };
+}
+
+// ==================== دوال نظام الدفعات والصناديق ====================
+
+// جلب أرصدة الصناديق
+function _handleGetBoxBalances(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  
+  const boxesBalance = _all('Boxes_Balance');
+  const shamCashBalance = _all('Sham_Cash_Balance');
+  
+  // تهيئة الأرصدة الافتراضية إذا لم تكن موجودة
+  let cashBoxSYP = boxesBalance.find(b => b.box_name === 'cash_box' && b.currency === 'SYP');
+  let cashBoxUSD = boxesBalance.find(b => b.box_name === 'cash_box' && b.currency === 'USD');
+  let shamCashSYP = boxesBalance.find(b => b.box_name === 'sham_cash' && b.currency === 'SYP');
+  let shamCashUSD = boxesBalance.find(b => b.box_name === 'sham_cash' && b.currency === 'USD');
+  
+  if (!cashBoxSYP) {
+    cashBoxSYP = { box_id: 'box_cash_syp', box_name: 'cash_box', currency: 'SYP', balance: 0 };
+  }
+  if (!cashBoxUSD) {
+    cashBoxUSD = { box_id: 'box_cash_usd', box_name: 'cash_box', currency: 'USD', balance: 0 };
+  }
+  if (!shamCashSYP) {
+    shamCashSYP = { box_id: 'box_sham_syp', box_name: 'sham_cash', currency: 'SYP', balance: 0 };
+  }
+  if (!shamCashUSD) {
+    shamCashUSD = { box_id: 'box_sham_usd', box_name: 'sham_cash', currency: 'USD', balance: 0 };
+  }
+  
+  return {
+    balances: {
+      cash_box_syp: Number(cashBoxSYP.balance || 0),
+      cash_box_usd: Number(cashBoxUSD.balance || 0),
+      sham_cash_syp: Number(shamCashSYP.balance || 0),
+      sham_cash_usd: Number(shamCashUSD.balance || 0),
+    }
+  };
+}
+
+// جلب قائمة الدفعات
+function _handleGetPayments(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  
+  let payments = _all('Payments');
+  
+  // فلترة حسب الزبون إذا تم تحديده
+  if (body.customer_id) {
+    payments = payments.filter(p => p.customer_id === body.customer_id);
+  }
+  
+  // فلترة حسب نوع الصندوق إذا تم تحديده
+  if (body.box_type) {
+    payments = payments.filter(p => p.box_type === body.box_type);
+  }
+  
+  // فلترة حسب العملة
+  if (body.currency) {
+    payments = payments.filter(p => p.currency === body.currency);
+  }
+  
+  // إضافة معلومات الزبون
+  const customers = _all('Customers');
+  payments = payments.map(p => {
+    const customer = customers.find(c => c.customer_id === p.customer_id);
+    return {
+      ...p,
+      customer_name: customer ? customer.full_name : 'غير معروف',
+    };
+  });
+  
+  // ترتيب حسب الأحدث أولاً
+  payments.sort((a, b) => {
+    const dateA = new Date(a.created_at || a.payment_date || 0);
+    const dateB = new Date(b.created_at || b.payment_date || 0);
+    return dateB - dateA;
+  });
+  
+  return { payments: payments };
+}
+
+// تسجيل دفعة جديدة (استلام أو صرف)
+function _handleRecordPayment(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  
+  const amount = Number(body.amount || 0);
+  if (amount <= 0) {
+    throw new Error('المبلغ يجب أن يكون أكبر من صفر');
+  }
+  
+  const actionType = body.action_type || 'receive'; // receive أو pay
+  const boxType = body.box_type || 'cash_box'; // cash_box أو sham_cash
+  const currency = body.currency || 'USD';
+  const customerId = body.customer_id;
+  const note = body.note || '';
+  
+  if (actionType === 'receive' && !customerId) {
+    throw new Error('يجب اختيار الزبون للاستلام');
+  }
+  
+  if (actionType === 'pay' && !note) {
+    throw new Error('يجب كتابة ملاحظة/سبب للصرف');
+  }
+  
+  // التحقق من الرصيد الكافي في حال الصرف
+  if (actionType === 'pay') {
+    const boxesBalance = _all('Boxes_Balance');
+    const box = boxesBalance.find(b => b.box_name === boxType && b.currency === currency);
+    const currentBalance = box ? Number(box.balance || 0) : 0;
+    
+    if (currentBalance < amount) {
+      throw new Error('الرصيد في الصندوق غير كافي');
+    }
+  }
+  
+  // إنشاء رقم الدفعة
+  const year = new Date().getFullYear();
+  const existing = _all('Payments').filter(p => String(p.payment_id).includes('PAY-' + year));
+  const seq = existing.length + 1;
+  const paymentId = 'PAY-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd') + '-' + String(seq).padStart(6, '0');
+  
+  const now = _now();
+  
+  // تسجيل الدفعة
+  _add('Payments', {
+    payment_id: paymentId,
+    customer_id: customerId || '',
+    order_id: body.order_id || '',
+    amount: amount,
+    currency: currency,
+    box_type: boxType,
+    method: body.method || 'cash',
+    payment_date: body.payment_date || now,
+    note: note,
+    created_by: user.user_id,
+    created_at: now,
+    action_type: actionType,
+  });
+  
+  // تحديث رصيد الزبون في حال الاستلام
+  if (actionType === 'receive' && customerId) {
+    _updateCustomerBalance(customerId, amount, currency, 'credit');
+  }
+  
+  // تحديث رصيد الصندوق
+  _updateBoxBalance(boxType, currency, amount, actionType);
+  
+  // إرسال إشعار للمدير والمحاسب
+  if (actionType === 'receive') {
+    _sendNotificationToRoles('admin,manager,accountant', 'استلام دفعة', 'تم استلام دفعة من الزبون بقيمة ' + amount + ' ' + currency, 'payment', paymentId);
+  } else {
+    _sendNotificationToRoles('admin,manager', 'صرف من الصندوق', 'تم صرف مبلغ ' + amount + ' ' + currency + ' من ' + boxType, 'payment', paymentId);
+  }
+  
+  return { success: true, payment_id: paymentId };
+}
+
+// تحديث دفعة موجودة
+function _handleUpdatePayment(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  
+  const paymentId = body.payment_id;
+  if (!paymentId) {
+    throw new Error('رقم الدفعة مطلوب');
+  }
+  
+  const payments = _all('Payments');
+  const paymentIndex = payments.findIndex(p => p.payment_id === paymentId);
+  if (paymentIndex === -1) {
+    throw new Error('الدفعة غير موجودة');
+  }
+  
+  const oldPayment = payments[paymentIndex];
+  const newAmount = Number(body.amount || oldPayment.amount);
+  const newActionType = body.action_type || oldPayment.action_type;
+  const newBoxType = body.box_type || oldPayment.box_type;
+  const newCurrency = body.currency || oldPayment.currency;
+  const newCustomerId = body.customer_id !== undefined ? body.customer_id : oldPayment.customer_id;
+  const newNote = body.note !== undefined ? body.note : oldPayment.note;
+  
+  // عكس العملية القديمة
+  if (oldPayment.action_type === 'receive' && oldPayment.customer_id) {
+    _updateCustomerBalance(oldPayment.customer_id, Number(oldPayment.amount), oldPayment.currency, 'debit');
+  }
+  _updateBoxBalance(oldPayment.box_type, oldPayment.currency, Number(oldPayment.amount), oldPayment.action_type === 'receive' ? 'pay' : 'receive');
+  
+  // تطبيق العملية الجديدة
+  if (newActionType === 'receive' && newCustomerId) {
+    _updateCustomerBalance(newCustomerId, newAmount, newCurrency, 'credit');
+  }
+  _updateBoxBalance(newBoxType, newCurrency, newAmount, newActionType === 'receive' ? 'receive' : 'pay');
+  
+  // تحديث البيانات
+  const sheet = _ss().getSheetByName('Payments');
+  const rowIndex = paymentIndex + 2;
+  
+  const paymentsHeaders = H.Payments;
+  const amountCol = paymentsHeaders.indexOf('amount') + 1;
+  const actionTypeCol = paymentsHeaders.indexOf('action_type') + 1;
+  const boxTypeCol = paymentsHeaders.indexOf('box_type') + 1;
+  const currencyCol = paymentsHeaders.indexOf('currency') + 1;
+  const customerIdCol = paymentsHeaders.indexOf('customer_id') + 1;
+  const noteCol = paymentsHeaders.indexOf('note') + 1;
+  
+  sheet.getRange(rowIndex, amountCol).setValue(newAmount);
+  sheet.getRange(rowIndex, actionTypeCol).setValue(newActionType);
+  sheet.getRange(rowIndex, boxTypeCol).setValue(newBoxType);
+  sheet.getRange(rowIndex, currencyCol).setValue(newCurrency);
+  if (body.customer_id !== undefined) {
+    sheet.getRange(rowIndex, customerIdCol).setValue(newCustomerId);
+  }
+  if (body.note !== undefined) {
+    sheet.getRange(rowIndex, noteCol).setValue(newNote);
+  }
+  
+  _add('Audit_Log', {
+    log_id: Utilities.getUuid(),
+    user_id: user.user_id,
+    action: 'UPDATE_PAYMENT',
+    entity: 'Payments',
+    entity_id: paymentId,
+    details: 'تعديل دفعة',
+    created_at: _now(),
+  });
+  
+  return { success: true };
+}
+
+// حذف دفعة
+function _handleDeletePayment(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  
+  const paymentId = body.payment_id;
+  if (!paymentId) {
+    throw new Error('رقم الدفعة مطلوب');
+  }
+  
+  const payments = _all('Payments');
+  const paymentIndex = payments.findIndex(p => p.payment_id === paymentId);
+  if (paymentIndex === -1) {
+    throw new Error('الدفعة غير موجودة');
+  }
+  
+  const payment = payments[paymentIndex];
+  
+  // عكس العملية
+  if (payment.action_type === 'receive' && payment.customer_id) {
+    _updateCustomerBalance(payment.customer_id, Number(payment.amount), payment.currency, 'debit');
+  }
+  _updateBoxBalance(payment.box_type, payment.currency, Number(payment.amount), payment.action_type === 'receive' ? 'pay' : 'receive');
+  
+  // حذف الدفعة
+  const sheet = _ss().getSheetByName('Payments');
+  sheet.deleteRow(paymentIndex + 2);
+  
+  _add('Audit_Log', {
+    log_id: Utilities.getUuid(),
+    user_id: user.user_id,
+    action: 'DELETE_PAYMENT',
+    entity: 'Payments',
+    entity_id: paymentId,
+    details: 'حذف دفعة',
+    created_at: _now(),
+  });
+  
+  return { success: true };
+}
+
+// تحديث رصيد الزبون
+function _updateCustomerBalance(customerId, amount, currency, operation) {
+  const customers = _all('Customers');
+  const customerIndex = customers.findIndex(c => c.customer_id === customerId);
+  if (customerIndex === -1) return;
+  
+  const sheet = _ss().getSheetByName('Customers');
+  const rowIndex = customerIndex + 2;
+  
+  const balanceField = currency === 'USD' ? 'opening_usd' : 'opening_syp';
+  const balanceCol = H.Customers.indexOf(balanceField) + 1;
+  
+  const currentBalance = Number(customers[customerIndex][balanceField] || 0);
+  let newBalance;
+  
+  if (operation === 'credit') {
+    // استلام: إنقاص الدين (خصم من الرصيد)
+    newBalance = currentBalance - amount;
+  } else {
+    // صرف: زيادة الدين (إضافة للرصيد)
+    newBalance = currentBalance + amount;
+  }
+  
+  sheet.getRange(rowIndex, balanceCol).setValue(newBalance);
+}
+
+// تحديث رصيد الصندوق
+function _updateBoxBalance(boxType, currency, amount, actionType) {
+  const boxesBalance = _all('Boxes_Balance');
+  let box = boxesBalance.find(b => b.box_name === boxType && b.currency === currency);
+  
+  const sheet = _ss().getSheetByName('Boxes_Balance');
+  
+  if (!box) {
+    // إنشاء صندوق جديد
+    const boxId = 'box_' + boxType + '_' + currency.toLowerCase();
+    _add('Boxes_Balance', {
+      box_id: boxId,
+      box_name: boxType,
+      currency: currency,
+      balance: 0,
+      last_updated: _now(),
+    });
+    box = { box_id: boxId, box_name: boxType, currency: currency, balance: 0 };
+  }
+  
+  const boxIndex = boxesBalance.findIndex(b => b.box_id === box.box_id);
+  const rowIndex = boxIndex + 2;
+  
+  const balanceCol = H.Boxes_Balance.indexOf('balance') + 1;
+  const lastUpdatedCol = H.Boxes_Balance.indexOf('last_updated') + 1;
+  
+  const currentBalance = Number(box.balance || 0);
+  let newBalance;
+  
+  if (actionType === 'receive') {
+    // استلام: زيادة الرصيد
+    newBalance = currentBalance + amount;
+  } else {
+    // صرف: إنقاص الرصيد
+    newBalance = currentBalance - amount;
+  }
+  
+  sheet.getRange(rowIndex, balanceCol).setValue(newBalance);
+  sheet.getRange(rowIndex, lastUpdatedCol).setValue(_now());
+}
+
+// إرسال إشعار
+function _handleSendNotification(body, user) {
+  const userIds = body.user_ids || [];
+  const title = body.title || '';
+  const messageBody = body.body || '';
+  const type = body.type || 'general';
+  const entityType = body.entity_type || '';
+  const entityId = body.entity_id || '';
+  
+  if (!title || !messageBody) {
+    throw new Error('العنوان والرسالة مطلوبان');
+  }
+  
+  const now = _now();
+  const notificationId = Utilities.getUuid();
+  
+  // إرسال الإشعار لكل مستخدم
+  userIds.forEach(userId => {
+    _add('Notifications', {
+      notification_id: notificationId + '_' + userId,
+      user_id: userId,
+      title: title,
+      body: messageBody,
+      type: type,
+      entity_type: entityType,
+      entity_id: entityId,
+      read_at: '',
+      created_at: now,
+    });
+  });
+  
+  return { success: true };
+}
+
+// إرسال إشعار لأدوار محددة
+function _sendNotificationToRoles(rolesStr, title, messageBody, entityType, entityId) {
+  const roles = rolesStr.split(',');
+  const users = _all('Users').filter(u => roles.includes(u.role) && u.status === 'active');
+  
+  const userIds = users.map(u => u.user_id);
+  if (userIds.length > 0) {
+    _handleSendNotification({
+      user_ids: userIds,
+      title: title,
+      body: messageBody,
+      type: 'system',
+      entity_type: entityType,
+      entity_id: entityId,
+    }, { user_id: 'system', role: 'system' });
+  }
+}
+
+// تحديث دالة إضافة دفعة القديمة للتوافق
+function _handleAddPaymentOld(body, user) {
+  _needRole(user, ['admin', 'accountant']);
+  const amount = Number(body.amount || 0);
+  if (!body.customer_id || amount <= 0) {
+    throw new Error('بيانات الدفعة غير صالحة');
+  }
+  _add('Payments', {
+    payment_id: Utilities.getUuid(),
+    customer_id: body.customer_id,
+    order_id: body.order_id || '',
+    amount: amount,
+    currency: body.currency || 'USD',
+    box_type: body.box_type || 'cash_box',
+    method: body.method || 'cash',
+    payment_date: body.payment_date || _now(),
+    note: body.note || '',
+    created_by: user.user_id,
+    created_at: _now(),
+    action_type: 'receive',
+  });
+  return { saved: true };
 }

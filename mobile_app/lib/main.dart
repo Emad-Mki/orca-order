@@ -3541,7 +3541,7 @@ class PaymentsScreen extends StatefulWidget {
   State<PaymentsScreen> createState() => _PaymentsScreenState();
 }
 
-class _PaymentsScreenState extends State<PaymentsScreen> {
+class _PaymentsScreenState extends State<PaymentsScreen> with SingleTickerProviderStateMixin {
   List<dynamic> _payments = [];
   bool _isLoading = true;
 
