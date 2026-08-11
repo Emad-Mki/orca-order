@@ -16,6 +16,61 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 // --- النماذج (Models) ---
+class OrderStatus {
+  static const String pending = 'pending'; // قيد المعالجة - عندما يرسل الزبون الطلب
+  static const String priced = 'priced'; // تم التسعير - عندما يثبت المحاسب السعر
+  static const String approved = 'approved'; // تمت الموافقة - عندما يؤكد الزبون الفاتورة
+  static const String customerChanged = 'customer_changed'; // تم التعديل - عندما يعدل الزبون بعد التسعير
+  static const String preparing = 'preparing'; // قيد التجهيز - المستودع يجهز للشحن
+  static const String shipping = 'shipping'; // منتهي - تم التسليم للشحن
+  static const String cancelled = 'cancelled'; // ملغى
+  static const String deleted = 'deleted'; // محذوف نهائياً
+
+  static String getArabicStatus(String status) {
+    switch (status) {
+      case pending: return 'قيد المعالجة';
+      case priced: return 'تم التسعير';
+      case approved: return 'تمت الموافقة';
+      case customerChanged: return 'تم التعديل';
+      case preparing: return 'قيد التجهيز';
+      case shipping: return 'منتهي (قيد الشحن)';
+      case cancelled: return 'ملغى';
+      case deleted: return 'محذوف';
+      default: return status;
+    }
+  }
+
+  static Color getStatusColor(String status) {
+    switch (status) {
+      case pending: return Colors.orange;
+      case priced: return Colors.blue;
+      case approved: return Colors.green;
+      case customerChanged: return Colors.amber;
+      case preparing: return Colors.purple;
+      case shipping: return Colors.teal;
+      case cancelled: return Colors.red;
+      case deleted: return Colors.grey;
+      default: return Colors.grey;
+    }
+  }
+}
+
+class CartItem {
+  final Product product;
+  double quantity;
+  String? note;
+  String? selectedUnit;
+
+  CartItem({required this.product, this.quantity = 1.0, this.note, this.selectedUnit});
+
+  Map<String, dynamic> toJson() => {
+    'code': product.code,
+    'name': product.name,
+    'quantity': quantity,
+    'unit': selectedUnit ?? product.unit,
+    'note': note ?? '',
+  };
+}
 class User {
   final String username;
   final String fullName;
@@ -1062,6 +1117,54 @@ class _ProductsScreenState extends State<ProductsScreen> {
     super.dispose();
   }
   
+  // Helper function to build Google Drive image URL from various formats
+  static String? buildImageUrl(String? imageIdentifier) {
+    if (imageIdentifier == null || imageIdentifier.isEmpty) return null;
+    
+    // If already a full HTTP URL, return as is
+    if (imageIdentifier.startsWith('http://') || imageIdentifier.startsWith('https://')) {
+      return imageIdentifier;
+    }
+    
+    // Check if it's a Google Drive file ID (various formats)
+    // Format 1: Just the file ID
+    // Format 2: https://drive.google.com/file/d/FILE_ID/view
+    // Format 3: https://drive.google.com/open?id=FILE_ID
+    // Format 4: https://lh3.googleusercontent.com/... (already a thumbnail)
+    
+    if (imageIdentifier.contains('drive.google.com')) {
+      // Extract file ID from Google Drive URL
+      RegExp regExp = RegExp(r'/d/([a-zA-Z0-9_-]+)');
+      Match? match = regExp.firstMatch(imageIdentifier);
+      if (match != null) {
+        String fileId = match.group(1)!;
+        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
+      }
+      
+      // Try another pattern for ?id= format
+      regExp = RegExp(r'[?&]id=([a-zA-Z0-9_-]+)');
+      match = regExp.firstMatch(imageIdentifier);
+      if (match != null) {
+        String fileId = match.group(1)!;
+        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
+      }
+    }
+    
+    // If it contains 'lh3.googleusercontent.com', it's already a valid URL
+    if (imageIdentifier.contains('googleusercontent.com')) {
+      return imageIdentifier;
+    }
+    
+    // Assume it's a raw file ID and construct the URL
+    // Remove any special characters that might interfere
+    String cleanId = imageIdentifier.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
+    if (cleanId.isNotEmpty && cleanId.length > 5) {
+      return 'https://lh3.googleusercontent.com/d/$cleanId=w400-h400-p-k-no-nu';
+    }
+    
+    return null;
+  }
+
   Future<void> _fetchProducts() async {
     try {
       final data = await ApiService().post({'action': 'getProducts'});
@@ -1079,6 +1182,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('عرض البيانات المخزنة محلياً (وضع عدم الاتصال)'), backgroundColor: Colors.orange, duration: Duration(seconds: 2)),
           );
+        } else if (!isCached) {
+          // Auto-refresh in background after showing cached data
+          _scheduleBackgroundRefresh();
         }
       }
     } catch (e) {
@@ -1086,6 +1192,30 @@ class _ProductsScreenState extends State<ProductsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('خطأ في تحميل المنتجات: $e'), backgroundColor: Colors.red),
       );
+    }
+  }
+
+  // Schedule a background refresh when connection is restored
+  void _scheduleBackgroundRefresh() async {
+    await Future.delayed(const Duration(seconds: 2));
+    if (mounted && await ApiService().isOnline()) {
+      try {
+        final data = await ApiService().post({'action': 'getProducts'}, forceRefresh: true);
+        var list = data['products'] ?? data['data'] ?? data['items'] ?? data['result'];
+        if (mounted && list != null) {
+          setState(() {
+            _products = (list as List).map((p) => Product.fromJson(p)).toList();
+            _extractFilters();
+            _applyFilters();
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم تحديث البيانات بنجاح'), backgroundColor: Colors.green, duration: Duration(seconds: 2)),
+          );
+        }
+      } catch (e) {
+        // Silently fail on background refresh
+        print('Background refresh failed: $e');
+      }
     }
   }
 
@@ -1180,9 +1310,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   leading: p.imageUrl != null && p.imageUrl!.isNotEmpty
                     ? ClipOval(
                         child: CachedNetworkImage(
-                          imageUrl: p.imageUrl!.startsWith('http') 
-                            ? p.imageUrl! 
-                            : 'https://drive.google.com/thumbnail?id=${p.imageUrl!}&sz=w200',
+                          imageUrl: _buildImageUrl(p.imageUrl) ?? '',
                           width: 50,
                           height: 50,
                           fit: BoxFit.cover,
@@ -2253,7 +2381,52 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في تحميل المنتجات: $e'), backgroundColor: Colors.red),
+      );
     }
+  }
+
+  // Helper function to build Google Drive image URL from various formats
+  static String? buildImageUrl(String? imageIdentifier) {
+    if (imageIdentifier == null || imageIdentifier.isEmpty) return null;
+    
+    // If already a full HTTP URL, return as is
+    if (imageIdentifier.startsWith('http://') || imageIdentifier.startsWith('https://')) {
+      return imageIdentifier;
+    }
+    
+    // Check if it's a Google Drive file ID (various formats)
+    if (imageIdentifier.contains('drive.google.com')) {
+      // Extract file ID from Google Drive URL
+      RegExp regExp = RegExp(r'/d/([a-zA-Z0-9_-]+)');
+      Match? match = regExp.firstMatch(imageIdentifier);
+      if (match != null) {
+        String fileId = match.group(1)!;
+        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
+      }
+      
+      // Try another pattern for ?id= format
+      regExp = RegExp(r'[?&]id=([a-zA-Z0-9_-]+)');
+      match = regExp.firstMatch(imageIdentifier);
+      if (match != null) {
+        String fileId = match.group(1)!;
+        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
+      }
+    }
+    
+    // If it contains 'googleusercontent.com', it's already a valid URL
+    if (imageIdentifier.contains('googleusercontent.com')) {
+      return imageIdentifier;
+    }
+    
+    // Assume it's a raw file ID and construct the URL
+    String cleanId = imageIdentifier.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
+    if (cleanId.isNotEmpty && cleanId.length > 5) {
+      return 'https://lh3.googleusercontent.com/d/$cleanId=w400-h400-p-k-no-nu';
+    }
+    
+    return null;
   }
 
   void _showProductDetails(Product product) {
@@ -2416,20 +2589,15 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                               // صورة المنتج
                               Expanded(
                                 child: p.imageUrl != null && p.imageUrl!.isNotEmpty
-                                  ? Image.network(
-                                      p.imageUrl!.startsWith('http') 
-                                        ? p.imageUrl! 
-                                        : 'https://drive.google.com/thumbnail?id=${p.imageUrl!}&sz=w200',
+                                  ? CachedNetworkImage(
+                                      imageUrl: _buildImageUrl(p.imageUrl) ?? '',
                                       fit: BoxFit.cover,
                                       width: double.infinity,
-                                      loadingBuilder: (context, child, progress) {
-                                        if (progress == null) return child;
-                                        return Container(
-                                          color: Colors.grey[200],
-                                          child: const Center(child: CircularProgressIndicator()),
-                                        );
-                                      },
-                                      errorBuilder: (context, error, stackTrace) {
+                                      placeholder: (context, url) => Container(
+                                        color: Colors.grey[200],
+                                        child: const Center(child: CircularProgressIndicator()),
+                                      ),
+                                      errorWidget: (context, error, stackTrace) {
                                         return Container(
                                           color: Colors.grey[200],
                                           child: const Icon(Icons.inventory_2, size: 40, color: Colors.grey),
@@ -2519,14 +2687,23 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                       leading: item.product.imageUrl != null && item.product.imageUrl!.isNotEmpty
                                         ? ClipRRect(
                                             borderRadius: BorderRadius.circular(4),
-                                            child: Image.network(
-                                              item.product.imageUrl!.startsWith('http') 
-                                                ? item.product.imageUrl! 
-                                                : 'https://drive.google.com/thumbnail?id=${item.product.imageUrl!}&sz=w100',
+                                            child: CachedNetworkImage(
+                                              imageUrl: _buildImageUrl(item.product.imageUrl) ?? '',
                                               width: 50,
                                               height: 50,
                                               fit: BoxFit.cover,
-                                              errorBuilder: (context, error, stackTrace) => const Icon(Icons.inventory_2),
+                                              placeholder: (context, url) => Container(
+                                                width: 50,
+                                                height: 50,
+                                                color: Colors.grey[200],
+                                                child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                                              ),
+                                              errorWidget: (context, error, stackTrace) => Container(
+                                                width: 50,
+                                                height: 50,
+                                                color: Colors.grey[200],
+                                                child: const Icon(Icons.inventory_2, size: 30),
+                                              ),
                                             ),
                                           )
                                         : const Icon(Icons.inventory_2),
@@ -4474,11 +4651,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
   
   Widget _buildProductImage(Product product, {double? size, double? height}) {
-    final imageUrl = product.imageUrl != null && product.imageUrl!.isNotEmpty
-        ? (product.imageUrl!.startsWith('http') 
-            ? product.imageUrl! 
-            : 'https://drive.google.com/thumbnail?id=${product.imageUrl!}&sz=w${size != null ? size.toInt() : 400}')
-        : null;
+    final imageUrl = _buildImageUrlStatic(product.imageUrl);
     
     if (imageUrl == null) {
       return Container(
@@ -4510,6 +4683,48 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
       ),
     );
+  }
+  
+  // Static helper function to build Google Drive image URL
+  static String? _buildImageUrlStatic(String? imageIdentifier) {
+    if (imageIdentifier == null || imageIdentifier.isEmpty) return null;
+    
+    // If already a full HTTP URL, return as is
+    if (imageIdentifier.startsWith('http://') || imageIdentifier.startsWith('https://')) {
+      return imageIdentifier;
+    }
+    
+    // Check if it's a Google Drive file ID (various formats)
+    if (imageIdentifier.contains('drive.google.com')) {
+      // Extract file ID from Google Drive URL
+      RegExp regExp = RegExp(r'/d/([a-zA-Z0-9_-]+)');
+      Match? match = regExp.firstMatch(imageIdentifier);
+      if (match != null) {
+        String fileId = match.group(1)!;
+        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
+      }
+      
+      // Try another pattern for ?id= format
+      regExp = RegExp(r'[?&]id=([a-zA-Z0-9_-]+)');
+      match = regExp.firstMatch(imageIdentifier);
+      if (match != null) {
+        String fileId = match.group(1)!;
+        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
+      }
+    }
+    
+    // If it contains 'googleusercontent.com', it's already a valid URL
+    if (imageIdentifier.contains('googleusercontent.com')) {
+      return imageIdentifier;
+    }
+    
+    // Assume it's a raw file ID and construct the URL
+    String cleanId = imageIdentifier.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
+    if (cleanId.isNotEmpty && cleanId.length > 5) {
+      return 'https://lh3.googleusercontent.com/d/$cleanId=w400-h400-p-k-no-nu';
+    }
+    
+    return null;
   }
   
   @override
