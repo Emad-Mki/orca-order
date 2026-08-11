@@ -283,7 +283,7 @@ function _handleGetOrders(body, user) {
 
 // جلب تفاصيل طلب معين
 function _handleGetOrderDetails(body, user) {
-  const orderId = body.orderId;
+  const orderId = body.orderId || body.order_id;
   if (!orderId) throw new Error('رقم الطلب مطلوب');
   
   const orders = _all('Orders').filter(o => o.order_id === orderId);
@@ -407,7 +407,7 @@ function _handleCreateOrder(body, user) {
 
 // تحديث حالة الطلب
 function _handleUpdateOrderStatus(body, user) {
-  const orderId = body.orderId;
+  const orderId = body.orderId || body.order_id;
   const newStatus = body.status;
   if (!orderId || !newStatus) throw new Error('بيانات غير صالحة');
   
@@ -441,7 +441,7 @@ function _handleUpdateOrderStatus(body, user) {
 
 // تعليم الطلب كمقروء
 function _handleMarkOrderAsRead(body, user) {
-  const orderId = body.order_id;
+  const orderId = body.orderId || body.order_id;
   if (!orderId) throw new Error('رقم الطلب مطلوب');
   
   const orders = _all('Orders');
@@ -462,7 +462,7 @@ function _handleMarkOrderAsRead(body, user) {
 
 // إلغاء طلب
 function _handleCancelOrder(body, user) {
-  const orderId = body.orderId;
+  const orderId = body.orderId || body.order_id;
   const reason = body.cancellation_reason || '';
   if (!orderId) throw new Error('رقم الطلب مطلوب');
   
@@ -497,7 +497,7 @@ function _handleCancelOrder(body, user) {
 
 // حذف طلب نهائي
 function _handleDeleteOrder(body, user) {
-  const orderId = body.orderId;
+  const orderId = body.orderId || body.order_id;
   const reason = body.cancellation_reason || '';
   if (!orderId) throw new Error('رقم الطلب مطلوب');
   
@@ -541,7 +541,7 @@ function _handleDeleteOrder(body, user) {
 // تحديث تسعير الطلب (للمحاسب)
 function _handleUpdateOrderPricing(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
-  const orderId = body.orderId;
+  const orderId = body.orderId || body.order_id;
   const items = body.items;
   if (!orderId || !Array.isArray(items)) throw new Error('بيانات غير صالحة');
   
@@ -570,16 +570,77 @@ function _handleUpdateOrderPricing(body, user) {
     const rowIndex = orderIndex + 2;
     const statusCol = H.Orders.indexOf('status') + 1;
     const updatedCol = H.Orders.indexOf('updated_at') + 1;
+    const customerNameCol = H.Orders.indexOf('customer_name') + 1;
+    
     ordersSheet.getRange(rowIndex, statusCol).setValue('priced');
     ordersSheet.getRange(rowIndex, updatedCol).setValue(_now());
+    
+    // جلب اسم الزبون لإرسال الإشعار
+    const customerName = ordersSheet.getRange(rowIndex, customerNameCol).getValue();
+    
+    // إرسال إشعار للزبون بأن التسعير جاهز
+    try {
+      const notificationData = {
+        action: 'sendNotification',
+        title: 'تم تسعير طلبك',
+        body: `تم اعتماد أسعار طلبك رقم ${orderId}. يرجى مراجعة الفاتورة وتأكيدها.`,
+        type: 'order_priced',
+        orderId: orderId,
+        targetRoles: ['customer'],
+        customerName: customerName
+      };
+      
+      // استدعاء دالة إرسال الإشعارات
+      _sendNotificationToUser(notificationData);
+    } catch (notifError) {
+      Logger.log('خطأ في إرسال الإشعار: ' + notifError);
+      // لا نوقف العملية إذا فشل الإشعار
+    }
   }
   
-  return { success: true };
+  return { success: true, message: 'تم إرسال التسعير بنجاح' };
+}
+
+// دالة مساعدة لإرسال إشعار لمستخدم محدد
+function _sendNotificationToUser(data) {
+  try {
+    const notificationsSheet = _ss().getSheetByName('Notifications');
+    if (!notificationsSheet) {
+      Logger.log('جدول Notifications غير موجود');
+      return;
+    }
+    
+    const headers = _getHeaders('Notifications');
+    const newRow = [];
+    
+    // إنشاء صف جديد للإشعار
+    headers.forEach(h => {
+      let value = '';
+      switch(h) {
+        case 'notification_id': value = Utilities.getUuid(); break;
+        case 'title': value = data.title || ''; break;
+        case 'body': value = data.body || ''; break;
+        case 'type': value = data.type || 'general'; break;
+        case 'order_id': value = data.orderId || ''; break;
+        case 'customer_name': value = data.customerName || ''; break;
+        case 'target_role': value = data.targetRoles ? data.targetRoles.join(',') : ''; break;
+        case 'is_read': value = false; break;
+        case 'created_at': value = _now(); break;
+        default: value = '';
+      }
+      newRow.push(value);
+    });
+    
+    notificationsSheet.appendRow(newRow);
+    Logger.log('تم حفظ الإشعار بنجاح');
+  } catch (e) {
+    Logger.log('خطأ في حفظ الإشعار: ' + e);
+  }
 }
 
 // تحديث طلب من قبل الزبون (تعديل الكميات أو حذف مواد)
 function _handleUpdateCustomerOrder(body, user) {
-  const orderId = body.orderId;
+  const orderId = body.orderId || body.order_id;
   const items = body.items;
   if (!orderId || !Array.isArray(items)) throw new Error('بيانات غير صالحة');
   
@@ -622,7 +683,7 @@ function _handleUpdateCustomerOrder(body, user) {
 // تأكيد تجهيز المستودع
 function _handleConfirmWarehousePrep(body, user) {
   _needRole(user, ['admin', 'manager', 'warehouse']);
-  const orderId = body.orderId;
+  const orderId = body.orderId || body.order_id;
   const items = body.items;
   if (!orderId || !Array.isArray(items)) throw new Error('بيانات غير صالحة');
   

@@ -2127,6 +2127,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     super.initState();
     role = widget.session['role']?.toString().toLowerCase() ?? 'customer';
     _fetchOrderItems();
+    // تعليم الطلب كمقروء عند فتحه (للمدير/المحاسب فقط)
+    if (role == 'admin' || role == 'manager' || role == 'accountant') {
+      _markOrderAsRead();
+    }
+  }
+
+  Future<void> _markOrderAsRead() async {
+    try {
+      await ApiService().post({
+        'action': 'markOrderAsRead',
+        'orderId': widget.order['id'],
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+    } catch (e) {
+      Logger.log('خطأ في تعليم الطلب كمقروء: $e');
+    }
   }
 
   Future<void> _fetchOrderItems() async {
@@ -2735,86 +2752,508 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('تسعير واعتماد الكميات'),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade100,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.calculate, color: Colors.blue.shade700),
+              ),
+              const SizedBox(width: 12),
+              const Text('تسعير واعتماد الكميات', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ],
+          ),
           content: SizedBox(
             width: double.maxFinite,
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: editedItems.length,
-              itemBuilder: (context, index) {
-                final item = editedItems[index];
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text('المطلوب: ${item['quantity_requested']} | متوفر: ${item['stock']}', style: const TextStyle(fontSize: 12)),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                decoration: const InputDecoration(labelText: 'الكمية المعتمدة'),
-                                keyboardType: TextInputType.number,
-                                onChanged: (val) => item['quantity_approved'] = double.tryParse(val) ?? 0,
-                                controller: TextEditingController(text: item['quantity_approved'].toString()),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextField(
-                                decoration: const InputDecoration(labelText: 'السعر النهائي'),
-                                keyboardType: TextInputType.number,
-                                onChanged: (val) => item['final_price'] = double.tryParse(val) ?? 0,
-                                controller: TextEditingController(text: item['final_price'].toString()),
-                              ),
-                            ),
-                            DropdownButton<String>(
-                              value: item['currency'],
-                              items: ['USD', 'SYP'].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                              onChanged: (val) => setDialogState(() => item['currency'] = val!),
-                            ),
-                          ],
-                        ),
-                        TextField(
-                          decoration: const InputDecoration(labelText: 'ملاحظات المحاسب'),
-                          onChanged: (val) => item['accountant_note'] = val,
-                        ),
-                      ],
-                    ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ملخص سريع
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blue.shade200),
                   ),
-                );
-              },
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      Column(
+                        children: [
+                          Text('${editedItems.length}', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
+                          const Text('مواد', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                      Container(width: 1, height: 30, color: Colors.blue.shade200),
+                      Column(
+                        children: [
+                          FutureBuilder<double>(
+                            future: _calculateTotal(editedItems),
+                            builder: (context, snapshot) {
+                              final total = snapshot.data ?? 0;
+                              return Text(
+                                '${total.toStringAsFixed(2)}',
+                                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green.shade700),
+                              );
+                            },
+                          ),
+                          const Text('الإجمالي', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // قائمة المواد
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: editedItems.length,
+                    itemBuilder: (context, index) {
+                      final item = editedItems[index];
+                      final hasStock = (item['stock'] ?? 0) > 0;
+                      return Card(
+                        elevation: 2,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: hasStock ? Colors.green.shade100 : Colors.red.shade100,
+                            width: 1,
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      item['name'],
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: hasStock ? Colors.green.shade100 : Colors.red.shade100,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      hasStock ? 'متوفر' : 'غير متوفر',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: hasStock ? Colors.green.shade800 : Colors.red.shade800,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'المطلوب: ${item['quantity_requested']} | المتوفر: ${item['stock']}',
+                                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      decoration: InputDecoration(
+                                        labelText: 'الكمية المعتمدة',
+                                        labelStyle: TextStyle(fontSize: 12, color: Colors.blue.shade700),
+                                        filled: true,
+                                        fillColor: Colors.blue.shade50,
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(10),
+                                          borderSide: BorderSide(color: Colors.blue.shade200),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(10),
+                                          borderSide: BorderSide(color: Colors.blue.shade400, width: 2),
+                                        ),
+                                        prefixIcon: const Icon(Icons.production_quantity_limits, size: 20),
+                                      ),
+                                      keyboardType: TextInputType.number,
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                      onChanged: (val) => item['quantity_approved'] = double.tryParse(val) ?? 0,
+                                      controller: TextEditingController(text: item['quantity_approved'].toString()),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextField(
+                                      decoration: InputDecoration(
+                                        labelText: 'السعر النهائي',
+                                        labelStyle: TextStyle(fontSize: 12, color: Colors.green.shade700),
+                                        filled: true,
+                                        fillColor: Colors.green.shade50,
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(10),
+                                          borderSide: BorderSide(color: Colors.green.shade200),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(10),
+                                          borderSide: BorderSide(color: Colors.green.shade400, width: 2),
+                                        ),
+                                        prefixIcon: const Icon(Icons.attach_money, size: 20),
+                                      ),
+                                      keyboardType: TextInputType.number,
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                      onChanged: (val) => item['final_price'] = double.tryParse(val) ?? 0,
+                                      controller: TextEditingController(text: item['final_price'].toString()),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: item['currency'] == 'USD' ? Colors.blue.shade100 : Colors.orange.shade100,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: item['currency'] == 'USD' ? Colors.blue.shade300 : Colors.orange.shade300,
+                                      ),
+                                    ),
+                                    child: DropdownButton<String>(
+                                      value: item['currency'],
+                                      underline: const SizedBox(),
+                                      items: ['USD', 'SYP'].map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontWeight: FontWeight.bold)))).toList(),
+                                      onChanged: (val) => setDialogState(() => item['currency'] = val!),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                decoration: InputDecoration(
+                                  labelText: 'ملاحظات المحاسب (اختياري)',
+                                  labelStyle: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                  filled: true,
+                                  fillColor: Colors.grey.shade50,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide(color: Colors.grey.shade300),
+                                  ),
+                                  prefixIcon: const Icon(Icons.note_alt, size: 20),
+                                ),
+                                maxLines: 2,
+                                onChanged: (val) => item['accountant_note'] = val,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
+          actionsPadding: const EdgeInsets.all(16),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-            FilledButton(
-              onPressed: () async {
-                try {
-                  await ApiService().post({
-                    'action': 'updateOrderPricing',
-                    'orderId': widget.order['id'],
-                    'items': editedItems,
-                    'username': widget.session['username'],
-                    'token': widget.session['token'],
-                  });
-                  if (!mounted) return;
-                  Navigator.pop(context);
-                  _fetchOrderItems();
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
-                }
-              },
-              child: const Text('إرسال التسعير للزبون'),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                    label: const Text('إلغاء'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton.icon(
+                    onPressed: () => _confirmAndSubmitPricing(editedItems, context),
+                    icon: const Icon(Icons.send),
+                    label: const Text('إرسال التسعير للزبون'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      backgroundColor: Colors.blue.shade600,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<double> _calculateTotal(List<Map<String, dynamic>> items) async {
+    double total = 0;
+    for (var item in items) {
+      final qty = (item['quantity_approved'] ?? 0).toDouble();
+      final price = (item['final_price'] ?? 0).toDouble();
+      total += qty * price;
+    }
+    return total;
+  }
+
+  void _confirmAndSubmitPricing(List<Map<String, dynamic>> editedItems, BuildContext dialogContext) {
+    // التحقق من البيانات
+    bool hasError = false;
+    String errorMsg = '';
+    
+    for (var item in editedItems) {
+      if ((item['quantity_approved'] ?? 0) <= 0) {
+        hasError = true;
+        errorMsg = 'يجب تحديد كمية معتمدة لكل مادة';
+        break;
+      }
+      if ((item['final_price'] ?? 0) <= 0) {
+        hasError = true;
+        errorMsg = 'يجب تحديد سعر نهائي لكل مادة';
+        break;
+      }
+    }
+
+    if (hasError) {
+      ScaffoldMessenger.of(dialogContext).showSnackBar(
+        SnackBar(
+          content: Text(errorMsg),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      return;
+    }
+
+    // إغلاق حوار التسعير
+    Navigator.pop(dialogContext);
+
+    // عرض حوار التأكيد النهائي
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Text('تأكيد إرسال التسعير', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'هل أنت متأكد من إرسال هذا التسعير للزبون؟',
+              style: TextStyle(fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('عدد المواد:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text('${editedItems.length}', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
+                    ],
+                  ),
+                  const Divider(),
+                  FutureBuilder<double>(
+                    future: _calculateTotal(editedItems),
+                    builder: (context, snapshot) {
+                      final total = snapshot.data ?? 0;
+                      return Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('القيمة الإجمالية:', style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text(
+                            '${total.toStringAsFixed(2)}',
+                            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green.shade700, fontSize: 18),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '⚠️ ملاحظة: بعد الإرسال لا يمكن تعديل التسعيرة إلا بإنشاء تسعيرة جديدة',
+              style: TextStyle(fontSize: 12, color: Colors.red, fontStyle: FontStyle.italic),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actionsPadding: const EdgeInsets.all(16),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('عودة للتعديل'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context); // إغلاق حوار التأكيد
+                    await _submitPricingToServer(editedItems);
+                  },
+                  icon: const Icon(Icons.check_circle),
+                  label: const Text('تأكيد وإرسال'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    backgroundColor: Colors.green.shade600,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submitPricingToServer(List<Map<String, dynamic>> editedItems) async {
+    try {
+      // عرض مؤشر تحميل
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => Center(
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.blue.shade600),
+                  const SizedBox(height: 16),
+                  const Text('جاري إرسال التسعير...', style: TextStyle(fontSize: 16)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final response = await ApiService().post({
+        'action': 'updateOrderPricing',
+        'orderId': widget.order['id'],
+        'items': editedItems,
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
+
+      if (!mounted) return;
+      Navigator.pop(context); // إغلاق مؤشر التحميل
+
+      if (response['success'] == true) {
+        // عرض رسالة نجاح
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.check_circle, color: Colors.green.shade700, size: 28),
+                ),
+                const SizedBox(width: 12),
+                const Text('تم بنجاح', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ],
+            ),
+            content: const Text(
+              'تم إرسال التسعير للزبون بنجاح.\nسيتم إشعار الزبون بمراجعة الفاتورة.',
+              style: TextStyle(fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+            actions: [
+              Center(
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _fetchOrderItems();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('تحديث'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      } else {
+        throw Exception(response['error'] ?? 'حدث خطأ غير معروف');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // إغلاق مؤشر التحميل في حال الخطأ
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.error, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(child: Text('خطأ: $e')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   void _showWarehousePrepDialog() {
