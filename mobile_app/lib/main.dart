@@ -14,6 +14,8 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'dart:typed_data';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 // --- النماذج (Models) ---
 class OrderStatus {
@@ -442,6 +444,41 @@ class OrcaApp extends StatefulWidget {
 
 class _OrcaAppState extends State<OrcaApp> {
   ThemeMode _themeMode = ThemeMode.light;
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+  @override
+  void initState() {
+    super.initState();
+    _requestNotificationPermission();
+    _initializeNotifications();
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.notification.status;
+      if (!status.isGranted) {
+        await Permission.notification.request();
+      }
+    }
+  }
+
+  Future<void> _initializeNotifications() async {
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    const settings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+    
+    await flutterLocalNotificationsPlugin.initialize(
+      settings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        // معالجة النقر على الإشعار
+        debugPrint('Notification tapped: ${response.payload}');
+      },
+    );
+  }
 
   void toggleTheme(bool isDark) {
     setState(() {
@@ -656,6 +693,44 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _navItems = _getNavItemsForRole((widget.session['role'] ?? 'customer').toString().toLowerCase());
+    // الاستماع لتحديثات حالة الطلبات وعرض الإشعارات
+    _listenToOrderUpdates();
+  }
+
+  Future<void> _listenToOrderUpdates() async {
+    // هذه الدالة يمكن استخدامها للاستماع للتحديثات من الخادم
+    // في الوقت الحالي، سنكتفي بتحديث دوري كل 30 ثانية
+    Future.delayed(const Duration(seconds: 30), () {
+      if (mounted) {
+        _showOrderUpdateNotification('تم تحديث حالة الطلب', 'يرجى مراجعة صفحة الطلبات');
+        _listenToOrderUpdates();
+      }
+    });
+  }
+
+  Future<void> _showOrderUpdateNotification(String title, String body) async {
+    const androidDetails = AndroidNotificationDetails(
+      'order_updates_channel',
+      'تحديثات الطلبات',
+      channelDescription: 'إشعارات حول تغيير حالة الطلبات',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+    );
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+    
+    await (context.findAncestorStateOfType<_OrcaAppState>()?.flutterLocalNotificationsPlugin ?? FlutterLocalNotificationsPlugin()).show(
+      DateTime.now().millisecond,
+      title,
+      body,
+      details,
+      payload: 'order_update',
+    );
   }
 
   List<NavItem> _getNavItemsForRole(String role) {
@@ -4155,77 +4230,155 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
     
-    return RefreshIndicator(
-      onRefresh: _fetchNotifications,
-      child: Column(
-        children: [
-          if (_notifications.isEmpty)
-            const Expanded(child: Center(child: Text('لا توجد إشعارات حالياً')))
-          else
-            Expanded(
-              child: ListView.builder(
-                itemCount: _notifications.length,
-                itemBuilder: (context, index) {
-                  final n = _notifications[index];
-                  final bool isRead = n['read_at'] != null && n['read_at'].toString().isNotEmpty;
-                  
-                  // أيقونات مخصصة حسب العنوان
-                  IconData icon = Icons.notifications;
-                  Color iconColor = Colors.blue;
-                  if (n['title'].contains('تسعير') || n['title'].contains('فاتورة')) {
-                    icon = Icons.receipt_long;
-                    iconColor = Colors.green;
-                  } else if (n['title'].contains('شحن') || n['title'].contains('تجهيز')) {
-                    icon = Icons.local_shipping;
-                    iconColor = Colors.orange;
-                  } else if (n['title'].contains('نقص')) {
-                    icon = Icons.warning_amber_rounded;
-                    iconColor = Colors.red;
-                  }
-
-                  return Card(
-                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    elevation: isRead ? 0 : 3,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: isRead ? BorderSide(color: Colors.grey.shade300) : BorderSide.none,
-                    ),
-                    color: isRead ? Colors.grey.shade50 : Colors.white,
-                    child: ListTile(
-                      onTap: () => _handleNotificationTap(n),
-                      leading: CircleAvatar(
-                        backgroundColor: iconColor.withOpacity(isRead ? 0.2 : 1),
-                        child: Icon(icon, color: isRead ? iconColor : Colors.white, size: 20),
-                      ),
-                      title: Text(
-                        n['title'] ?? '',
-                        style: TextStyle(
-                          fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
-                          color: isRead ? Colors.grey.shade700 : Colors.black,
-                        ),
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(n['body'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
-                          const SizedBox(height: 4),
-                          Text(
-                            n['created_at']?.toString().split('T')[0] ?? '',
-                            style: const TextStyle(fontSize: 10, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                      trailing: !isRead 
-                        ? Container(width: 10, height: 10, decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.blue))
-                        : const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.grey),
-                    ),
-                  );
-                },
+    return Scaffold(
+      body: RefreshIndicator(
+        onRefresh: _fetchNotifications,
+        child: Column(
+          children: [
+            // شريط علوي مع زر اختبار الإشعارات
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _showTestNotification,
+                    icon: const Icon(Icons.notifications_active),
+                    label: const Text('تجربة إشعار'),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: _requestPermission,
+                    icon: const Icon(Icons.settings),
+                    label: const Text('الصلاحيات'),
+                  ),
+                ],
               ),
             ),
-        ],
+            if (_notifications.isEmpty)
+              const Expanded(child: Center(child: Text('لا توجد إشعارات حالياً')))
+            else
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _notifications.length,
+                  itemBuilder: (context, index) {
+                    final n = _notifications[index];
+                    final bool isRead = n['read_at'] != null && n['read_at'].toString().isNotEmpty;
+                    
+                    // أيقونات مخصصة حسب العنوان
+                    IconData icon = Icons.notifications;
+                    Color iconColor = Colors.blue;
+                    if (n['title'].contains('تسعير') || n['title'].contains('فاتورة')) {
+                      icon = Icons.receipt_long;
+                      iconColor = Colors.green;
+                    } else if (n['title'].contains('شحن') || n['title'].contains('تجهيز')) {
+                      icon = Icons.local_shipping;
+                      iconColor = Colors.orange;
+                    } else if (n['title'].contains('نقص')) {
+                      icon = Icons.warning_amber_rounded;
+                      iconColor = Colors.red;
+                    }
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      elevation: isRead ? 0 : 3,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: isRead ? BorderSide(color: Colors.grey.shade300) : BorderSide.none,
+                      ),
+                      color: isRead ? Colors.grey.shade50 : Colors.white,
+                      child: ListTile(
+                        onTap: () => _handleNotificationTap(n),
+                        leading: CircleAvatar(
+                          backgroundColor: iconColor.withOpacity(isRead ? 0.2 : 1),
+                          child: Icon(icon, color: isRead ? iconColor : Colors.white, size: 20),
+                        ),
+                        title: Text(
+                          n['title'] ?? '',
+                          style: TextStyle(
+                            fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
+                            color: isRead ? Colors.grey.shade700 : Colors.black,
+                          ),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(n['body'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 4),
+                            Text(
+                              n['created_at']?.toString().split('T')[0] ?? '',
+                              style: const TextStyle(fontSize: 10, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                        trailing: !isRead 
+                          ? Container(width: 10, height: 10, decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.green))
+                          : const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.grey),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _showTestNotification() async {
+    final appState = context.findAncestorStateOfType<_OrcaAppState>();
+    if (appState == null) return;
+
+    const androidDetails = AndroidNotificationDetails(
+      'order_updates_channel',
+      'تحديثات الطلبات',
+      channelDescription: 'إشعارات حول تغيير حالة الطلبات',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+    );
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+
+    await appState.flutterLocalNotificationsPlugin.show(
+      0,
+      'إشعار تجريبي',
+      'هذا إشعار تجريبي لاختبار نظام الإشعارات',
+      details,
+      payload: 'test_notification',
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إرسال الإشعار التجريبي')),
+      );
+    }
+  }
+
+  Future<void> _requestPermission() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.notification.status;
+      if (status.isDenied) {
+        await Permission.notification.request();
+      } else if (status.isPermanentlyDenied) {
+        openAppSettings();
+      }
+    }
+
+    if (mounted) {
+      final status = await Permission.notification.status;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(status.isGranted 
+            ? 'تم منح صلاحية الإشعارات ✓' 
+            : 'لم يتم منح صلاحية الإشعارات ✗'),
+          backgroundColor: status.isGranted ? Colors.green : Colors.orange,
+        ),
+      );
+    }
   }
 
   Future<void> _markAsRead(dynamic notificationId) async {
