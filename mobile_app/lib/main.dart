@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -505,8 +506,10 @@ class _OrcaAppState extends State<OrcaApp> {
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xff00658f),
           brightness: Brightness.dark,
+          surfaceTint: Colors.transparent,
         ),
         fontFamily: 'Cairo',
+        scaffoldBackgroundColor: const Color(0xFF1A1A2E),
       ),
       theme: ThemeData(
         useMaterial3: true,
@@ -515,22 +518,47 @@ class _OrcaAppState extends State<OrcaApp> {
           primary: const Color(0xff00658f),
           secondary: const Color(0xff00a8e8),
           surface: Colors.white,
+          surfaceTint: Colors.transparent,
         ),
         fontFamily: 'Cairo',
-        appBarTheme: const AppBarTheme(
+        appBarTheme: AppBarTheme(
           centerTitle: true,
-          backgroundColor: Color(0xff00658f),
+          backgroundColor: const Color(0xff00658f).withOpacity(0.9),
           foregroundColor: Colors.white,
           elevation: 0,
+          scrolledUnderElevation: 0,
+          titleTextStyle: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
         cardTheme: CardThemeData(
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          color: Colors.white.withOpacity(0.8),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: const Color(0xff00658f).withOpacity(0.3)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: const Color(0xff00658f).withOpacity(0.3)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xff00658f), width: 2),
+          ),
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.5),
         ),
       ),
       home: const LoginPage(),
@@ -622,51 +650,111 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
-            child: Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.waves, size: 80, color: Color(0xff00658f)),
-                    const SizedBox(height: 16),
-                    const Text('أوركا أوردر', 
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xff00658f))),
-                    const Text('ORCA ORDER', 
-                      style: TextStyle(fontSize: 14, letterSpacing: 2, color: Colors.grey)),
-                    const SizedBox(height: 32),
-                    TextField(
-                      controller: _userCtrl,
-                      decoration: const InputDecoration(labelText: 'اسم المستخدم', prefixIcon: Icon(Icons.person_outline), border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _passCtrl,
-                      obscureText: true,
-                      decoration: const InputDecoration(labelText: 'كلمة المرور', prefixIcon: Icon(Icons.lock_outline), border: OutlineInputBorder()),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 16),
-                      Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
-                    ],
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: FilledButton(
-                        onPressed: _loading ? null : _login,
-                        child: _loading ? const CircularProgressIndicator(color: Colors.white) : const Text('دخول'),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isDark
+                ? [
+                    const Color(0xFF1A1A2E),
+                    const Color(0xFF16213E),
+                    const Color(0xFF0F3460),
+                  ]
+                : [
+                    const Color(0xFFF5F7FA),
+                    const Color(0xFFE8F4F8),
+                    Colors.white,
+                  ],
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: (isDark ? Colors.white : Colors.white).withOpacity(isDark ? 0.1 : 0.7),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: (isDark ? Colors.white : const Color(0xff00658f)).withOpacity(0.2),
+                        width: 1.5,
                       ),
                     ),
-                  ],
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // الشعار
+                          Image.asset(
+                            'assets/app_icon.png',
+                            width: 100,
+                            height: 100,
+                            errorBuilder: (context, error, stackTrace) => 
+                              const Icon(Icons.waves, size: 80, color: Color(0xff00658f)),
+                          ),
+                          const SizedBox(height: 16),
+                          Text('أوركا أوردر', 
+                            style: TextStyle(
+                              fontSize: 28, 
+                              fontWeight: FontWeight.bold, 
+                              color: isDark ? Colors.white : const Color(0xff00658f),
+                            ),
+                          ),
+                          Text('ORCA ORDER', 
+                            style: TextStyle(
+                              fontSize: 14, 
+                              letterSpacing: 2, 
+                              color: isDark ? Colors.white60 : Colors.grey.shade600,
+                            ),
+                          ),
+                          const SizedBox(height: 32),
+                          TextField(
+                            controller: _userCtrl,
+                            style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                            decoration: InputDecoration(
+                              labelText: 'اسم المستخدم',
+                              prefixIcon: Icon(Icons.person_outline, color: isDark ? Colors.white70 : const Color(0xff00658f)),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _passCtrl,
+                            obscureText: true,
+                            style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                            decoration: InputDecoration(
+                              labelText: 'كلمة المرور',
+                              prefixIcon: Icon(Icons.lock_outline, color: isDark ? Colors.white70 : const Color(0xff00658f)),
+                            ),
+                          ),
+                          if (_error != null) ...[
+                            const SizedBox(height: 16),
+                            Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                          ],
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: FilledButton(
+                              onPressed: _loading ? null : _login,
+                              child: _loading 
+                                ? const CircularProgressIndicator(color: Colors.white) 
+                                : const Text('دخول'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -797,8 +885,79 @@ class _HomePageState extends State<HomePage> {
   DateTime? _lastBackPressTime;
 
   @override
+  void initState() {
+    super.initState();
+    _navItems = _getNavItemsForRole((widget.session['role'] ?? 'customer').toString().toLowerCase());
+    // الاستماع لتحديثات حالة الطلبات وعرض الإشعارات
+    _listenToOrderUpdates();
+    // إظهار رسالة الترحيب بعد فترة قصيرة
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted) {
+        _showWelcomeMessage();
+      }
+    });
+  }
+
+  void _showWelcomeMessage() {
+    final overlay = Overlay.of(context);
+    final overlayEntry = OverlayEntry(
+      builder: (context) => Positioned(
+        bottom: MediaQuery.of(context).padding.bottom + 80,
+        left: 20,
+        right: 20,
+        child: SafeArea(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xff00658f).withOpacity(0.95),
+                borderRadius: BorderRadius.circular(30),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.waves, color: Colors.white, size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'شركة أوركا ترحب بكم',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(overlayEntry);
+    
+    // إخفاء الرسالة بعد 3 ثواني
+    Future.delayed(const Duration(seconds: 3), () {
+      overlayEntry.remove();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final item = _navItems[_selectedIndex];
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
@@ -830,15 +989,22 @@ class _HomePageState extends State<HomePage> {
               UserAccountsDrawerHeader(
                 accountName: Text(widget.session['full_name'] ?? 'مستخدم أوركا'),
                 accountEmail: Text('الدور: ${widget.session['role']}'),
-                decoration: const BoxDecoration(color: Color(0xff00658f)),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isDark 
+                        ? [const Color(0xff00658f), const Color(0xff00a8e8)]
+                        : [const Color(0xff00658f).withOpacity(0.9), const Color(0xff00a8e8).withOpacity(0.9)],
+                  ),
+                ),
               ),
               Expanded(
                 child: ListView.builder(
                   itemCount: _navItems.length,
                   itemBuilder: (context, index) => ListTile(
-                    leading: Icon(_navItems[index].icon),
-                    title: Text(_navItems[index].title),
+                    leading: Icon(_navItems[index].icon, color: _selectedIndex == index ? const Color(0xff00658f) : (isDark ? Colors.white70 : Colors.grey)),
+                    title: Text(_navItems[index].title, style: TextStyle(color: isDark ? Colors.white : Colors.black87)),
                     selected: _selectedIndex == index,
+                    selectedTileColor: const Color(0xff00658f).withOpacity(0.1),
                     onTap: () { setState(() => _selectedIndex = index); Navigator.pop(context); },
                   ),
                 ),
@@ -846,7 +1012,29 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
         ),
-        body: item.screen,
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: isDark
+                  ? [
+                      const Color(0xFF1A1A2E),
+                      const Color(0xFF16213E),
+                    ]
+                  : [
+                      const Color(0xFFF5F7FA),
+                      Colors.white,
+                    ],
+            ),
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 80), // مساحة للأزرار السفلية في أندرويد
+              child: item.screen,
+            ),
+          ),
+        ),
         floatingActionButton: _buildFab(item.title),
       ),
     );
