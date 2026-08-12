@@ -1605,7 +1605,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   leading: p.imageUrl != null && p.imageUrl!.isNotEmpty
                     ? ClipOval(
                         child: CachedNetworkImage(
-                          imageUrl: _ProductDetailScreenState._buildImageUrlStatic(p.imageUrl) ?? '',
+                          imageUrl: p.imageUrl!'',
                           width: 50,
                           height: 50,
                           fit: BoxFit.cover,
@@ -3697,7 +3697,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                               Expanded(
                                 child: p.imageUrl != null && p.imageUrl!.isNotEmpty
                                   ? CachedNetworkImage(
-                                      imageUrl: _ProductDetailScreenState._buildImageUrlStatic(p.imageUrl) ?? '',
+                                      imageUrl: p.imageUrl!'',
                                       fit: BoxFit.cover,
                                       width: double.infinity,
                                       placeholder: (context, url) => Container(
@@ -3795,7 +3795,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                         ? ClipRRect(
                                             borderRadius: BorderRadius.circular(4),
                                             child: CachedNetworkImage(
-                                              imageUrl: _ProductDetailScreenState._buildImageUrlStatic(item.product.imageUrl) ?? '',
+                                              imageUrl: item.product.imageUrl!'',
                                               width: 50,
                                               height: 50,
                                               fit: BoxFit.cover,

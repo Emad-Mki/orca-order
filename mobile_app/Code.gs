@@ -219,42 +219,73 @@ function _handleLogin(body) {
 
 function normalizeImageName_(value) {
   if (!value) return '';
+  // توحيد اسم الصورة: إزالة الامتداد، تحويل للأحرف الصغيرة، إزالة المسافات الزائدة
   return String(value).trim().toLowerCase().replace(/\.[^/.]+$/, "");
 }
 
+/**
+ * إعادة بناء فهرس صور المنتجات من Google Drive
+ * يجب تشغيل هذه الدالة يدوياً عند إضافة صور جديدة
+ */
 function rebuildImageIndex() {
-  const folderId = PropertiesService.getScriptProperties().getProperty('PRODUCT_IMAGES_FOLDER_ID') || '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
+  const folderId = PropertiesService.getScriptProperties().getProperty('PRODUCT_IMAGES_FOLDER_ID');
+  if (!folderId) {
+    throw new Error('PRODUCT_IMAGES_FOLDER_ID غير مضبوط في Script Properties');
+  }
+  
   try {
     const folder = DriveApp.getFolderById(folderId);
     const files = folder.getFiles();
     const ss = _ss();
     let sheet = ss.getSheetByName('Product_Images');
+    
+    // إنشاء sheet إذا لم تكن موجودة
     if (!sheet) {
       sheet = ss.insertSheet('Product_Images');
       sheet.appendRow(H.Product_Images);
     } else {
-      sheet.clearContents();
-      sheet.appendRow(H.Product_Images);
-    }
-    let count = 0;
-    const now = _now();
-    while (files.hasNext()) {
-      const file = files.next();
-      if (file.getMimeType().indexOf('image/') === 0) {
-        const fileId = file.getId();
-        sheet.appendRow([
-          file.getName(),
-          normalizeImageName_(file.getName()),
-          fileId,
-          'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600',
-          file.getMimeType(),
-          now,
-          'active'
-        ]);
-        count++;
+      // مسح المحتوى القديم مع الإبقاء على العناوين
+      const lastRow = sheet.getLastRow();
+      if (lastRow > 1) {
+        sheet.deleteRows(2, lastRow - 1);
       }
     }
-    return { success: true, message: 'تمت الفهرسة بنجاح', count: count };
+    
+    let count = 0;
+    const now = _now();
+    
+    while (files.hasNext()) {
+      const file = files.next();
+      const mimeType = file.getMimeType();
+      
+      // تجاهل الملفات التي ليست صوراً
+      if (mimeType.indexOf('image/') !== 0) {
+        continue;
+      }
+      
+      const fileId = file.getId();
+      const fileName = file.getName();
+      
+      // توليد رابط عرض مباشر للصورة
+      const imageUrl = 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600';
+      
+      sheet.appendRow([
+        fileName,                              // image_name
+        normalizeImageName_(fileName),         // normalized_name
+        fileId,                                // file_id
+        imageUrl,                              // image_url
+        mimeType,                              // mime_type
+        now,                                   // last_checked
+        'active'                               // status
+      ]);
+      count++;
+    }
+    
+    return { 
+      success: true, 
+      message: 'تمت فهرسة ' + count + ' صورة بنجاح', 
+      count: count 
+    };
   } catch (e) {
     throw new Error('خطأ في بناء الفهرس: ' + e.message);
   }
@@ -268,12 +299,15 @@ function _handleProducts(body, user) {
   // بناء خريطة للبحث السريع عن الصور O(1)
   const imageMap = {};
   imageIndex.forEach(img => {
-    if (img.normalized_name) imageMap[img.normalized_name] = img;
+    if (img.normalized_name && img.status === 'active') {
+      imageMap[img.normalized_name] = img;
+    }
   });
 
   const filtered = products
     .filter(p => !q || String(p.code).toLowerCase().includes(q) || String(p.name).toLowerCase().includes(q))
     .map(p => {
+      // البحث عن الصورة باستخدام image_name من المنتج أو code كاحتياط
       const imageName = p.image_name || p.code;
       const normalized = normalizeImageName_(imageName);
       const imgData = imageMap[normalized];
@@ -281,12 +315,15 @@ function _handleProducts(body, user) {
       return {
         code: p.code,
         name: p.name,
-        category: p.group,
+        group: p.group || '',
+        origin: p.origin || '',
+        category: p.group || '',
         image_name: imageName,
         image_file_id: imgData ? imgData.file_id : '',
         image_url: imgData ? imgData.image_url : '',
-        unit: p.unit_1,
+        unit: p.unit_1 || '',
         quantity: Number(p.quantity || 0),
+        display_price: Number(p.display_price || 0),
         price: Number(p.display_price || 0),
         currency: p.currency || 'USD',
         notes: p.notes || '',
