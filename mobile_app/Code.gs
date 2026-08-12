@@ -657,75 +657,36 @@ balanceInfo: balanceInfo
 }
 
 function _handleCreateOrder(body, user) {
-if (!user) throw new Error('المستخدم غير معروف');
-const items = body.items;
-if (!Array.isArray(items) || !items.length) throw new Error('الطلبية فارغة');
-
-let customerId = user.customer_id;
-if (['admin', 'manager', 'accountant'].includes(user.role) && body.customer_id) {
-customerId = body.customer_id;
-}
-
-const year = new Date().getFullYear();
-const existing = _all('Orders').filter(o => String(o.order_id).includes('OR-' + year));
-const seq = existing.length + 1;
-const orderId = 'OR-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd') + '-' + String(seq).padStart(6, '0');
-
-const customers = _all('Customers');
-const customer = customers.find(c => c.customer_id === customerId);
-
-_add('Orders', {
-order_id: orderId,
-customer_id: customerId || 'GUEST',
-customer_name: customer ? customer.full_name : (user.full_name || ''),
-status: 'pending',
-currency: body.currency || 'USD',
-note: body.note || '',
-accounting_invoice_no: '',
-is_read: 'false',
-is_new: 'true',
-cancellation_reason: '',
-created_at: _now(),
-updated_at: _now(),
-created_by: user.user_id
-});
-
-const products = _all('Products');
-items.forEach((item, idx) => {
-const p = products.find(x => x.code === item.code);
-if (!p) throw new Error('مادة غير موجودة: ' + item.code);
-_add('Order_Items', {
-item_id: orderId + '-' + (idx + 1),
-order_id: orderId,
-code: item.code,
-unit: item.unit || p.unit_1,
-quantity_requested: Number(item.quantity || 0),
-quantity_approved: '',
-quantity_prepared: '',
-display_price_snapshot: item.price || p.display_price || 0,
-final_price: '',
-currency: body.currency || 'USD',
-status: 'pending',
-customer_note: item.note || '',
-accountant_note: '',
-warehouse_note: ''
-});
-});
-
-_add('Audit_Log', {
-log_id: Utilities.getUuid(),
-user_id: user.user_id,
-action: 'CREATE_ORDER',
-entity: 'Orders',
-entity_id: orderId,
-details: 'إنشاء طلب جديد',
-created_at: _now(),
-});
-
-_notifyRole('admin', 'طلب جديد', 'تم استلام طلب جديد برقم ' + orderId + ' من العميل ' + (customer ? customer.full_name : user.full_name));
-_notifyRole('accountant', 'طلب جديد للمراجعة', 'الطلب ' + orderId + ' بانتظار المراجعة المالية.');
-
-return { order_id: orderId, message: 'تم إنشاء الطلب بنجاح' };
+  // استخدام LockService لمنع التكرار
+  const lock = LockService.getUserLock();
+  if (!lock.tryLock(5000)) {
+    throw new Error('جاري معالجة طلب آخر، يرجى الانتظار قليلاً');
+  }
+  
+  try {
+    // التحقق من عدم وجود طلب مكرر خلال آخر 30 ثانية
+    const orders = _all('Orders');
+    const customerId = user.role === 'customer' ? user.customer_id : body.customer_id;
+    const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString();
+    
+    // التحقق من تكرار محتمل: نفس الزبون ونفس العناصر خلال وقت قصير
+    const duplicateCheck = orders.filter(o => 
+      o.customer_id === customerId && 
+      o.created_at > thirtySecondsAgo &&
+      (o.status === 'pending' || o.status === 'draft')
+    );
+    
+    if (duplicateCheck.length > 0) {
+      // يوجد طلب حديث جداً، نعتبره تكراراً محتملاً
+      return { 
+        success: false, 
+        message: 'تم إرسال طلب حديثاً، يرجى انتظار المعالجة أو مراجعة الطلبات الحالية',
+        existing_order_id: duplicateCheck[0].order_id
+      };
+    }
+    
+    const customer = _all('Customers').find(c => c.customer_id === customerId);
+\n    if (!customerId) throw new Error('لم يتم تحديد العميل');\n\n    const orderObj = {\n      order_id: 'OR-' + Date.now(),\n      customer_id: customerId,\n      customer_name: customer ? customer.full_name : 'عميل غير معروف',\n      status: 'pending',\n      currency: body.currency || 'USD',\n      note: body.note || '',\n      is_new: 'true',\n      is_read: 'false',\n      created_at: _now(),\n      updated_at: _now(),\n      created_by: user.username\n    };\n\n    _add('Orders', orderObj);\n\n    if (body.items && Array.isArray(body.items)) {\n      body.items.forEach(item => {\n        _add('Order_Items', {\n          item_id: 'ITM-' + Utilities.getUuid(),\n          order_id: orderObj.order_id,\n          code: item.code,\n          unit: item.unit,\n          quantity_requested: item.quantity,\n          display_price_snapshot: item.price,\n          currency: orderObj.currency,\n          status: 'pending'\n        });\n      });\n    }\n\n    return { order_id: orderObj.order_id, success: true };\n  } finally {\n    lock.releaseLock();\n  }
 }
 
 function _handleUpdateOrderStatus(body, user) {
