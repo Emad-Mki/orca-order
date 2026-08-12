@@ -1603,35 +1603,51 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                 child: ListTile(
                   leading: p.imageUrl != null && p.imageUrl!.isNotEmpty
-                    ? ClipOval(
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
                         child: CachedNetworkImage(
                           imageUrl: p.imageUrl!,
-                          width: 50,
-                          height: 50,
-                          fit: BoxFit.cover,
+                          width: 60,
+                          height: 60,
+                          fit: BoxFit.contain,
+                          imageBuilder: (context, imageProvider) => Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              image: DecorationImage(
+                                image: imageProvider,
+                                fit: BoxFit.contain,
+                              ),
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
                           placeholder: (context, url) => Container(
-                            width: 50,
-                            height: 50,
-                            color: const Color(0xff00658f).withOpacity(0.1),
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: const Color(0xff00658f).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                             child: const CircularProgressIndicator(strokeWidth: 2),
                           ),
                           errorWidget: (context, url, error) => Container(
-                            width: 50,
-                            height: 50,
+                            width: 60,
+                            height: 60,
                             decoration: BoxDecoration(
                               color: const Color(0xff00658f).withOpacity(0.1),
-                              shape: BoxShape.circle,
+                              borderRadius: BorderRadius.circular(8),
                             ),
                             child: const Icon(Icons.inventory_2, color: Color(0xff00658f)),
                           ),
                         ),
                       )
                     : Container(
-                        width: 50,
-                        height: 50,
+                        width: 60,
+                        height: 60,
                         decoration: BoxDecoration(
                           color: const Color(0xff00658f).withOpacity(0.1),
-                          shape: BoxShape.circle,
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: const Icon(Icons.inventory_2, color: Color(0xff00658f)),
                       ),
@@ -3698,8 +3714,18 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                 child: p.imageUrl != null && p.imageUrl!.isNotEmpty
                                   ? CachedNetworkImage(
                                       imageUrl: p.imageUrl!,
-                                      fit: BoxFit.cover,
+                                      fit: BoxFit.contain,
                                       width: double.infinity,
+                                      imageBuilder: (context, imageProvider) => Container(
+                                        width: double.infinity,
+                                        decoration: BoxDecoration(
+                                          image: DecorationImage(
+                                            image: imageProvider,
+                                            fit: BoxFit.contain,
+                                          ),
+                                          color: Colors.white,
+                                        ),
+                                      ),
                                       placeholder: (context, url) => Container(
                                         color: Colors.grey[200],
                                         child: const Center(child: CircularProgressIndicator()),
@@ -3793,27 +3819,53 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                     return ListTile(
                                       leading: item.product.imageUrl != null && item.product.imageUrl!.isNotEmpty
                                         ? ClipRRect(
-                                            borderRadius: BorderRadius.circular(4),
+                                            borderRadius: BorderRadius.circular(8),
                                             child: CachedNetworkImage(
                                               imageUrl: item.product.imageUrl!,
-                                              width: 50,
-                                              height: 50,
-                                              fit: BoxFit.cover,
+                                              width: 60,
+                                              height: 60,
+                                              fit: BoxFit.contain,
+                                              imageBuilder: (context, imageProvider) => Container(
+                                                width: 60,
+                                                height: 60,
+                                                decoration: BoxDecoration(
+                                                  image: DecorationImage(
+                                                    image: imageProvider,
+                                                    fit: BoxFit.contain,
+                                                  ),
+                                                  color: Colors.white,
+                                                  borderRadius: BorderRadius.circular(8),
+                                                ),
+                                              ),
                                               placeholder: (context, url) => Container(
-                                                width: 50,
-                                                height: 50,
-                                                color: Colors.grey[200],
+                                                width: 60,
+                                                height: 60,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey[200],
+                                                  borderRadius: BorderRadius.circular(8),
+                                                ),
                                                 child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
                                               ),
                                               errorWidget: (context, error, stackTrace) => Container(
-                                                width: 50,
-                                                height: 50,
-                                                color: Colors.grey[200],
+                                                width: 60,
+                                                height: 60,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey[200],
+                                                  borderRadius: BorderRadius.circular(8),
+                                                ),
                                                 child: const Icon(Icons.inventory_2, size: 30),
                                               ),
                                             ),
                                           )
-                                        : const Icon(Icons.inventory_2),
+                                        : Container(
+                                            width: 60,
+                                            height: 60,
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[200],
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: const Icon(Icons.inventory_2, size: 30),
+                                          ),
                                       title: Text(item.product.name),
                                       subtitle: Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5878,9 +5930,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
   
   Widget _buildProductImage(Product product, {double? size, double? height}) {
-    final imageUrl = _buildImageUrlStatic(product.imageUrl);
+    final imageUrl = product.imageUrl;
     
-    if (imageUrl == null) {
+    if (imageUrl == null || imageUrl.isEmpty) {
       return Container(
         width: size,
         height: height ?? size,
@@ -5895,7 +5947,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         imageUrl: imageUrl,
         width: size,
         height: height ?? size,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
+        imageBuilder: (context, imageProvider) => Container(
+          width: size,
+          height: height ?? size,
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: imageProvider,
+              fit: BoxFit.contain,
+            ),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
         placeholder: (context, url) => Container(
           width: size,
           height: height ?? size,

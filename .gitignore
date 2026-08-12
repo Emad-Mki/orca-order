@@ -1,17 +1,13 @@
 ```
 # Build artifacts
-*.apk
-*.aab
-build/
-*.app
-*.exe
-*.dll
-*.so
-*.dylib
 *.class
 *.o
 *.obj
 *.out
+*.exe
+*.dll
+*.so
+*.a
 
 # Dependencies
 node_modules/
@@ -22,22 +18,8 @@ __pycache__/
 .pytest_cache/
 target/
 .gradle/
-Pods/
-CocoaPods/
-Carthage/
 
-# Flutter/Dart specific
-.dart_tool/
-.packages
-.pub-cache/
-.pub/
-flutter/
-ios/Pods/
-ios/.symlinks/
-android/.gradle/
-android/app/build/
-
-# IDE files
+# Editor/IDE files
 .vscode/
 .idea/
 *.swp
