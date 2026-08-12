@@ -1,0 +1,17 @@
+{
+  "application": "Orca Order",
+  "company": "شركة أوركا ش.م.م",
+  "owner": "Orca.emp1@gmail.com",
+  "modules": [
+    "Flutter Android",
+    "Apps Script backend",
+    "Google Sheets templates",
+    "Product import",
+    "Authentication",
+    "Orders",
+    "Inventory movements",
+    "Payments",
+    "Shipments",
+    "Documentation (AR)"
+  ]
+}
