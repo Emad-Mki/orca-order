@@ -17,44 +17,45 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'order_status_mapper.dart';
 
 // --- النماذج (Models) ---
 class OrderStatus {
-  static const String pending = 'pending'; // قيد المعالجة - عندما يرسل الزبون الطلب
-  static const String priced = 'priced'; // تم التسعير - عندما يثبت المحاسب السعر
-  static const String approved = 'approved'; // تمت الموافقة - عندما يؤكد الزبون الفاتورة
-  static const String customerChanged = 'customer_changed'; // تم التعديل - عندما يعدل الزبون بعد التسعير
-  static const String preparing = 'preparing'; // قيد التجهيز - المستودع يجهز للشحن
-  static const String shipping = 'shipping'; // منتهي - تم التسليم للشحن
-  static const String cancelled = 'cancelled'; // ملغى
-  static const String deleted = 'deleted'; // محذوف نهائياً
-
-  static String getArabicStatus(String status) {
-    switch (status) {
-      case pending: return 'قيد المعالجة';
-      case priced: return 'تم التسعير';
-      case approved: return 'تمت الموافقة';
-      case customerChanged: return 'تم التعديل';
-      case preparing: return 'قيد التجهيز';
-      case shipping: return 'منتهي (قيد الشحن)';
-      case cancelled: return 'ملغى';
-      case deleted: return 'محذوف';
-      default: return status;
-    }
+  // الحالات الجديدة المطلوبة - تم الاستغناء عنها لصالح OrderStatusMapper
+  @Deprecated('Use OrderStatusMapper instead')
+  static const String processing = 'processing'; // قيد المعالجة
+  @Deprecated('Use OrderStatusMapper instead')
+  static const String priced = 'priced'; // تم التسعير
+  static const String approved = 'approved'; // تمت الموافقة
+  static const String preparing = 'preparing'; // قيد التجهيز
+  static const String completed = 'completed'; // منتهي
+  static const String cancelled = 'cancelled'; // ملغي
+  
+  // حالات قديمة للـ mapping
+  static const String pending = 'pending';
+  static const String submitted = 'submitted';
+  static const String customerChanged = 'customer_changed';
+  static const String customerConfirmed = 'customer_confirmed';
+  static const String warehouse = 'warehouse';
+  static const String prepared = 'prepared';
+  static const String shipping = 'shipping';
+  static const String delivered = 'delivered';
+  static const String deleted = 'deleted';
+  
+  // تحويل الحالة القديمة إلى الحالة الجديدة الموحدة - تم الترحيل إلى OrderStatusMapper
+  @Deprecated('Use OrderStatusMapper.normalizeStatus instead')
+  static String normalizeStatus(String? status) {
+    return OrderStatusMapper.normalizeStatus(status);
   }
-
-  static Color getStatusColor(String status) {
-    switch (status) {
-      case pending: return Colors.orange;
-      case priced: return Colors.blue;
-      case approved: return Colors.green;
-      case customerChanged: return Colors.amber;
-      case preparing: return Colors.purple;
-      case shipping: return Colors.teal;
-      case cancelled: return Colors.red;
-      case deleted: return Colors.grey;
-      default: return Colors.grey;
-    }
+  
+  @Deprecated('Use OrderStatusMapper.getArabicStatus instead')
+  static String getArabicStatus(String? status) {
+    return OrderStatusMapper.getArabicStatus(status);
+  }
+  
+  @Deprecated('Use OrderStatusMapper.getStatusColorHex instead')
+  static Color getStatusColor(String? status) {
+    return Color(OrderStatusMapper.getStatusColorHex(status));
   }
 }
 
@@ -1708,15 +1709,15 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
   List<dynamic> _allOrders = [];
   bool _isLoading = true;
   String? _selectedCustomerId;
-  String _currentStatusFilter = OrderStatus.pending;
+  String _currentStatusFilter = OrderStatusMapper.processing;
   late TabController _tabController;
   final List<String> _statusTabs = [
-    OrderStatus.pending,
-    OrderStatus.priced,
-    OrderStatus.approved,
-    OrderStatus.preparing,
-    OrderStatus.shipping,
-    OrderStatus.cancelled,
+    OrderStatusMapper.processing,
+    OrderStatusMapper.priced,
+    OrderStatusMapper.approved,
+    OrderStatusMapper.preparing,
+    OrderStatusMapper.completed,
+    OrderStatusMapper.cancelled,
   ];
   
   // قائمة الزبائن للفلترة
@@ -1796,7 +1797,8 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     setState(() {
       _orders = _allOrders.where((order) {
         final status = order['status']?.toString().toLowerCase() ?? '';
-        return status == _currentStatusFilter;
+        final normalizedStatus = OrderStatusMapper.normalizeStatus(status);
+        return normalizedStatus == _currentStatusFilter;
       }).toList();
     });
   }
@@ -1870,11 +1872,11 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
   }
 
   Color _getStatusColor(String? status) {
-    return OrderStatus.getStatusColor(status?.toString().toLowerCase() ?? '');
+    return Color(OrderStatusMapper.getStatusColorHex(status));
   }
 
   String _getStatusText(String? status) {
-    return OrderStatus.getArabicStatus(status?.toString().toLowerCase() ?? '');
+    return OrderStatusMapper.getArabicStatus(status);
   }
 
   @override
@@ -1904,10 +1906,10 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           isScrollable: true,
           tabs: _statusTabs.map((status) {
             final count = _allOrders.where((o) => 
-              o['status']?.toString().toLowerCase() == status
+              OrderStatusMapper.normalizeStatus(o['status']?.toString().toLowerCase()) == status
             ).length;
             return Tab(
-              text: '${OrderStatus.getArabicStatus(status)} ($count)',
+              text: '${OrderStatusMapper.getArabicStatus(status)} ($count)',
             );
           }).toList(),
         ),
@@ -3452,6 +3454,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
   List<Product> _allProducts = [];
   List<Product> _filteredProducts = [];
   bool _loading = true;
+  bool _isSubmitting = false;
   final _orderNoteCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
   String? _customerName;
@@ -3602,36 +3605,26 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
   }
 
   void _submitOrder() async {
-    if (_cart.isEmpty) return;
+    if (_cart.isEmpty || _isSubmitting) return;
     
-    // التحقق من عدم تكرار المنتجات
-    final Map<String, OrderItem> uniqueCart = {};
-    for (var item in _cart) {
-      final key = '${item.product.code}_${item.selectedUnit ?? item.product.unit}';
-      if (uniqueCart.containsKey(key)) {
-        // تحديث الكمية إذا كان المنتج موجود مسبقاً
-        uniqueCart[key]!.quantity += item.quantity;
-        if (item.note != null && item.note!.isNotEmpty) {
-          uniqueCart[key]!.note = item.note;
-        }
-      } else {
-        uniqueCart[key] = item;
-      }
-    }
+    setState(() => _isSubmitting = true);
     
     try {
       await ApiService().post({
         'action': 'createOrder',
         'username': widget.session['username'],
         'token': widget.session['token'],
-        'items': uniqueCart.values.map((i) => i.toJson()).toList(),
+        'items': _cart.map((i) => i.toJson()).toList(),
         'note': _orderNoteCtrl.text,
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال الطلب بنجاح'), backgroundColor: Colors.green));
       Navigator.pop(context);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل الإرسال: $e')));
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -3886,8 +3879,8 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                   child: const Text('إغلاق'),
                                 ),
                                 FilledButton(
-                                  onPressed: _submitOrder,
-                                  child: const Text('تأكيد وإرسال'),
+                                  onPressed: _isSubmitting ? null : _submitOrder,
+                                  child: _isSubmitting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text('تأكيد وإرسال'),
                                 ),
                               ],
                             ),
@@ -3916,9 +3909,9 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                   width: double.infinity,
                   height: 50,
                   child: FilledButton.icon(
-                    onPressed: _cart.isEmpty ? null : _submitOrder,
+                    onPressed: _cart.isEmpty || _isSubmitting ? null : _submitOrder,
                     icon: const Icon(Icons.send),
-                    label: const Text('إرسال الطلب للمراجعة'),
+                    label: _isSubmitting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text('إرسال الطلب للمراجعة'),
                   ),
                 ),
               ],
