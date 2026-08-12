@@ -1,45 +1,63 @@
 ```
-# Compiled and build artifacts
-*.pyc
-__pycache__/
+# Build artifacts
+*.apk
+*.aab
+build/
+*.app
+*.exe
+*.dll
+*.so
+*.dylib
+*.class
 *.o
 *.obj
-dist/
-build/
-target/
+*.out
 
 # Dependencies
-.venv/
-venv/
 node_modules/
-.julia/
-.zig-cache/
+venv/
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+target/
+.gradle/
+Pods/
+CocoaPods/
+Carthage/
 
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-*.swo
+# Flutter/Dart specific
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+flutter/
+ios/Pods/
+ios/.symlinks/
+android/.gradle/
+android/app/build/
 
-# Environment
-.env
-.env.local
-.env.*
-
-# Editors
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tmp
 
-# Coverage reports
+# System files
+.DS_Store
+Thumbs.db
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Coverage
 coverage/
 htmlcov/
 .coverage
-
-# OS specific
-.DS_Store
-Thumbs.db
 
 # Compressed files
 *.zip
@@ -64,69 +82,4 @@ Thumbs.db
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-
-# Python specific
-*.pyc
-__pycache__/
-*.pyo
-*.pyd
-.Python
-*.so
-.coverage
-htmlcov/
-.tox/
-.nox/
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/
-.mypy_cache/
-.pytest_cache/
-.hypothesis/
-.eggs/
-*.egg-info/
-.installed.cfg
-*.manifest
-*.spec
-pip-log.txt
-pip-delete-this-directory.txt
-htmlcov/
-.coverage
-.tox/
-.nox/
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/
-.mypy_cache/
-.pytest_cache/
-.hypothesis/
-.eggs/
-*.egg-info/
-.installed.cfg
-*.manifest
-*.spec
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Dart/Flutter specific
-.dart_tool/
-.packages
-.pub-cache/
-.pub/
-build/
-*.g.dart
-*.freezed.dart
-
-# Google Apps Script specific
-**/.clasp.json
-**/.clasp.log
-**/appsscript.json
-**/.gsproj
 ```
