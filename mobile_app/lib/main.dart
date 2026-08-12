@@ -199,12 +199,19 @@ class Product {
   final double price;
   final double quantity;
   final String? imageUrl;
+  final String? imageFileId;
+  final String? imageName;
   final String? notes;
   final String currency;
   final int stock;
   final String? description;
   final List<String>? units;
   final String? uomName;
+
+  final double? factor2;
+  final String? unit2;
+  final double? factor3;
+  final String? unit3;
 
   Product({
     required this.code,
@@ -215,12 +222,18 @@ class Product {
     required this.price,
     this.quantity = 0,
     this.imageUrl,
+    this.imageFileId,
+    this.imageName,
     this.notes,
     this.currency = 'USD',
     this.stock = 0,
     this.description,
     this.units,
     this.uomName,
+    this.factor2,
+    this.unit2,
+    this.factor3,
+    this.unit3,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -232,11 +245,14 @@ class Product {
       unitsList = unitsData.split(',').map((u) => u.trim()).toList();
     }
     
-    // معالجة الصورة:尝试 من حقول مختلفة أو استخدام الكود كاسم ملف
-    String? img = json['image_url'] ?? json['image_name'] ?? json['imageUrl'];
-    if (img == null || img.isEmpty) {
-      // إذا لم توجد صورة، نستخدم الكود كاسم للملف (سيتم ربطه لاحقاً بـ Google Drive)
-      img = json['code']?.toString();
+    if (unitsList == null || unitsList.isEmpty) {
+      unitsList = [];
+      String u1 = json['unit'] ?? json['unit_1'] ?? '';
+      if (u1.isNotEmpty) unitsList.add(u1);
+      String u2 = json['unit_2']?.toString() ?? '';
+      if (u2.isNotEmpty) unitsList.add(u2);
+      String u3 = json['unit_3']?.toString() ?? '';
+      if (u3.isNotEmpty) unitsList.add(u3);
     }
     
     return Product(
@@ -247,13 +263,19 @@ class Product {
       unit: json['unit'] ?? json['unit_1'] ?? '',
       price: (json['price'] ?? json['display_price'] ?? 0).toDouble(),
       quantity: (json['quantity'] ?? 0).toDouble(),
-      imageUrl: img,
+      imageUrl: json['image_url'],
+      imageFileId: json['image_file_id'],
+      imageName: json['image_name'],
       notes: json['notes'],
       currency: json['currency'] ?? 'USD',
       stock: json['stock_available'] ?? json['stock'] ?? 0,
       description: json['description'],
       units: unitsList,
       uomName: json['uomName']?.toString(),
+      factor2: (json['factor_2'] ?? 1.0).toDouble(),
+      unit2: json['unit_2']?.toString(),
+      factor3: (json['factor_3'] ?? 1.0).toDouble(),
+      unit3: json['unit_3']?.toString(),
     );
   }
 }
@@ -274,7 +296,6 @@ class OrderItem {
         'quantity': quantity,
         'unit': selectedUnit ?? product.unit,
         'price': product.price ?? 0,
-        'price': product.price,
         'note': note ?? '',
         'total': total,
       };
@@ -301,7 +322,7 @@ class ApiService {
   Future<bool> isOnline() async {
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
-      return !connectivityResult.contains(ConnectivityResult.none);
+      return connectivityResult != ConnectivityResult.none;
     } catch (e) {
       return false;
     }
@@ -328,7 +349,7 @@ class ApiService {
       final tempDir = await getTemporaryDirectory();
       final cacheFile = File('${tempDir.path}/products_cache.json');
       await cacheFile.writeAsString(jsonEncode({'products': products, 'timestamp': DateTime.now().toIso8601String()}));
-      await _cacheManager.putFile('products_cache.json', cacheFile);
+      await _cacheManager.putFile('products_cache.json', await cacheFile.readAsBytes());
     } catch (e) {
       print('Error caching products: $e');
     }
@@ -472,11 +493,15 @@ class _OrcaAppState extends State<OrcaApp> {
     );
     const settings = InitializationSettings(android: androidSettings, iOS: iosSettings);
     
+    // Attempting to fix based on Flutter Local Notifications v17+ which uses named parameters.
+    // However, if v22.3.0 is used, the first parameter is usually named 'initializationSettings'.
+    // If 'initializationSettings' is not recognized, it might be 'settings' or something else,
+    // but the error "Too many positional arguments: 0 allowed, but 1 found" 
+    // strongly suggests it REQUIRES named parameters.
     await flutterLocalNotificationsPlugin.initialize(
-      settings,
+      settings: settings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        // معالجة النقر على الإشعار
-        debugPrint('Notification tapped: ${response.payload}');
+        // منطق عند النقر على الإشعار هنا
       },
     );
   }
@@ -781,116 +806,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _navItems = _getNavItemsForRole((widget.session['role'] ?? 'customer').toString().toLowerCase());
-    // الاستماع لتحديثات حالة الطلبات وعرض الإشعارات
     _listenToOrderUpdates();
-  }
-
-  Future<void> _listenToOrderUpdates() async {
-    // هذه الدالة يمكن استخدامها للاستماع للتحديثات من الخادم
-    // في الوقت الحالي، سنكتفي بتحديث دوري كل 30 ثانية
-    Future.delayed(const Duration(seconds: 30), () {
-      if (mounted) {
-        _showOrderUpdateNotification('تم تحديث حالة الطلب', 'يرجى مراجعة صفحة الطلبات');
-        _listenToOrderUpdates();
-      }
-    });
-  }
-
-  Future<void> _showOrderUpdateNotification(String title, String body) async {
-    const androidDetails = AndroidNotificationDetails(
-      'order_updates_channel',
-      'تحديثات الطلبات',
-      channelDescription: 'إشعارات حول تغيير حالة الطلبات',
-      importance: Importance.high,
-      priority: Priority.high,
-      icon: '@mipmap/ic_launcher',
-    );
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
-    
-    await (context.findAncestorStateOfType<_OrcaAppState>()?.flutterLocalNotificationsPlugin ?? FlutterLocalNotificationsPlugin()).show(
-      DateTime.now().millisecond,
-      title,
-      body,
-      details,
-      payload: 'order_update',
-    );
-  }
-
-  List<NavItem> _getNavItemsForRole(String role) {
-    final List<NavItem> items = [];
-    
-    // العناصر الأساسية لكل الأدوار
-    items.add(NavItem('الرئيسية', Icons.home_outlined, DashboardScreen(session: widget.session)));
-    
-    // المحاسب والعميل والمدير لهم منتجات وطلبات
-    if (role == 'admin' || role == 'accountant' || role == 'customer') {
-      items.add(NavItem('المنتجات', Icons.inventory_2_outlined, const ProductsScreen()));
-      items.add(NavItem('الطلبات', Icons.shopping_cart_outlined, OrdersScreen(session: widget.session)));
-    }
-
-    // الإشعارات للجميع
-    items.add(NavItem('الإشعارات', Icons.notifications_none_outlined, const NotificationsScreen()));
-
-    // عناصر خاصة بالمحاسب والمدير
-    if (role == 'admin' || role == 'accountant') {
-      items.addAll([
-        NavItem('قائمة الطلبات الجديدة', Icons.playlist_add_check_outlined, NewOrdersListScreen(session: widget.session)),
-        NavItem('تسعير الطلبات', Icons.calculate_outlined, PricingQueueScreen(session: widget.session)),
-        NavItem('الفواتير بانتظار الاعتماد', Icons.verified_user_outlined, PendingApprovalScreen(session: widget.session)),
-        NavItem('العملاء', Icons.people_outline, CustomersScreen()),
-        NavItem('كشف حساب', Icons.account_balance_outlined, const CustomerStatementScreen()),
-        NavItem('الدفعات', Icons.payments_outlined, PaymentsScreen()),
-        NavItem('الشحن', Icons.local_shipping_outlined, ShippingScreen()),
-        NavItem('استيراد من Excel', Icons.import_export_outlined, ImportExportScreen(session: widget.session)),
-      ]);
-    }
-    
-    // عناصر خاصة بالمخزن والمدير
-    if (role == 'admin' || role == 'warehouse') {
-      items.add(NavItem('المخزون', Icons.warehouse_outlined, const InventoryScreen()));
-      items.add(NavItem('أوامر التجهيز', Icons.assignment_outlined, PreparationOrdersScreen(session: widget.session)));
-    }
-    
-    // عناصر خاصة بالعميل
-    if (role == 'customer') {
-      items.add(NavItem('كشف حسابي', Icons.account_balance_outlined, const CustomerStatementScreen()));
-    }
-    
-    // التقارير للمدير والمحاسب
-    if (role == 'admin' || role == 'accountant') {
-      items.add(NavItem('التقارير', Icons.analytics_outlined, ReportsScreen(session: widget.session)));
-    }
-    
-    // عناصر خاصة بالمدير فقط
-    if (role == 'admin') {
-      items.addAll([
-        NavItem('إدارة المستخدمين', Icons.manage_accounts_outlined, UserManagementScreen(session: widget.session)),
-        NavItem('إعدادات النظام', Icons.settings_suggest_outlined, SystemSettingsScreen(session: widget.session)),
-        NavItem('سجل التدقيق', Icons.history_edu_outlined, AuditLogScreen(session: widget.session)),
-        NavItem('النسخ الاحتياطي', Icons.backup_outlined, BackupSettingsScreen(session: widget.session)),
-      ]);
-    }
-    
-    // الإعدادات والملف الشخصي للجميع
-    items.add(NavItem('الإعدادات', Icons.settings_outlined, const SettingsScreen()));
-    
-    return items;
-  }
-
-  DateTime? _lastBackPressTime;
-
-  @override
-  void initState() {
-    super.initState();
-    _navItems = _getNavItemsForRole((widget.session['role'] ?? 'customer').toString().toLowerCase());
-    // الاستماع لتحديثات حالة الطلبات وعرض الإشعارات
-    _listenToOrderUpdates();
-    // إظهار رسالة الترحيب بعد فترة قصيرة
     Future.delayed(const Duration(milliseconds: 800), () {
       if (mounted) {
         _showWelcomeMessage();
@@ -921,11 +837,11 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ],
               ),
-              child: Row(
+              child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.waves, color: Colors.white, size: 24),
-                  const SizedBox(width: 12),
+                  Icon(Icons.waves, color: Colors.white, size: 24),
+                  SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       'شركة أوركا ترحب بكم',
@@ -946,12 +862,50 @@ class _HomePageState extends State<HomePage> {
     );
 
     overlay.insert(overlayEntry);
-    
-    // إخفاء الرسالة بعد 3 ثواني
-    Future.delayed(const Duration(seconds: 3), () {
-      overlayEntry.remove();
+    Future.delayed(const Duration(seconds: 3), () => overlayEntry.remove());
+  }
+
+  Future<void> _listenToOrderUpdates() async {
+    Future.delayed(const Duration(seconds: 30), () {
+      if (mounted) {
+        _listenToOrderUpdates();
+      }
     });
   }
+
+  List<NavItem> _getNavItemsForRole(String role) {
+    final List<NavItem> items = [];
+    items.add(NavItem('الرئيسية', Icons.home_outlined, DashboardScreen(session: widget.session)));
+    
+    if (role == 'admin' || role == 'accountant' || role == 'customer') {
+      items.add(NavItem('المنتجات', Icons.inventory_2_outlined, const ProductsScreen()));
+      items.add(NavItem('الطلبات', Icons.shopping_cart_outlined, OrdersScreen(session: widget.session)));
+    }
+
+    items.add(NavItem('الإشعارات', Icons.notifications_none_outlined, const NotificationsScreen()));
+
+    if (role == 'admin' || role == 'accountant') {
+      items.addAll([
+        NavItem('العملاء', Icons.people_outline, CustomersScreen()),
+        NavItem('كشف حساب', Icons.account_balance_outlined, const CustomerStatementScreen()),
+        NavItem('الدفعات', Icons.payments_outlined, PaymentsScreen()),
+        NavItem('الشحن', Icons.local_shipping_outlined, ShippingScreen()),
+      ]);
+    }
+    
+    if (role == 'admin' || role == 'warehouse') {
+      items.add(NavItem('المخزون', Icons.warehouse_outlined, const InventoryScreen()));
+    }
+    
+    if (role == 'customer') {
+      items.add(NavItem('كشف حسابي', Icons.account_balance_outlined, const CustomerStatementScreen()));
+    }
+    
+    items.add(NavItem('الإعدادات', Icons.settings_outlined, const SettingsScreen()));
+    return items;
+  }
+
+  DateTime? _lastBackPressTime;
 
   @override
   Widget build(BuildContext context) {
@@ -1651,7 +1605,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   leading: p.imageUrl != null && p.imageUrl!.isNotEmpty
                     ? ClipOval(
                         child: CachedNetworkImage(
-                          imageUrl: _buildImageUrl(p.imageUrl) ?? '',
+                          imageUrl: _ProductDetailScreenState._buildImageUrlStatic(p.imageUrl) ?? '',
                           width: 50,
                           height: 50,
                           fit: BoxFit.cover,
@@ -2075,7 +2029,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                       const Icon(Icons.attach_money, size: 16, color: Colors.grey),
                                       const SizedBox(width: 4),
                                       Text(
-                                        '\\$${order['total_amount']}',
+                                        '\$${order['total_amount']}',
                                         style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           color: Colors.green,
@@ -2142,7 +2096,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         'token': widget.session['token'],
       });
     } catch (e) {
-      Logger.log('خطأ في تعليم الطلب كمقروء: $e');
+      debugPrint('خطأ في تعليم الطلب كمقروء: $e');
     }
   }
 
@@ -2585,11 +2539,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
     
     // محاسب/مدير: اعتماد نهائي
-    if ((role == 'admin' || role == 'manager' || role == 'accountant') && status == 'approved') {
+    if ((role == 'admin' || role == 'manager' || role == 'accountant') && status == 'customer_confirmed') {
        buttons.add(
         Expanded(
           child: FilledButton.icon(
-            onPressed: () => _updateStatus('preparing'),
+            onPressed: () => _updateStatus('approved'),
             icon: const Icon(Icons.verified),
             label: const Text('اعتماد نهائي وحجز المخزون'),
             style: FilledButton.styleFrom(backgroundColor: Colors.blue.shade800),
@@ -2599,7 +2553,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     // مستودع: تجهيز الطلبية
-    if ((role == 'admin' || role == 'manager' || role == 'warehouse') && status == 'preparing') {
+    if ((role == 'admin' || role == 'manager' || role == 'warehouse') && status == 'approved') {
       buttons.add(
         Expanded(
           child: FilledButton.icon(
@@ -2613,11 +2567,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     // شحن (بعد التجهيز)
-    if ((role == 'admin' || role == 'manager' || role == 'accountant') && status == 'preparing') {
+    if ((role == 'admin' || role == 'manager' || role == 'accountant') && status == 'prepared') {
       buttons.add(
         Expanded(
           child: FilledButton.icon(
-            onPressed: () => _updateStatus('shipping'),
+            onPressed: () => _showCreateShipmentDialog(),
             icon: const Icon(Icons.local_shipping),
             label: const Text('تأكيد الشحن'),
             style: FilledButton.styleFrom(backgroundColor: Colors.indigo),
@@ -3743,7 +3697,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                               Expanded(
                                 child: p.imageUrl != null && p.imageUrl!.isNotEmpty
                                   ? CachedNetworkImage(
-                                      imageUrl: _buildImageUrl(p.imageUrl) ?? '',
+                                      imageUrl: _ProductDetailScreenState._buildImageUrlStatic(p.imageUrl) ?? '',
                                       fit: BoxFit.cover,
                                       width: double.infinity,
                                       placeholder: (context, url) => Container(
@@ -3841,7 +3795,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                         ? ClipRRect(
                                             borderRadius: BorderRadius.circular(4),
                                             child: CachedNetworkImage(
-                                              imageUrl: _buildImageUrl(item.product.imageUrl) ?? '',
+                                              imageUrl: _ProductDetailScreenState._buildImageUrlStatic(item.product.imageUrl) ?? '',
                                               width: 50,
                                               height: 50,
                                               fit: BoxFit.cover,
@@ -4971,11 +4925,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
 
     await appState.flutterLocalNotificationsPlugin.show(
-      0,
-      'إشعار تجريبي',
-      'هذا إشعار تجريبي لاختبار نظام الإشعارات',
-      details,
-      payload: 'test_notification',
+      id: 0,
+      title: 'إشعار تجريبي',
+      body: 'هذا إشعار تجريبي لاختبار نظام الإشعارات',
+      notificationDetails: details,
     );
 
     if (mounted) {
@@ -5075,6 +5028,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _rebuildImages() async {
+    setState(() => _loading = true);
+    try {
+      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final res = await ApiService().post({
+        'action': 'rebuildImageIndex',
+        'username': session?['username'],
+        'token': session?['token'],
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['message'] ?? 'تمت إعادة بناء فهرس الصور بنجاح')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final role = context.findAncestorStateOfType<_HomePageState>()?.widget.session['role'];
@@ -5100,7 +5070,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: ElevatedButton.icon(
                   onPressed: _loading ? null : _updateConfig,
                   icon: const Icon(Icons.save),
-                  label: const Text('حفظ المعرف'),
+                  label: const Text('حفظ الإعدادات'),
                 ),
               ),
               const SizedBox(width: 8),
@@ -5108,10 +5078,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: FilledButton.icon(
                   onPressed: _loading ? null : _syncNow,
                   icon: const Icon(Icons.sync),
-                  label: const Text('مزامنة الآن'),
+                  label: const Text('مزامنة البيانات'),
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _loading ? null : _rebuildImages,
+              icon: const Icon(Icons.image_search),
+              label: const Text('تحديث فهرس الصور'),
+              style: FilledButton.styleFrom(backgroundColor: Colors.indigo),
+            ),
           ),
           const Divider(height: 40),
         ],
@@ -5300,7 +5280,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   'is_active': isActive ? '1' : '0',
                   if (user == null && passCtrl.text.isNotEmpty) 'password': passCtrl.text,
                   'target_username': user?['username'],
-                  'username': widget.session['username'],
+                  'session_username': widget.session['username'],
                   'token': widget.session['token'],
                 });
                 if (mounted) {
@@ -5867,12 +5847,28 @@ class ProductDetailScreen extends StatefulWidget {
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
   int _quantity = 1;
   String _selectedUnit = '';
+  double _currentPrice = 0.0;
   final TextEditingController _noteCtrl = TextEditingController();
   
   @override
   void initState() {
     super.initState();
     _selectedUnit = widget.product.unit;
+    _currentPrice = widget.product.price;
+  }
+  
+  void _updatePrice(String unit) {
+    double factor = 1.0;
+    if (unit == widget.product.unit2) {
+      factor = widget.product.factor2 ?? 1.0;
+    } else if (unit == widget.product.unit3) {
+      factor = widget.product.factor3 ?? 1.0;
+    }
+    
+    setState(() {
+      _selectedUnit = unit;
+      _currentPrice = widget.product.price * factor;
+    });
   }
   
   @override
@@ -5996,8 +5992,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // السعر
-                  (widget.product.price ?? 0) > 0
-                    ? Text('السعر: ${widget.product.price} ${widget.product.currency ?? ""}', 
+                  (_currentPrice) > 0
+                    ? Text('السعر: $_currentPrice ${widget.product.currency ?? ""}', 
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.green, fontWeight: FontWeight.bold))
                     : const Text('يرجى التواصل لمعرفة السعر', 
                         style: TextStyle(color: Colors.orange, fontSize: 18, fontWeight: FontWeight.bold)),
@@ -6020,7 +6016,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       filled: true,
                     ),
                     items: (widget.product.units ?? [widget.product.unit]).toSet().map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
-                    onChanged: (val) => setState(() => _selectedUnit = val!),
+                    onChanged: (val) => _updatePrice(val!),
                   ),
                   
                   // اختيار الكمية
@@ -6075,8 +6071,24 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     child: FilledButton.icon(
                       onPressed: () {
                         if (widget.onAddToCart != null) {
+                          // Create a copy of the product with the updated price for this unit
+                          final adjustedProduct = Product(
+                            code: widget.product.code,
+                            name: widget.product.name,
+                            category: widget.product.category,
+                            origin: widget.product.origin,
+                            unit: widget.product.unit,
+                            price: _currentPrice,
+                            imageUrl: widget.product.imageUrl,
+                            currency: widget.product.currency,
+                            stock: widget.product.stock,
+                            description: widget.product.description,
+                            units: widget.product.units,
+                            uomName: widget.product.uomName,
+                          );
+                          
                           final item = OrderItem(
-                            product: widget.product,
+                            product: adjustedProduct,
                             quantity: _quantity.toDouble(),
                             selectedUnit: _selectedUnit,
                             note: _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
