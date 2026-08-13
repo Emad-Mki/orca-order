@@ -686,8 +686,9 @@ function _handleCreateOrder(body, user) {
     }
     
     const customer = _all('Customers').find(c => c.customer_id === customerId);
-    if (!customerId) throw new Error('لم يتم تحديد العميل');
 
+    if (!customerId) throw new Error('لم يتم تحديد العميل');
+    
     const orderObj = {
       order_id: 'OR-' + Date.now(),
       customer_id: customerId,
@@ -701,9 +702,9 @@ function _handleCreateOrder(body, user) {
       updated_at: _now(),
       created_by: user.username
     };
-
+    
     _add('Orders', orderObj);
-
+    
     if (body.items && Array.isArray(body.items)) {
       body.items.forEach(item => {
         _add('Order_Items', {
@@ -718,7 +719,7 @@ function _handleCreateOrder(body, user) {
         });
       });
     }
-
+    
     return { order_id: orderObj.order_id, success: true };
   } finally {
     lock.releaseLock();
