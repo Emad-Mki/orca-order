@@ -729,6 +729,7 @@ function _handleOrderDetails(body, user) {
   });
   
   const products = _all('Products');
+  const productImages = _all('Product_Images');
   const shipment = _all('Shipments').find(s => {
     const oid = String(s.order_id || '').trim();
     return oid === orderId;
@@ -738,10 +739,23 @@ function _handleOrderDetails(body, user) {
 
   const detailedItems = items.map(i => {
     const p = products.find(prod => prod.code === i.code);
+    // البحث عن صورة المنتج
+    let imageUrl = '';
+    if (p && p.image_name) {
+      const imgData = productImages.find(img => img.normalized_name === normalizeImageName_(p.image_name));
+      if (imgData && imgData.image_url) {
+        imageUrl = imgData.image_url;
+      } else {
+        // محاولة استخدام image_name مباشرة إذا لم توجد في الفهرس
+        imageUrl = 'https://drive.google.com/thumbnail?id=' + (p.image_file_id || '') + '&sz=w400';
+      }
+    }
+    
     return {
       item_id: i.item_id || '',
       code: i.code || '',
       name: p ? p.name : 'منتج غير موجود',
+      image_url: imageUrl,
       unit: i.unit || '',
       quantity_requested: Number(i.quantity_requested || 0),
       quantity_approved: Number(i.quantity_approved || 0),
@@ -757,27 +771,68 @@ function _handleOrderDetails(body, user) {
     };
   });
 
+  // حساب معلومات الرصيد بشكل منفصل وصحيح
   let balanceInfo = null;
   if (customer) {
-    const payments = _all('Payments').filter(p => p.customer_id === order.customer_id);
-    const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const allCustomerOrders = _all('Orders').filter(o =>
+    const allPayments = _all('Payments');
+    const allOrders = _all('Orders');
+    const allOrderItems = _all('Order_Items');
+    
+    // تصفية الدفعات والطلبات للعميل الحالي
+    const customerPayments = allPayments.filter(p => p.customer_id === order.customer_id);
+    const customerOrders = allOrders.filter(o =>
       o.customer_id === order.customer_id &&
       !['cancelled', 'deleted'].includes(String(o.status || '').toLowerCase())
     );
-    const allOrderItems = _all('Order_Items');
-    let totalOrders = 0;
-    allCustomerOrders.forEach(o => {
+    
+    // حساب إجمالي الدفعات
+    const totalPaid = customerPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    
+    // حساب الرصيد السابق (الفواتير السابقة فقط، باستثناء الطلب الحالي)
+    let previousOrdersTotal = 0;
+    let currentOrderTotal = 0;
+    const currentOrderId = String(order.order_id || '').trim();
+    
+    customerOrders.forEach(o => {
       const orderItems = allOrderItems.filter(i => {
         const oid = String(i.order_id || '').trim();
         return oid === String(o.order_id || '').trim();
       });
+      
+      let orderSum = 0;
       orderItems.forEach(item => {
-        totalOrders += Number(item.final_price || item.display_price_snapshot || 0) * Number(item.quantity_approved || item.quantity_requested || 0);
+        // حساب فقط البنود المتوفرة والمسعرة
+        const isUnavailable = String(item.status || '').toLowerCase() === 'unavailable';
+        if (!isUnavailable) {
+          const price = Number(item.final_price || item.display_price_snapshot || 0);
+          const qty = Number(item.quantity_approved || item.quantity_requested || 0);
+          orderSum += price * qty;
+        }
       });
+      
+      // إذا كان هذا هو الطلب الحالي، لا تدخله في الرصيد السابق
+      if (String(o.order_id || '').trim() === currentOrderId) {
+        currentOrderTotal = orderSum;
+      } else {
+        previousOrdersTotal += orderSum;
+      }
     });
-    const currentBalance = totalOrders - totalPaid + Number(customer.opening_usd || 0);
-    balanceInfo = { current_balance: currentBalance, total_paid: totalPaid };
+    
+    // الرصيد السابق = مجموع الفواتير السابقة - مجموع الدفعات السابقة + الرصيد الافتتاحي
+    const openingBalance = Number(customer.opening_usd || 0);
+    const previousBalance = previousOrdersTotal - totalPaid + openingBalance;
+    
+    // الرصيد الجديد = الرصيد السابق + صافي الفاتورة الحالية
+    const newBalance = previousBalance + currentOrderTotal;
+    
+    balanceInfo = {
+      previous_balance: previousBalance,
+      current_invoice_total: currentOrderTotal,
+      total_paid: totalPaid,
+      opening_balance: openingBalance,
+      new_balance: newBalance,
+      currency: order.currency || 'USD'
+    };
   }
 
   return {
@@ -1096,39 +1151,120 @@ function _handleDeleteOrder(body, user) {
 
 function _handleUpdateOrderPricing(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
-  const orderId = body.orderId || body.order_id;
-  const itemsUpdates = body.items;
-  if (!orderId || !Array.isArray(itemsUpdates)) throw new Error('بيانات غير صالحة');
-
-  const ss = _ss();
-  const itemsSheet = ss.getSheetByName('Order_Items');
-  const itemsData = itemsSheet.getDataRange().getValues();
-  const itemsHeaders = itemsData[0];
-  const itemIdIdx = itemsHeaders.indexOf('item_id');
-
-  itemsUpdates.forEach(upd => {
-    for (let i = 1; i < itemsData.length; i++) {
-      if (itemsData[i][itemIdIdx] === upd.item_id) {
-        itemsSheet.getRange(i + 1, itemsHeaders.indexOf('quantity_approved') + 1).setValue(upd.quantity_approved);
-        itemsSheet.getRange(i + 1, itemsHeaders.indexOf('final_price') + 1).setValue(upd.final_price);
-        if (upd.currency) itemsSheet.getRange(i + 1, itemsHeaders.indexOf('currency') + 1).setValue(upd.currency);
-        itemsSheet.getRange(i + 1, itemsHeaders.indexOf('accountant_note') + 1).setValue(upd.accountant_note || '');
-        break;
-      }
-    }
-  });
-
-  _updateStatusInternal(orderId, 'priced');
-
-  const order = _all('Orders').find(o => o.order_id === orderId);
-  if (order) {
-    const customerUser = _all('Users').find(u => u.customer_id === order.customer_id);
-    if (customerUser) {
-      _sendNotification(customerUser.user_id, 'تم تسعير الطلب', 'طلبك رقم ' + orderId + ' جاهز للمراجعة والتأكيد.');
-    }
+  const orderId = resolveOrderIdentifier_(body);
+  const itemsUpdates = body.items || [];
+  const newItems = body.new_items || [];
+  
+  if (!orderId) {
+    return { 
+      ok: false, 
+      code: 'ORDER_ID_REQUIRED',
+      message: 'رقم الطلب مطلوب' 
+    };
+  }
+  
+  if (!Array.isArray(itemsUpdates)) {
+    return { 
+      ok: false, 
+      code: 'INVALID_DATA',
+      message: 'بيانات البنود غير صالحة' 
+    };
   }
 
-  return { success: true, message: 'تم إرسال التسعير بنجاح' };
+  // استخدام LockService لمنع التكرار
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    return { 
+      ok: false, 
+      code: 'LOCK_TIMEOUT',
+      message: 'جاري معالجة الطلب، يرجى الانتظار قليلاً' 
+    };
+  }
+  
+  try {
+    const ss = _ss();
+    const itemsSheet = ss.getSheetByName('Order_Items');
+    const itemsData = itemsSheet.getDataRange().getValues();
+    const itemsHeaders = itemsData[0];
+    
+    // تحديث البنود الموجودة
+    itemsUpdates.forEach(upd => {
+      for (let i = 1; i < itemsData.length; i++) {
+        if (itemsData[i][itemsHeaders.indexOf('item_id')] === upd.item_id) {
+          const row = i + 1;
+          const qtyApprovedIdx = itemsHeaders.indexOf('quantity_approved');
+          const finalPriceIdx = itemsHeaders.indexOf('final_price');
+          const currencyIdx = itemsHeaders.indexOf('currency');
+          const accountantNoteIdx = itemsHeaders.indexOf('accountant_note');
+          const statusIdx = itemsHeaders.indexOf('status');
+          
+          if (qtyApprovedIdx !== -1) itemsSheet.getRange(row, qtyApprovedIdx + 1).setValue(upd.quantity_approved || 0);
+          if (finalPriceIdx !== -1) itemsSheet.getRange(row, finalPriceIdx + 1).setValue(upd.final_price || 0);
+          if (currencyIdx !== -1 && upd.currency) itemsSheet.getRange(row, currencyIdx + 1).setValue(upd.currency);
+          if (accountantNoteIdx !== -1) itemsSheet.getRange(row, accountantNoteIdx + 1).setValue(upd.accountant_note || '');
+          if (statusIdx !== -1 && upd.status) itemsSheet.getRange(row, statusIdx + 1).setValue(upd.status);
+          break;
+        }
+      }
+    });
+    
+    // إضافة بنود جديدة
+    if (newItems.length > 0) {
+      const order = _all('Orders').find(o => o.order_id === orderId);
+      if (!order) {
+        return { 
+          ok: false, 
+          code: 'ORDER_NOT_FOUND',
+          message: 'الطلب غير موجود' 
+        };
+      }
+      
+      newItems.forEach(newItem => {
+        _add('Order_Items', {
+          item_id: Utilities.getUuid(),
+          order_id: orderId,
+          order_number: order.order_number || orderId,
+          code: newItem.code || '',
+          unit: newItem.unit || '',
+          quantity_requested: newItem.quantity || 0,
+          quantity_approved: newItem.quantity_approved || newItem.quantity || 0,
+          quantity_prepared: 0,
+          display_price_snapshot: newItem.price || 0,
+          final_price: newItem.final_price || 0,
+          currency: newItem.currency || 'USD',
+          status: newItem.status || '',
+          customer_note: newItem.customer_note || '',
+          accountant_note: newItem.accountant_note || '',
+          warehouse_note: ''
+        });
+      });
+    }
+
+    _updateStatusInternal(orderId, 'priced');
+
+    const order = _all('Orders').find(o => o.order_id === orderId);
+    if (order) {
+      const customerUser = _all('Users').find(u => u.customer_id === order.customer_id);
+      if (customerUser) {
+        _sendNotification(customerUser.user_id, 'تم تسعير الطلب', 'طلبك رقم ' + (order.order_number || orderId) + ' جاهز للمراجعة والتأكيد.');
+      }
+    }
+
+    return { 
+      ok: true, 
+      message: 'تم إرسال التسعير بنجاح',
+      items_updated: itemsUpdates.length,
+      items_added: newItems.length
+    };
+  } catch (e) {
+    return { 
+      ok: false, 
+      code: 'PRICING_ERROR',
+      message: 'خطأ في التسعير: ' + e.toString() 
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function _handleUpdateCustomerOrder(body, user) {
