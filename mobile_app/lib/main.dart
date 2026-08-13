@@ -2729,10 +2729,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       'name': i['name'],
       'quantity_requested': i['quantity_requested'],
       'quantity_approved': i['quantity_approved'] == 0 ? i['quantity_requested'] : i['quantity_approved'],
-      'final_price': i['final_price'] == 0 ? i['price_offer'] : i['final_price'],
+      'final_price': i['final_price'] == 0 ? (i['price_offer'] ?? i['default_price'] ?? i['price'] ?? 0) : i['final_price'],
+      'default_price': i['default_price'] ?? i['price'] ?? 0,
       'currency': i['currency'] ?? 'USD',
       'accountant_note': i['accountant_note'] ?? '',
-      'stock': i['stock_available']
+      'stock': i['stock_available'],
+      'image_url': i['image_url'],
+      'image_file_id': i['image_file_id'],
+      'image_name': i['image_name'],
     }).toList();
 
     showDialog(
@@ -2822,10 +2826,58 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                             children: [
                               Row(
                                 children: [
+                                  // عرض صورة المنتج إذا كانت موجودة
+                                  if (item['image_url']?.toString().isNotEmpty == true)
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        item['image_url'],
+                                        width: 60,
+                                        height: 60,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (context, error, stackTrace) => Container(
+                                          width: 60,
+                                          height: 60,
+                                          color: Colors.grey.shade200,
+                                          child: Icon(Icons.image_not_supported, color: Colors.grey),
+                                        ),
+                                        loadingBuilder: (context, child, loadingProgress) {
+                                          if (loadingProgress == null) return child;
+                                          return Container(
+                                            width: 60,
+                                            height: 60,
+                                            color: Colors.grey.shade100,
+                                            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                                          );
+                                        },
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      width: 60,
+                                      height: 60,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade200,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Icon(Icons.image, color: Colors.grey.shade400),
+                                    ),
+                                  const SizedBox(width: 12),
                                   Expanded(
-                                    child: Text(
-                                      item['name'],
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item['name'],
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        if (item['default_price'] != null && (item['default_price'] ?? 0) > 0)
+                                          Text(
+                                            'السعر الافتراضي: ${item['default_price']} ${item['currency'] ?? 'USD'}',
+                                            style: TextStyle(fontSize: 12, color: Colors.blue.shade700, fontWeight: FontWeight.w500),
+                                          ),
+                                      ],
                                     ),
                                   ),
                                   Container(

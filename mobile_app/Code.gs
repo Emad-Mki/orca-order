@@ -10,7 +10,7 @@
 const H = {
   Users: ['user_id','username','password_hash','salt','full_name','phone','role','customer_id','status','must_change_password','created_at','last_login'],
   Customers: ['customer_id','full_name','company_name','phone','address','province','notes','opening_usd','opening_syp','status','created_at'],
-  Products: ['code','name','image_name','group','origin','unit_1','quantity','unit_2','factor_2','quantity_2','factor_3','unit_3','quantity_3','display_price','currency','notes','updated_at','updated_by'],
+  Products: ['code','name','image_name','group','origin','unit_1','quantity','unit_2','factor_2','quantity_2','factor_3','unit_3','quantity_3','display_price','currency','notes','updated_at','updated_by','image_file_id'],
   Orders: ['order_id','customer_id','customer_name','status','currency','note','accounting_invoice_no','is_read','is_new','cancellation_reason','created_at','updated_at','created_by'],
   Order_Items: ['item_id','order_id','code','unit','quantity_requested','quantity_approved','quantity_prepared','display_price_snapshot','final_price','currency','status','customer_note','accountant_note','warehouse_note'],
   Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type'],
@@ -741,26 +741,39 @@ function _handleOrderDetails(body, user) {
     const p = products.find(prod => prod.code === i.code);
     // البحث عن صورة المنتج
     let imageUrl = '';
-    if (p && p.image_name) {
-      const imgData = productImages.find(img => img.normalized_name === normalizeImageName_(p.image_name));
-      if (imgData && imgData.image_url) {
-        imageUrl = imgData.image_url;
-      } else {
-        // محاولة استخدام image_name مباشرة إذا لم توجد في الفهرس
-        imageUrl = 'https://drive.google.com/thumbnail?id=' + (p.image_file_id || '') + '&sz=w400';
+    let imageFileId = '';
+    let imageName = '';
+    if (p) {
+      imageName = p.image_name || '';
+      imageFileId = p.image_file_id || '';
+      if (imageName) {
+        const imgData = productImages.find(img => img.normalized_name === normalizeImageName_(imageName));
+        if (imgData && imgData.image_url) {
+          imageUrl = imgData.image_url;
+        } else {
+          // محاولة استخدام image_name مباشرة إذا لم توجد في الفهرس
+          imageUrl = 'https://drive.google.com/thumbnail?id=' + imageFileId + '&sz=w400';
+        }
       }
     }
+    
+    // حساب السعر الافتراضي من عرض السعر أو سعر المنتج العادي
+    const defaultPrice = Number(p?.display_price || 0);
+    const priceOffer = Number(i.display_price_snapshot || 0);
     
     return {
       item_id: i.item_id || '',
       code: i.code || '',
       name: p ? p.name : 'منتج غير موجود',
       image_url: imageUrl,
+      image_file_id: imageFileId,
+      image_name: imageName,
       unit: i.unit || '',
       quantity_requested: Number(i.quantity_requested || 0),
       quantity_approved: Number(i.quantity_approved || 0),
       quantity_prepared: Number(i.quantity_prepared || 0),
-      price_offer: Number(i.display_price_snapshot || 0),
+      price_offer: priceOffer,
+      default_price: defaultPrice,
       final_price: Number(i.final_price || 0),
       currency: i.currency || 'USD',
       status: i.status || '',
