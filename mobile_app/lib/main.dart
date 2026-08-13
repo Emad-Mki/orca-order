@@ -2094,6 +2094,20 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Map<String, dynamic>? _balanceInfo;
   late String role;
 
+  // دالة مساعدة آمنة لتنسيق الأسعار ومنع null
+  String _safePrice(dynamic value) {
+    if (value == null) return '0.00';
+    double num;
+    if (value is double) {
+      num = value;
+    } else if (value is int) {
+      num = value.toDouble();
+    } else {
+      num = double.tryParse(value.toString()) ?? 0.0;
+    }
+    return num.toStringAsFixed(2);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2244,10 +2258,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
-                                      Text('\$${(item['final_price'] > 0 ? item['final_price'] : item['price_offer']).toStringAsFixed(2)}',
+                                      Text('\$' + _safePrice(item['final_price'] ?? item['price_offer']),
                                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                      if (item['final_price'] > 0)
-                                        Text('الإجمالي: \$${(item['final_price'] * (item['quantity_approved'] > 0 ? item['quantity_approved'] : item['quantity_requested'])).toStringAsFixed(2)}',
+                                      if ((item['final_price'] ?? 0) > 0)
+                                        Text('الإجمالي: \$' + _safePrice((item['final_price'] ?? 0) * ((item['quantity_approved'] ?? 0) > 0 ? (item['quantity_approved'] ?? 0) : (item['quantity_requested'] ?? 0))),
                                             style: const TextStyle(fontSize: 10, color: Colors.grey)),
                                     ],
                                   ) : null,
