@@ -44,6 +44,9 @@ function _digest(str) {
     .join('');
 }
 
+/**
+ * قراءة جميع الصفوف من ورقة مع تحويلها إلى كائنات باستخدام العناوين الفعلية
+ */
 function _all(name) {
   const sheet = _ss().getSheetByName(name);
   if (!sheet) return [];
@@ -52,22 +55,109 @@ function _all(name) {
   const headers = values.shift();
   return values
     .filter((r) => r.join('').trim() !== '')
-    .map((row) => Object.fromEntries(headers.map((h, i) => [h, row[i]])));
+    .map((row) => Object.fromEntries(headers.map((h, i) => [String(h).trim(), row[i]])));
 }
 
-function _add(name, obj) {
-  const sheet = _ss().getSheetByName(name);
-  if (!sheet) throw new Error('الجدول غير موجود: ' + name);
-  const headers = H[name];
-  sheet.appendRow(headers.map((k) => obj[k] ?? ''));
-}
-
+/**
+ * الحصول على رؤوس الأعمدة الفعلية من ورقة
+ */
 function _getHeaders(sheetName) {
   const sheet = _ss().getSheetByName(sheetName);
   if (!sheet) return [];
   const lastCol = sheet.getLastColumn();
   if (lastCol === 0) return [];
-  return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h).trim());
+}
+
+/**
+ * كتابة كائن إلى ورقة باستخدام العناوين الفعلية (وليس الترتيب الثابت)
+ * هذه الدالة تقرأ العناوين الفعلية من الورقة ثم تكتب القيم في الأعمدة الصحيحة
+ */
+function _add(name, obj) {
+  const sheet = _ss().getSheetByName(name);
+  if (!sheet) throw new Error('الجدول غير موجود: ' + name);
+  
+  // قراءة العناوين الفعلية من الورقة
+  const actualHeaders = _getHeaders(name);
+  
+  if (actualHeaders.length === 0) {
+    // إذا لم تكن هناك عناوين، نستخدم المخطط H ونضيفه أولاً
+    const schemaHeaders = H[name] || [];
+    if (schemaHeaders.length > 0) {
+      sheet.appendRow(schemaHeaders);
+      sheet.appendRow(schemaHeaders.map((k) => obj[k] ?? ''));
+    }
+    return;
+  }
+  
+  // كتابة القيم حسب العناوين الفعلية الموجودة في الورقة
+  const row = actualHeaders.map((header) => {
+    // البحث عن قيمة مطابقة في الكائن المدخل
+    // ندعم عدة صيغ لاسم الحقل
+    const possibleKeys = [
+      header,
+      header.toLowerCase(),
+      header.replace(/_/g, '').toLowerCase(),
+      header.replace(/-/g, '_').toLowerCase()
+    ];
+    
+    for (const key of possibleKeys) {
+      if (obj[key] !== undefined && obj[key] !== null) {
+        return obj[key];
+      }
+    }
+    
+    // محاولة البحث بمطابقة جزئية
+    for (const objKey of Object.keys(obj)) {
+      if (String(objKey).toLowerCase().replace(/_/g, '') === header.toLowerCase().replace(/_/g, '')) {
+        return obj[objKey];
+      }
+    }
+    
+    return '';
+  });
+  
+  sheet.appendRow(row);
+}
+
+/**
+ * تحديث صف موجود بناءً على مفتاح
+ */
+function _updateByField(sheetName, keyField, keyValue, updates) {
+  const sheet = _ss().getSheetByName(sheetName);
+  if (!sheet) throw new Error('الجدول غير موجود: ' + sheetName);
+  
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return false;
+  
+  const headers = data[0].map(h => String(h).trim());
+  const keyIndex = headers.indexOf(keyField);
+  
+  if (keyIndex === -1) throw new Error('حقل المفتاح غير موجود: ' + keyField);
+  
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][keyIndex]).trim() === String(keyValue).trim()) {
+      // تحديث الخلايا
+      const updateHeaders = Object.keys(updates);
+      for (const field of updateHeaders) {
+        const colIndex = headers.indexOf(field);
+        if (colIndex !== -1) {
+          sheet.getRange(i + 1, colIndex + 1).setValue(updates[field]);
+        }
+      }
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * البحث عن صفوف بناءً على حقل وقيمة
+ */
+function _findByField(sheetName, fieldName, value) {
+  const allData = _all(sheetName);
+  return allData.filter(row => String(row[fieldName] ?? '').trim() === String(value).trim());
 }
 
 function _json(o) {
@@ -589,38 +679,74 @@ function _handleGetOrders(body, user) {
   return { orders: orders };
 }
 
+/**
+ * معالجة جلب تفاصيل الطلب
+ * تدعم البحث بـ order_id أو order_number
+ */
 function _handleOrderDetails(body, user) {
-  const orderId = body.orderId || body.order_id;
-  if (!orderId) throw new Error('رقم الطلب مطلوب');
+  // دعم عدة أسماء للحقول للبحث عن رقم الطلب
+  const orderId = resolveOrderIdentifier_(body);
+  
+  if (!orderId) {
+    return {
+      ok: false,
+      code: 'ORDER_IDENTIFIER_REQUIRED',
+      message: 'رقم أو معرف الطلب مطلوب لعرض تفاصيل الطلب.'
+    };
+  }
 
-  const orders = _all('Orders').filter(o => o.order_id === orderId);
-  if (orders.length === 0) throw new Error('الطلب غير موجود');
+  const orders = _all('Orders').filter(o => {
+    const oid = String(o.order_id || '').trim();
+    const onum = String(o.order_number || o.order_no || '').trim();
+    return oid === orderId || onum === orderId;
+  });
+  
+  if (orders.length === 0) {
+    return {
+      ok: false,
+      code: 'ORDER_NOT_FOUND',
+      message: 'الطلب غير موجود'
+    };
+  }
+  
   const order = orders[0];
 
   if (user && user.role === 'customer' && order.customer_id !== user.customer_id) {
-    throw new Error('ليس لديك صلاحية عرض هذا الطلب');
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'ليس لديك صلاحية عرض هذا الطلب'
+    };
   }
 
-  const items = _all('Order_Items').filter(i => i.order_id === orderId);
+  const items = _all('Order_Items').filter(i => {
+    const oid = String(i.order_id || '').trim();
+    const onum = String(i.order_number || i.order_no || '').trim();
+    return oid === orderId || onum === orderId;
+  });
+  
   const products = _all('Products');
-  const shipment = _all('Shipments').find(s => s.order_id === orderId);
+  const shipment = _all('Shipments').find(s => {
+    const oid = String(s.order_id || '').trim();
+    return oid === orderId;
+  });
   const customers = _all('Customers');
   const customer = customers.find(c => c.customer_id === order.customer_id);
 
   const detailedItems = items.map(i => {
     const p = products.find(prod => prod.code === i.code);
     return {
-      item_id: i.item_id,
-      code: i.code,
+      item_id: i.item_id || '',
+      code: i.code || '',
       name: p ? p.name : 'منتج غير موجود',
-      unit: i.unit,
+      unit: i.unit || '',
       quantity_requested: Number(i.quantity_requested || 0),
       quantity_approved: Number(i.quantity_approved || 0),
       quantity_prepared: Number(i.quantity_prepared || 0),
       price_offer: Number(i.display_price_snapshot || 0),
       final_price: Number(i.final_price || 0),
       currency: i.currency || 'USD',
-      status: i.status,
+      status: i.status || '',
       customer_note: i.customer_note || '',
       accountant_note: i.accountant_note || '',
       warehouse_note: i.warehouse_note || '',
@@ -634,12 +760,15 @@ function _handleOrderDetails(body, user) {
     const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const allCustomerOrders = _all('Orders').filter(o =>
       o.customer_id === order.customer_id &&
-      !['cancelled', 'deleted'].includes(o.status)
+      !['cancelled', 'deleted'].includes(String(o.status || '').toLowerCase())
     );
     const allOrderItems = _all('Order_Items');
     let totalOrders = 0;
     allCustomerOrders.forEach(o => {
-      const orderItems = allOrderItems.filter(i => i.order_id === o.order_id);
+      const orderItems = allOrderItems.filter(i => {
+        const oid = String(i.order_id || '').trim();
+        return oid === String(o.order_id || '').trim();
+      });
       orderItems.forEach(item => {
         totalOrders += Number(item.final_price || item.display_price_snapshot || 0) * Number(item.quantity_approved || item.quantity_requested || 0);
       });
@@ -649,78 +778,173 @@ function _handleOrderDetails(body, user) {
   }
 
   return {
-    order: order,
+    ok: true,
+    order: {
+      order_id: order.order_id || '',
+      order_number: order.order_number || order.order_no || order.order_id || '',
+      customer_id: order.customer_id || '',
+      customer_name: order.customer_name || (customer ? customer.full_name : '') || 'غير معروف',
+      status: order.status || '',
+      normalized_status: _getStatusTextAr(order.status),
+      currency: order.currency || 'USD',
+      note: order.note || '',
+      accounting_invoice_no: order.accounting_invoice_no || '',
+      created_at: order.created_at || '',
+      updated_at: order.updated_at || '',
+      created_by: order.created_by || ''
+    },
     items: detailedItems,
     shipment: shipment || null,
     balanceInfo: balanceInfo
   };
 }
 
+/**
+ * دالة موحدة لاستخراج معرف الطلب من body
+ * تدعم عدة صيغ لاسم الحقل
+ */
+function resolveOrderIdentifier_(body) {
+  if (!body || typeof body !== 'object') return '';
+  
+  const possibleKeys = [
+    'order_id', 'orderId', 'orderid',
+    'order_number', 'orderNumber', 'ordernumber',
+    'order_no', 'orderNo',
+    'id'
+  ];
+  
+  for (const key of possibleKeys) {
+    const val = body[key];
+    if (val !== undefined && val !== null && String(val).trim() !== '') {
+      return String(val).trim();
+    }
+  }
+  
+  return '';
+}
+
+/**
+ * معالجة إنشاء طلب جديد
+ * ينشئ order_id فريد ويربط البنود به
+ */
 function _handleCreateOrder(body, user) {
   // استخدام LockService لمنع التكرار
-  const lock = LockService.getUserLock();
-  if (!lock.tryLock(5000)) {
-    throw new Error('جاري معالجة طلب آخر، يرجى الانتظار قليلاً');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return { 
+      success: false, 
+      message: 'جاري معالجة طلب آخر، يرجى الانتظار قليلاً'
+    };
   }
   
   try {
-    // التحقق من عدم وجود طلب مكرر خلال آخر 30 ثانية
-    const orders = _all('Orders');
     const customerId = user.role === 'customer' ? user.customer_id : body.customer_id;
-    const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString();
-    
-    // التحقق من تكرار محتمل: نفس الزبون ونفس العناصر خلال وقت قصير
-    const duplicateCheck = orders.filter(o => 
-      o.customer_id === customerId && 
-      o.created_at > thirtySecondsAgo &&
-      (o.status === 'pending' || o.status === 'draft')
-    );
-    
-    if (duplicateCheck.length > 0) {
-      // يوجد طلب حديث جداً، نعتبره تكراراً محتملاً
+
+    if (!customerId) {
       return { 
         success: false, 
-        message: 'تم إرسال طلب حديثاً، يرجى انتظار المعالجة أو مراجعة الطلبات الحالية',
-        existing_order_id: duplicateCheck[0].order_id
+        message: 'لم يتم تحديد العميل'
       };
+    }
+    
+    // التحقق من client_request_id لمنع التكرار
+    const clientRequestId = body.client_request_id || body.request_id || null;
+    if (clientRequestId) {
+      const existingOrders = _all('Orders');
+      const existing = existingOrders.find(o => {
+        const existingReqId = String(o.client_request_id || o.request_id || '').trim();
+        return existingReqId !== '' && existingReqId === String(clientRequestId).trim();
+      });
+      
+      if (existing) {
+        // تم معالجة هذا الطلب مسبقاً، نعيد نفس النتيجة
+        return { 
+          success: true, 
+          message: 'تم استلام الطلب مسبقاً',
+          order_id: existing.order_id,
+          order_number: existing.order_number || existing.order_id,
+          is_duplicate: true
+        };
+      }
     }
     
     const customer = _all('Customers').find(c => c.customer_id === customerId);
 
-    if (!customerId) throw new Error('لم يتم تحديد العميل');
+    // إنشاء رقم طلب فريد بتنسيق OR-YYYYMMDD-XXXXXX
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+    const timeStr = String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+    const randomPart = String(Math.floor(Math.random() * 1000000)).padStart(6, '0');
+    const orderNumber = 'OR-' + dateStr + '-' + randomPart;
+    const orderId = 'ORD-' + Date.now() + '-' + randomPart;
     
     const orderObj = {
-      order_id: 'OR-' + Date.now(),
+      order_id: orderId,
+      order_number: orderNumber,
       customer_id: customerId,
-      customer_name: customer ? customer.full_name : 'عميل غير معروف',
-      status: 'pending',
+      customer_name: customer ? (customer.full_name || customer.company_name || 'عميل غير معروف') : 'عميل غير معروف',
+      status: 'submitted',
       currency: body.currency || 'USD',
       note: body.note || '',
       is_new: 'true',
       is_read: 'false',
       created_at: _now(),
       updated_at: _now(),
-      created_by: user.username
+      created_by: user.username || user.user_id || 'unknown',
+      client_request_id: clientRequestId || ''
     };
     
+    // حفظ الطلب الرئيسي أولاً
     _add('Orders', orderObj);
     
-    if (body.items && Array.isArray(body.items)) {
-      body.items.forEach(item => {
-        _add('Order_Items', {
-          item_id: 'ITM-' + Utilities.getUuid(),
-          order_id: orderObj.order_id,
-          code: item.code,
-          unit: item.unit,
-          quantity_requested: item.quantity,
-          display_price_snapshot: item.price,
-          currency: orderObj.currency,
-          status: 'pending'
-        });
-      });
+    // التحقق من نجاح الحفظ بقراءة الطلب مرة أخرى
+    const savedOrder = _all('Orders').find(o => o.order_id === orderId);
+    if (!savedOrder) {
+      throw new Error('فشل حفظ الطلب الرئيسي');
     }
     
-    return { order_id: orderObj.order_id, success: true };
+    // حفظ البنود
+    let itemsSaved = 0;
+    if (body.items && Array.isArray(body.items) && body.items.length > 0) {
+      for (const item of body.items) {
+        try {
+          _add('Order_Items', {
+            item_id: 'ITM-' + Utilities.getUuid(),
+            order_id: orderId,
+            order_number: orderNumber,
+            code: item.code || '',
+            unit: item.unit || '',
+            quantity_requested: Number(item.quantity || 0),
+            display_price_snapshot: Number(item.price || item.display_price || 0),
+            currency: orderObj.currency,
+            status: 'pending',
+            customer_note: item.note || item.customer_note || ''
+          });
+          itemsSaved++;
+        } catch (e) {
+          Logger.log('فشل حفظ البند: ' + (item.code || 'unknown') + ' - ' + e.message);
+        }
+      }
+    }
+    
+    return { 
+      success: true, 
+      message: 'تم إرسال الطلبية بنجاح',
+      order: {
+        order_id: orderId,
+        order_number: orderNumber,
+        customer_id: customerId,
+        status: orderObj.status,
+        created_at: orderObj.created_at,
+        items_count: itemsSaved
+      }
+    };
+  } catch (e) {
+    Logger.log('خطأ في إنشاء الطلب: ' + e.message);
+    return { 
+      success: false, 
+      message: 'فشل إنشاء الطلب: ' + e.message
+    };
   } finally {
     lock.releaseLock();
   }
