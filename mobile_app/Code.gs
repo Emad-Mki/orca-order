@@ -664,6 +664,9 @@ function _handleGetOrders(body, user) {
     const customer = customers.find(c => c.customer_id === o.customer_id);
     return {
       ...o,
+      // إضافة id كمرادف لـ order_id للتوافق مع Flutter
+      id: o.order_id || '',
+      order_number: o.order_number || o.order_id || '',
       customer_name: o.customer_name || (customer ? customer.full_name : 'غير معروف'),
       status_text: _getStatusTextAr(o.status),
       is_new: o.is_new === 'true' || o.is_new === true || o.is_read === 'false' || o.is_read === false || o.is_read === '0',
