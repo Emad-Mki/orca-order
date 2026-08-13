@@ -380,44 +380,36 @@ function _handleOrderDetails(body, user) {
 }
 
 function _handleCreateOrder(body, user) {
-  const orderId = 'OR-' + Date.now();
-  const customerId = user.role === 'customer' ? user.customer_id : body.customer_id;
-  const customer = _all('Customers').find(c => c.customer_id === customerId);
-
-  if (!customerId) throw new Error('لم يتم تحديد العميل');
-
-  const orderObj = {
-    order_id: orderId,
-    customer_id: customerId,
-    customer_name: customer ? customer.full_name : 'عميل غير معروف',
-    status: 'pending',
-    currency: body.currency || 'USD',
-    note: body.note || '',
-    is_new: 'true',
-    is_read: 'false',
-    created_at: _now(),
-    updated_at: _now(),
-    created_by: user.username
-  };
-
-  _add('Orders', orderObj);
-
-  if (body.items && Array.isArray(body.items)) {
-    body.items.forEach(item => {
-      _add('Order_Items', {
-        item_id: 'ITM-' + Utilities.getUuid(),
-        order_id: orderId,
-        code: item.code,
-        unit: item.unit,
-        quantity_requested: item.quantity,
-        display_price_snapshot: item.price,
-        currency: orderObj.currency,
-        status: 'pending'
-      });
-    });
+  // استخدام LockService لمنع التكرار
+  const lock = LockService.getUserLock();
+  if (!lock.tryLock(5000)) {
+    throw new Error('جاري معالجة طلب آخر، يرجى الانتظار قليلاً');
   }
-
-  return { order_id: orderId, success: true };
+  
+  try {
+    // التحقق من عدم وجود طلب مكرر خلال آخر 30 ثانية
+    const orders = _all('Orders');
+    const customerId = user.role === 'customer' ? user.customer_id : body.customer_id;
+    const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString();
+    
+    // التحقق من تكرار محتمل: نفس الزبون ونفس العناصر خلال وقت قصير
+    const duplicateCheck = orders.filter(o => 
+      o.customer_id === customerId && 
+      o.created_at > thirtySecondsAgo &&
+      (o.status === 'pending' || o.status === 'draft')
+    );
+    
+    if (duplicateCheck.length > 0) {
+      // يوجد طلب حديث جداً، نعتبره تكراراً محتملاً
+      return { 
+        success: false, 
+        message: 'تم إرسال طلب حديثاً، يرجى انتظار المعالجة أو مراجعة الطلبات الحالية',
+        existing_order_id: duplicateCheck[0].order_id
+      };
+    }
+    
+    const customer = _all('Customers').find(c => c.customer_id === customerId);
+\n    if (!customerId) throw new Error('لم يتم تحديد العميل');\n\n    const orderObj = {\n      order_id: 'OR-' + Date.now(),\n      customer_id: customerId,\n      customer_name: customer ? customer.full_name : 'عميل غير معروف',\n      status: 'pending',\n      currency: body.currency || 'USD',\n      note: body.note || '',\n      is_new: 'true',\n      is_read: 'false',\n      created_at: _now(),\n      updated_at: _now(),\n      created_by: user.username\n    };\n\n    _add('Orders', orderObj);\n\n    if (body.items && Array.isArray(body.items)) {\n      body.items.forEach(item => {\n        _add('Order_Items', {\n          item_id: 'ITM-' + Utilities.getUuid(),\n          order_id: orderObj.order_id,\n          code: item.code,\n          unit: item.unit,\n          quantity_requested: item.quantity,\n          display_price_snapshot: item.price,\n          currency: orderObj.currency,\n          status: 'pending'\n        });\n      });\n    }\n\n    return { order_id: orderObj.order_id, success: true };\n  } finally {\n    lock.releaseLock();\n  }
 }
 
 function _handleUpdateOrderStatus(body, user) {
