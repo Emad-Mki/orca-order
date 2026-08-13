@@ -18,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'order_status_mapper.dart';
+import 'utils/number_utils.dart';
 
 // --- النماذج (Models) ---
 class OrderStatus {
@@ -1665,7 +1666,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     ],
                   ),
                   trailing: p.price > 0 
-                    ? Text('\$${p.price.toStringAsFixed(2)}', 
+                    ? Text('\$${formatMoneyShort(p.price)}', 
                         style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16))
                     : const Icon(Icons.info_outline, color: Colors.orange),
                   isThreeLine: true,
@@ -2096,16 +2097,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   // دالة مساعدة آمنة لتنسيق الأسعار ومنع null
   String _safePrice(dynamic value) {
-    if (value == null) return '0.00';
-    double num;
-    if (value is double) {
-      num = value;
-    } else if (value is int) {
-      num = value.toDouble();
-    } else {
-      num = double.tryParse(value.toString()) ?? 0.0;
-    }
-    return num.toStringAsFixed(2);
+    return formatMoneyShort(value);
   }
 
   @override
@@ -2311,8 +2303,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   data: _items.map((item) => [
                     item['name'] ?? '',
                     '${item['quantity_requested']} ${item['unit']}',
-                    '${item['final_price'] > 0 ? item['final_price'] : item['price_offer']}',
-                    '${(item['final_price'] > 0 ? item['final_price'] : item['price_offer']) * item['quantity_requested']}',
+                    '${formatMoneyShort(item['final_price'] ?? item['price_offer'])}',
+                    '${formatMoneyShort((toSafeDouble(item['final_price'] ?? item['price_offer'], fallback: 0.0)) * (toSafeDouble(item['quantity_requested'], fallback: 0.0)))}',
                   ]).toList(),
                   headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   cellAlignment: pw.Alignment.centerRight,
@@ -2322,7 +2314,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 pw.Align(
                   alignment: pw.Alignment.centerLeft,
                   child: pw.Text(
-                    'الإجمالي: ${_items.fold(0.0, (sum, item) => sum + ((item['final_price'] > 0 ? item['final_price'] : item['price_offer']) * item['quantity_requested']))} USD',
+                    'الإجمالي: ${_items.fold(0.0, (sum, item) { final p = toSafeDouble(item['final_price'] ?? item['price_offer'], fallback: 0.0); final q = toSafeDouble(item['quantity_requested'], fallback: 0.0); return sum + (p * q); })} USD',
                     style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
                   ),
                 ),
@@ -2391,8 +2383,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Widget _buildOrderFinancialSummary() {
     double total = 0;
     for (var item in _items) {
-      double qty = item['quantity_approved'] > 0 ? item['quantity_approved'].toDouble() : item['quantity_requested'].toDouble();
-      double price = item['final_price'] > 0 ? item['final_price'].toDouble() : item['price_offer'].toDouble();
+      final qty = toSafeDouble(
+        item['quantity_approved'] ?? item['quantity_requested'],
+        fallback: 0.0,
+      );
+      final price = toSafeDouble(
+        item['final_price'] ?? item['price_offer'],
+        fallback: 0.0,
+      );
       total += qty * price;
     }
 
@@ -2405,8 +2403,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             _summaryRow('إجمالي الفاتورة الحالية:', '\$${total.toStringAsFixed(2)}', isBold: true),
             if (_balanceInfo != null) ...[
               const Divider(),
-              _summaryRow('رصيد الحساب السابق:', '\$${_balanceInfo!['current_balance'].toStringAsFixed(2)}'),
-              _summaryRow('الرصيد النهائي بعد الفاتورة:', '\$${(_balanceInfo!['current_balance'] + total).toStringAsFixed(2)}', 
+              _summaryRow('رصيد الحساب السابق:', '\$${formatMoneyShort(_balanceInfo!['current_balance'])}'),
+              _summaryRow('الرصيد النهائي بعد الفاتورة:', 
+                '\$${formatMoneyShort(toSafeDouble(_balanceInfo!['current_balance'], fallback: 0.0) + total)}', 
                 color: Colors.red, isBold: true),
             ],
           ],
@@ -3770,7 +3769,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                     const SizedBox(height: 4),
                                     p.price > 0
                                       ? Text(
-                                          '\$${p.price.toStringAsFixed(2)}',
+                                          '\$${formatMoneyShort(p.price)}',
                                           style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
                                         )
                                       : const Text(
@@ -3882,7 +3881,7 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                             Text('ملاحظة: ${item.note}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
                                         ],
                                       ),
-                                      trailing: Text('\$${item.total.toStringAsFixed(2)}'),
+                                      trailing: Text('\$${formatMoneyShort(item.total)}'),
                                     );
                                   },
                                 ),
@@ -4122,7 +4121,7 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('الرصيد الحالي', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                    Text('\$${balance.toStringAsFixed(2)}', 
+                    Text('\$${formatMoneyShort(balance)}', 
                       style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                   ],
                 ),
@@ -4150,7 +4149,7 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(s['type'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text('\$${(isDebit ? s['debit'] : s['credit']).toStringAsFixed(2)}',
+                        Text('\$${formatMoneyShort(isDebit ? s['debit'] : s['credit'])}',
                           style: TextStyle(color: isDebit ? Colors.red : Colors.green, fontWeight: FontWeight.bold)),
                       ],
                     ),
