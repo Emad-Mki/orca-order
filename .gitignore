@@ -1,1 +1,23 @@
-Nothing should be ignored in this case, as the only change is a modification to a source code file (.gs file) without any build artifacts, dependencies, or temporary files present in the change list.
+```
+# Dart/Flutter build outputs
+/build/
+/.dart_tool/
+/pubspec.lock
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Dependencies cache
+.pub-cache/
+```
