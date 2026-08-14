@@ -13,6 +13,10 @@ class Order {
   final String? createdBy;
   final bool isNew;
   final bool isRead;
+  final double totalAmount;
+  final double previousBalance;
+  final double currentBalance;
+  final List<OrderItem>? items;
 
   Order({
     required this.orderId,
@@ -28,6 +32,10 @@ class Order {
     this.createdBy,
     this.isNew = false,
     this.isRead = false,
+    this.totalAmount = 0.0,
+    this.previousBalance = 0.0,
+    this.currentBalance = 0.0,
+    this.items,
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
@@ -40,6 +48,23 @@ class Order {
       } catch (e) {
         return null;
       }
+    }
+
+    // دالة مساعدة لتحليل الأسعار
+    double parsePrice(dynamic value) {
+      if (value == null) return 0.0;
+      if (value is num) return value.toDouble();
+      String str = value.toString().trim();
+      if (str.isEmpty || str.toLowerCase() == 'null') return 0.0;
+      str = str.replaceAll(',', '').replaceAll('\$', '').replaceAll('USD', '').replaceAll('SYP', '').replaceAll(' ', '');
+      return double.tryParse(str) ?? 0.0;
+    }
+
+    // تحليل العناصر إذا كانت موجودة
+    List<OrderItem>? parseItems(dynamic itemsData) {
+      if (itemsData == null) return null;
+      if (itemsData is! List) return null;
+      return itemsData.map((item) => OrderItem.fromJson(item)).toList();
     }
 
     return Order(
@@ -61,6 +86,10 @@ class Order {
       createdBy: json['created_by'],
       isNew: _parseBool(json['is_new']) || _parseBool(json['is_read']) == false,
       isRead: _parseBool(json['is_read']),
+      totalAmount: parsePrice(json['total_amount'] ?? json['total'] ?? json['grand_total']),
+      previousBalance: parsePrice(json['previous_balance']),
+      currentBalance: parsePrice(json['current_balance'] ?? json['balance']),
+      items: parseItems(json['items'] ?? json['order_items']),
     );
   }
 
@@ -85,5 +114,9 @@ class Order {
     'created_by': createdBy,
     'is_new': isNew,
     'is_read': isRead,
+    'total_amount': totalAmount,
+    'previous_balance': previousBalance,
+    'current_balance': currentBalance,
+    'items': items?.map((item) => item.toJson()).toList(),
   };
 }
