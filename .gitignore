@@ -1,41 +1,44 @@
 ```
-# Build artifacts
-*.apk
-*.aab
-build/
+# Compiled and build artifacts
+*.pyc
+__pycache__/
 *.o
 *.obj
-*.so
-*.dylib
+*.class
+*.exe
 *.dll
+*.so
+*.a
+*.out
 
 # Dependencies
 node_modules/
-vendor/
-
-# Logs
-*.log
-
-# Environment
+venv/
+.venv/
 .env
 .env.local
 *.env.*
 
-# Editors
-.vscode/
-.idea/
+# Build directories
+dist/
+build/
+target/
+*.jar
+*.war
+*.zip
+*.tar.gz
+
+# Logs and temp files
+*.log
+*.tmp
 *.swp
 *.swo
 
-# OS generated files
+# Editors
+.vscode/
+.idea/
+
+# System files
 .DS_Store
 Thumbs.db
-
-# Coverage reports
-coverage/
-htmlcov/
-
-# Temporary files
-*.tmp
-*.temp
 ```
