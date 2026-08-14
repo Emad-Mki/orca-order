@@ -1,33 +1,43 @@
 ```
-# Dependencies
-.pub/
+# Dart/Flutter specific
 .dart_tool/
+.packages
+pubspec.lock
 build/
+*.g.dart
 
 # Environment
 .env
 .env.local
-*.env.*
+.env.*
 
-# Logs and temp files
+# Logs
 *.log
-*.tmp
-*.swp
+**/logs
 
-# OS generated files
+# Dependencies
+node_modules/
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
 
-# IDE specific
-.vscode/
-.idea/
-*.iml
-*.ipr
-*.iws
-
-# Flutter/Dart specific
-**/lib/**/*.g.dart
-**/lib/**/*.freezed.dart
+# Coverage
 coverage/
-*.trace
+*.coverage
+htmlcov/
+
+# Temporary
+*.tmp
+*~
+.DS_Store?
+ehthumbs.db
+Icon?
 ```
