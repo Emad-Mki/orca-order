@@ -1,0 +1,30 @@
+# Backend files (separate repo)
+backend/
+
+# Archive files
+archive/
+
+# Build files
+build/
+*.apk
+*.aab
+*.ipa
+
+# Generated files
+**.g.dart
+**.freezed.dart
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
