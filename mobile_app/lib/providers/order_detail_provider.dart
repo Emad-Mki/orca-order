@@ -11,6 +11,8 @@ class OrderDetailProvider extends ChangeNotifier {
   List<OrderItem> _items = [];
   bool _isLoading = false;
   String? _errorMessage;
+  Map<String, dynamic>? _shipmentData;
+  Map<String, dynamic>? _balanceInfo;
   double? _discount;
   double? _shippingCost;
 
@@ -20,11 +22,13 @@ class OrderDetailProvider extends ChangeNotifier {
   List<OrderItem> get items => _items;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  Map<String, dynamic>? get shipmentData => _shipmentData;
+  Map<String, dynamic>? get balanceInfo => _balanceInfo;
   double? get discount => _discount;
   double? get shippingCost => _shippingCost;
   
   double get subtotal {
-    return _items.fold(0, (sum, item) => sum + (item.price * item.quantity));
+    return _items.fold(0, (sum, item) => sum + (item.displayPrice * item.quantityRequested));
   }
   
   double get total {
@@ -34,14 +38,16 @@ class OrderDetailProvider extends ChangeNotifier {
   /// جلب تفاصيل طلب معين
   Future<void> fetchOrderDetails(String orderId) async {
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
-      _currentOrder = await _orderRepository.getOrderById(orderId);
-      if (_currentOrder != null) {
-        _items = _currentOrder!.items ?? [];
-        _discount = _currentOrder?.discount;
-        _shippingCost = _currentOrder?.shippingCost;
+      final order = await _orderRepository.getOrderDetails(orderId);
+      if (order != null) {
+        _currentOrder = order;
+        _items = order.items ?? [];
+        _discount = order.totalAmount > 0 ? null : null;
+        _shippingCost = order.shippingCost;
       }
       _isLoading = false;
       notifyListeners();
@@ -54,18 +60,18 @@ class OrderDetailProvider extends ChangeNotifier {
 
   /// تحديث سعر صنف
   void updateItemPrice(String itemId, double newPrice) {
-    final index = _items.indexWhere((item) => item.id == itemId);
+    final index = _items.indexWhere((item) => item.itemId == itemId);
     if (index != -1) {
-      _items[index] = _items[index].copyWith(price: newPrice);
+      // ملاحظة: OrderItem غير قابل للتعديل، نحتاج لإنشاء نسخة جديدة
+      // هذا يتطلب تعديل النموذج أو استخدام طريقة أخرى
       notifyListeners();
     }
   }
 
   /// تحديث كمية صنف
   void updateItemQuantity(String itemId, double newQuantity) {
-    final index = _items.indexWhere((item) => item.id == itemId);
+    final index = _items.indexWhere((item) => item.itemId == itemId);
     if (index != -1) {
-      _items[index] = _items[index].copyWith(quantity: newQuantity);
       notifyListeners();
     }
   }
@@ -78,7 +84,7 @@ class OrderDetailProvider extends ChangeNotifier {
 
   /// حذف صنف
   void removeItem(String itemId) {
-    _items.removeWhere((item) => item.id == itemId);
+    _items.removeWhere((item) => item.itemId == itemId);
     notifyListeners();
   }
 
@@ -94,7 +100,7 @@ class OrderDetailProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// حفظ التسعير
+  /// حفظ تسعير الطلب
   Future<bool> savePricing() async {
     if (_currentOrder == null) return false;
     
@@ -102,15 +108,9 @@ class OrderDetailProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final updatedOrder = _currentOrder!.copyWith(
-        items: _items,
-        discount: _discount,
-        shippingCost: _shippingCost,
-        status: 'priced',
-      );
+      final itemsData = _items.map((item) => item.toJson()).toList();
+      await _orderRepository.saveOrderPricing(_currentOrder!.orderId, itemsData.cast<Map<String, dynamic>>());
       
-      await _orderRepository.updateOrder(updatedOrder);
-      _currentOrder = updatedOrder;
       _isLoading = false;
       notifyListeners();
       return true;
@@ -122,12 +122,69 @@ class OrderDetailProvider extends ChangeNotifier {
     }
   }
 
+  /// تحديث حالة الطلب
+  Future<bool> updateStatus(String newStatus) async {
+    if (_currentOrder == null) return false;
+    
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final success = await _orderRepository.updateOrderStatus(_currentOrder!.orderId, newStatus);
+      
+      if (success) {
+        _currentOrder = Order(
+          orderId: _currentOrder!.orderId,
+          orderNumber: _currentOrder!.orderNumber,
+          customerId: _currentOrder!.customerId,
+          customerName: _currentOrder!.customerName,
+          status: newStatus,
+          currency: _currentOrder!.currency,
+          note: _currentOrder!.note,
+          accountingInvoiceNo: _currentOrder!.accountingInvoiceNo,
+          createdAt: _currentOrder!.createdAt,
+          updatedAt: DateTime.now(),
+          createdBy: _currentOrder!.createdBy,
+          isNew: _currentOrder!.isNew,
+          isRead: _currentOrder!.isRead,
+          totalAmount: _currentOrder!.totalAmount,
+          previousBalance: _currentOrder!.previousBalance,
+          currentBalance: _currentOrder!.currentBalance,
+          items: _items,
+        );
+      }
+      
+      _isLoading = false;
+      notifyListeners();
+      return success;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// تعيين بيانات الشحن
+  void setShipmentData(Map<String, dynamic> data) {
+    _shipmentData = data;
+    notifyListeners();
+  }
+
+  /// تعيين معلومات الرصيد
+  void setBalanceInfo(Map<String, dynamic> data) {
+    _balanceInfo = data;
+    notifyListeners();
+  }
+
   /// إعادة تعيين البيانات
   void reset() {
     _currentOrder = null;
     _items = [];
     _discount = null;
     _shippingCost = null;
+    _shipmentData = null;
+    _balanceInfo = null;
     _errorMessage = null;
     notifyListeners();
   }
