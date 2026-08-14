@@ -1,8 +1,3 @@
-import 'package:flutter/material.dart';
-import '../services/api_service.dart';
-import '../utils/number_utils.dart';
-
-/// شاشة المنتجات
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
   @override

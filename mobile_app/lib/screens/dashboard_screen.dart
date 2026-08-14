@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
-import 'nav_item.dart';
 
-/// الشاشة الرئيسية (Dashboard)
 class DashboardScreen extends StatefulWidget {
   final Map<String, dynamic> session;
   const DashboardScreen({super.key, required this.session});
@@ -48,7 +46,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
-
+    
     return RefreshIndicator(
       onRefresh: _fetchDashboardData,
       child: ListView(
@@ -84,8 +82,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               TextButton(
                 onPressed: () {
                   // الانتقال لصفحة الإشعارات
-                  final homeState = context.findAncestorStateOfType<StatefulWidget>();
-                  // ملاحظة: نحتاج للوصول لـ HomePage لتحديث _selectedIndex
+                  context.findAncestorStateOfType<_HomePageState>()?.setState(() {
+                    context.findAncestorStateOfType<_HomePageState>()!._selectedIndex = 
+                      context.findAncestorStateOfType<_HomePageState>()!._navItems.indexWhere((item) => item.title == 'الإشعارات');
+                  });
                 },
                 child: const Text('عرض الكل'),
               ),
