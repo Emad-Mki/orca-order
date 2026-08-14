@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'homepage_screen.dart';
 
 class PaymentsScreen extends StatefulWidget {
   const PaymentsScreen({super.key});
@@ -20,7 +21,7 @@ class _PaymentsScreenState extends State<PaymentsScreen> with SingleTickerProvid
 
   Future<void> _fetchPayments() async {
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final session = context.findAncestorStateOfType<HomePageState>()?.widget.session;
       final data = await ApiService().post({
         'action': 'getPayments',
         'username': session?['username'],

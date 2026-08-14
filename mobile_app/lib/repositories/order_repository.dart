@@ -2,7 +2,7 @@ import 'dart:async';
 import '../models/product.dart';
 import '../models/order.dart';
 import '../models/balance_info.dart';
-import 'api_service.dart';
+import '../services/api_service.dart';
 
 /// مستودع الطلبات
 /// يعمل كطبقة وسيطة بين الـ Models و الـ ApiService

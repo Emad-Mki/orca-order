@@ -1,3 +1,5 @@
+import 'product.dart';
+
 /// نموذج صنف الطلب
 class OrderItem {
   final String itemId;
@@ -20,6 +22,12 @@ class OrderItem {
   final String? imageFileId;
   final String? imageName;
 
+  // Additional fields for local cart handling
+  final Product? product;
+  double? quantity;
+  String? note;
+  String? selectedUnit;
+
   OrderItem({
     required this.itemId,
     required this.code,
@@ -40,6 +48,10 @@ class OrderItem {
     this.imageUrl,
     this.imageFileId,
     this.imageName,
+    this.product,
+    this.quantity,
+    this.note,
+    this.selectedUnit,
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
@@ -84,6 +96,30 @@ class OrderItem {
     );
   }
 
+  /// للحالات التي ننشئ فيها صنف من منتج (السلة)
+  factory OrderItem.fromProduct(Product product, {double quantity = 1.0, String? note, String? selectedUnit}) {
+    return OrderItem(
+      itemId: '',
+      code: product.code ?? '',
+      name: product.name ?? '',
+      unit: product.unit ?? '',
+      quantityRequested: quantity,
+      quantityApproved: 0,
+      quantityPrepared: 0,
+      priceOffer: product.price ?? 0,
+      defaultPrice: product.price ?? 0,
+      finalPrice: 0,
+      currency: 'USD',
+      status: 'pending',
+      stockAvailable: product.stock ?? 0,
+      imageUrl: product.imageUrl,
+      product: product,
+      quantity: quantity,
+      note: note,
+      selectedUnit: selectedUnit ?? product.unit,
+    );
+  }
+
   /// الحصول على السعر الفعلي للعرض
   /// الأولوية: final_price > price_offer > default_price
   double get displayPrice {
@@ -94,6 +130,9 @@ class OrderItem {
 
   /// حساب الإجمالي بناءً على الكمية المعتمدة أو المطلوبة
   double get total {
+    if (product != null && quantity != null) {
+      return (product!.price ?? 0) * quantity!;
+    }
     double qty = quantityApproved > 0 ? quantityApproved : quantityRequested;
     return displayPrice * qty;
   }

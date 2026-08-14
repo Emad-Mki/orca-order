@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
-import 'home_page.dart';
+import 'homepage_screen.dart';
 
 /// شاشة تسجيل الدخول
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final Function(Map<String, dynamic>) onLoginSuccess;
+  
+  const LoginPage({super.key, required this.onLoginSuccess});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -31,8 +33,6 @@ class _LoginPageState extends State<LoginPage> {
     if (savedUser != null && savedPass != null) {
       _userCtrl.text = savedUser;
       _passCtrl.text = savedPass;
-      // الاختياري: تسجيل الدخول تلقائياً
-      // _login(); 
     }
   }
 
@@ -41,6 +41,7 @@ class _LoginPageState extends State<LoginPage> {
     try {
       final username = _userCtrl.text.trim();
       final password = _passCtrl.text;
+      
       final data = await ApiService().post({
         'action': 'login',
         'username': username,
@@ -49,7 +50,7 @@ class _LoginPageState extends State<LoginPage> {
       
       if (!mounted) return;
 
-      // حفظ البيانات محلياً
+      // حفظ بيانات الدخول
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('saved_user', username);
       await prefs.setString('saved_pass', password);
@@ -76,10 +77,7 @@ class _LoginPageState extends State<LoginPage> {
         };
       }
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => HomePage(session: sessionData!)),
-      );
+      widget.onLoginSuccess(sessionData!);
     } catch (e) {
       setState(() => _error = e.toString().replaceAll('Exception: ', ''));
     } finally {

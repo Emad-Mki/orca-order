@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../models/product.dart';
+import 'inventory_movements_screen.dart';
+import 'homepage_screen.dart';
 
 class InventoryScreen extends StatefulWidget {
-  const InventoryScreen({super.key});
+  final Map<String, dynamic> session;
+  const InventoryScreen({super.key, required this.session});
 
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
@@ -21,7 +25,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
   Future<void> _fetchInventory() async {
     setState(() => _isLoading = true);
     try {
-      final data = await ApiService().post({'action': 'getProducts'});
+      final data = await ApiService().post({
+        'action': 'getProducts',
+        'username': widget.session['username'],
+        'token': widget.session['token'],
+      });
       var list = data['products'] ?? data['data'] ?? data['items'] ?? data['result'];
       if (mounted) {
         setState(() {
@@ -86,7 +94,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 final qty = double.tryParse(qtyCtrl.text) ?? 0;
                 if (qty <= 0) return;
                 
-                final session = (context.findAncestorStateOfType<_HomePageState>()?.widget.session);
+                final session = (context.findAncestorStateOfType<HomePageState>()?.widget.session);
                 try {
                   await ApiService().post({
                     'action': 'adjust_inventory',
@@ -142,7 +150,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
               final qty = double.tryParse(qtyCtrl.text) ?? 0;
               if (qty <= 0) return;
 
-              final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+              final session = context.findAncestorStateOfType<HomePageState>()?.widget.session;
               try {
                 await ApiService().post({
                   'action': 'createLowStockRequest',

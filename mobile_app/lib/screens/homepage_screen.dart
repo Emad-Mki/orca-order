@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'screens.dart';
+import 'nav_item.dart';
 
 /// الشاشة الرئيسية للتطبيق
 class HomePage extends StatefulWidget {
@@ -13,22 +15,28 @@ class HomePage extends StatefulWidget {
   });
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomePage> createState() => HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
-  int _selectedIndex = 0;
+class HomePageState extends State<HomePage> {
+  int selectedIndex = 0;
   
-  final List<Widget> _screens = [];
+  late final List<NavItem> navItems;
   
   @override
   void initState() {
     super.initState();
-    // سيتم تهيئة الشاشات لاحقاً
+    navItems = [
+      NavItem('الرئيسية', Icons.dashboard, DashboardScreen(session: widget.session)),
+      NavItem('الطلبات', Icons.shopping_cart, OrdersScreen(session: widget.session)),
+      NavItem('المخزون', Icons.inventory, InventoryScreen(session: widget.session)),
+      NavItem('العملاء', Icons.people, CustomersScreen(session: widget.session)),
+      NavItem('الإعدادات', Icons.settings, const SettingsScreen()),
+    ];
   }
   
-  void _onItemTapped(int index) {
-    setState(() => _selectedIndex = index);
+  void onItemTapped(int index) {
+    setState(() => selectedIndex = index);
   }
 
   @override
@@ -64,35 +72,17 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.construction, size: 64),
-            const SizedBox(height: 16),
-            Text(
-              'جاري نقل الشاشات إلى مجلد screens/',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'يرجى مراجعة الملفات في lib/screens/',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-          ],
-        ),
-      ),
+      body: navItems[selectedIndex].screen,
       bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'الرئيسية'),
-          BottomNavigationBarItem(icon: Icon(Icons.shopping_cart), label: 'الطلبات'),
-          BottomNavigationBarItem(icon: Icon(Icons.inventory), label: 'المخزون'),
-          BottomNavigationBarItem(icon: Icon(Icons.people), label: 'العملاء'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'الإعدادات'),
-        ],
-        currentIndex: _selectedIndex,
+        items: navItems.map((item) => BottomNavigationBarItem(
+          icon: Icon(item.icon),
+          label: item.title,
+        )).toList(),
+        currentIndex: selectedIndex,
         selectedItemColor: Colors.blue,
-        onTap: _onItemTapped,
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
+        onTap: onItemTapped,
       ),
     );
   }

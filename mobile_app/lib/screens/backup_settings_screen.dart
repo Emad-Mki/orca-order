@@ -21,7 +21,7 @@ class _BackupSettingsScreenState extends State<BackupSettingsScreen> {
     setState(() => _isBackingUp = true);
     try {
       final response = await http.post(
-        Uri.parse(AppConfig.baseUrl),
+        Uri.parse(AppConfig.apiUrl),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'action': 'backupData',

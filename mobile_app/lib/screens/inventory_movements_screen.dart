@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'homepage_screen.dart';
 
 class InventoryMovementsScreen extends StatefulWidget {
   final String? productCode;
@@ -22,7 +23,7 @@ class _InventoryMovementsScreenState extends State<InventoryMovementsScreen> {
   Future<void> _fetchMovements() async {
     setState(() => _isLoading = true);
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final session = context.findAncestorStateOfType<HomePageState>()?.widget.session;
       final data = await ApiService().post({
         'action': 'getInventoryMovements',
         'code': widget.productCode,

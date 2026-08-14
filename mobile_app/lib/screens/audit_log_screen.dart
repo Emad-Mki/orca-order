@@ -30,7 +30,7 @@ class _AuditLogScreenState extends State<AuditLogScreen> {
     setState(() => _isLoading = true);
     try {
       final response = await http.post(
-        Uri.parse(AppConfig.baseUrl),
+        Uri.parse(AppConfig.apiUrl),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'action': 'getAuditLogs',
@@ -87,7 +87,7 @@ class _AuditLogScreenState extends State<AuditLogScreen> {
                   ),
                   title: Text(log['description'] ?? ''),
                   subtitle: Text(
-                    '\${log['user']} - \${_formatDate(log['timestamp'])}',
+                    "${log['user']} - ${_formatDate(log['timestamp'])}",
                   ),
                   isThreeLine: true,
                 );

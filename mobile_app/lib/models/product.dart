@@ -1,12 +1,18 @@
 /// نموذج المنتج
 class Product {
+  final int? id;
   final String code;
   final String name;
   final String category;
   final String origin;
   final String unit;
   final double price;
+  final double? offerPrice;
   final double quantity;
+  final double? stockQuantity;
+  final double? minOrderQuantity;
+  final String? brand;
+  final bool? isActive;
   final String? imageUrl;
   final String? imageFileId;
   final String? imageName;
@@ -23,13 +29,19 @@ class Product {
   final String? unit3;
 
   Product({
+    this.id,
     required this.code,
     required this.name,
     required this.category,
     required this.origin,
     required this.unit,
     required this.price,
+    this.offerPrice,
     this.quantity = 0,
+    this.stockQuantity,
+    this.minOrderQuantity,
+    this.brand,
+    this.isActive,
     this.imageUrl,
     this.imageFileId,
     this.imageName,
@@ -72,19 +84,25 @@ class Product {
                          0;
     
     return Product(
+      id: json['id'] != null ? int.tryParse(json['id'].toString()) : null,
       code: json['code']?.toString() ?? '',
       name: json['name'] ?? '',
       category: json['category'] ?? json['group'] ?? '',
       origin: json['origin'] ?? '',
       unit: json['unit'] ?? json['unit_1'] ?? '',
       price: _parsePrice(priceValue),
+      offerPrice: json['offer_price'] != null ? _parsePrice(json['offer_price']) : null,
       quantity: (json['quantity'] ?? 0).toDouble(),
+      stockQuantity: json['stock_quantity'] != null ? (json['stock_quantity'] as num).toDouble() : (json['stock_available'] ?? json['stock'] ?? 0).toDouble(),
+      minOrderQuantity: json['min_order_quantity'] != null ? (json['min_order_quantity'] as num).toDouble() : 1.0,
+      brand: json['brand']?.toString(),
+      isActive: json['is_active'] == true || json['is_active'] == 1 || json['is_active'] == '1',
       imageUrl: json['image_url'],
       imageFileId: json['image_file_id'],
       imageName: json['image_name'],
       notes: json['notes'],
       currency: json['currency'] ?? 'USD',
-      stock: json['stock_available'] ?? json['stock'] ?? 0,
+      stock: (json['stock_available'] ?? json['stock'] ?? 0).toInt(),
       description: json['description'],
       units: unitsList,
       uomName: json['uomName']?.toString(),
@@ -114,13 +132,19 @@ class Product {
   }
 
   Map<String, dynamic> toJson() => {
+    'id': id,
     'code': code,
     'name': name,
     'category': category,
     'origin': origin,
     'unit': unit,
     'price': price,
+    'offer_price': offerPrice,
     'quantity': quantity,
+    'stock_quantity': stockQuantity,
+    'min_order_quantity': minOrderQuantity,
+    'brand': brand,
+    'is_active': isActive,
     'image_url': imageUrl,
     'image_file_id': imageFileId,
     'image_name': imageName,

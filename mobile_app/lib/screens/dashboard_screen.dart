@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'homepage_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final Map<String, dynamic> session;
@@ -81,11 +82,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const Text('آخر الإشعارات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               TextButton(
                 onPressed: () {
-                  // الانتقال لصفحة الإشعارات
-                  context.findAncestorStateOfType<_HomePageState>()?.setState(() {
-                    context.findAncestorStateOfType<_HomePageState>()!._selectedIndex = 
-                      context.findAncestorStateOfType<_HomePageState>()!._navItems.indexWhere((item) => item.title == 'الإشعارات');
-                  });
+                  final homeState = context.findAncestorStateOfType<HomePageState>();
+                  if (homeState != null) {
+                    final index = homeState.navItems.indexWhere((item) => item.title == 'الإشعارات');
+                    if (index != -1) {
+                      homeState.onItemTapped(index);
+                    } else {
+                      // fallback or show message if Notifications not in nav
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('صفحة الإشعارات غير متوفرة في القائمة الرئيسية'))
+                      );
+                    }
+                  }
                 },
                 child: const Text('عرض الكل'),
               ),

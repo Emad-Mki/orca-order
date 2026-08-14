@@ -1,3 +1,5 @@
+import 'order_item.dart';
+
 /// نموذج الطلب
 class Order {
   final String orderId;
@@ -37,6 +39,8 @@ class Order {
     this.currentBalance = 0.0,
     this.items,
   });
+
+  factory Order.fromMap(Map<String, dynamic> map) => Order.fromJson(map);
 
   factory Order.fromJson(Map<String, dynamic> json) {
     // دالة مساعدة لتحليل التاريخ

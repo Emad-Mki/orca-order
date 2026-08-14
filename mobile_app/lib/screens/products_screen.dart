@@ -1,3 +1,11 @@
+import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../models/models.dart';
+import '../services/api_service.dart';
+import '../utils/utils.dart';
+import 'product_detail_screen.dart';
+import 'homepage_screen.dart';
+
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
   @override
@@ -37,12 +45,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
       return imageIdentifier;
     }
     
-    // Check if it's a Google Drive file ID (various formats)
-    // Format 1: Just the file ID
-    // Format 2: https://drive.google.com/file/d/FILE_ID/view
-    // Format 3: https://drive.google.com/open?id=FILE_ID
-    // Format 4: https://lh3.googleusercontent.com/... (already a thumbnail)
-    
     if (imageIdentifier.contains('drive.google.com')) {
       // Extract file ID from Google Drive URL
       RegExp regExp = RegExp(r'/d/([a-zA-Z0-9_-]+)');
@@ -67,7 +69,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
     
     // Assume it's a raw file ID and construct the URL
-    // Remove any special characters that might interfere
     String cleanId = imageIdentifier.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
     if (cleanId.isNotEmpty && cleanId.length > 5) {
       return 'https://lh3.googleusercontent.com/d/$cleanId=w400-h400-p-k-no-nu';
@@ -93,7 +94,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('عرض البيانات المخزنة محلياً (وضع عدم الاتصال)'), backgroundColor: Colors.orange, duration: Duration(seconds: 2)),
           );
-        } else if (!isCached) {
+        } else {
           // Auto-refresh in background after showing cached data
           _scheduleBackgroundRefresh();
         }
@@ -125,7 +126,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
         }
       } catch (e) {
         // Silently fail on background refresh
-        print('Background refresh failed: $e');
+        debugPrint('Background refresh failed: $e');
       }
     }
   }
@@ -177,14 +178,14 @@ class _ProductsScreenState extends State<ProductsScreen> {
     // إرسال حدث إضافة للسلة
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product, addToCart: true)),
+      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
-    final role = (context.findAncestorStateOfType<_HomePageState>()?.widget.session['role']?.toString().toLowerCase());
+    final role = (context.findAncestorStateOfType<HomePageState>()?.widget.session['role']?.toString().toLowerCase());
 
     return Column(
       children: [

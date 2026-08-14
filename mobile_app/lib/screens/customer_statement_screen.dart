@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'homepage_screen.dart';
 import '../utils/number_utils.dart';
 
 /// شاشة كشف حساب العميل
@@ -28,7 +29,7 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
       _error = null;
     });
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final session = context.findAncestorStateOfType<HomePageState>()?.widget.session;
       final response = await ApiService().post({
         'action': 'getCustomerStatement',
         'customer_id': widget.customerId,
@@ -54,7 +55,7 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
   Future<void> _exportPdf() async {
     setState(() => _isLoading = true);
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final session = context.findAncestorStateOfType<HomePageState>()?.widget.session;
       final response = await ApiService().post({
         'action': 'exportStatement',
         'customer_id': widget.customerId,

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../services/api_service.dart';
-import '../models/product.dart';
-import '../models/order_item.dart';
+import '../models/models.dart';
 import '../utils/number_utils.dart';
+import 'product_detail_screen.dart';
 
 /// شاشة إنشاء طلب جديد
 class NewOrderScreen extends StatefulWidget {
@@ -76,94 +77,18 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
     }
   }
 
-  // Helper function to build Google Drive image URL from various formats
-  static String? buildImageUrl(String? imageIdentifier) {
-    if (imageIdentifier == null || imageIdentifier.isEmpty) return null;
-    
-    // If already a full HTTP URL, return as is
-    if (imageIdentifier.startsWith('http://') || imageIdentifier.startsWith('https://')) {
-      return imageIdentifier;
-    }
-    
-    // Check if it's a Google Drive file ID (various formats)
-    if (imageIdentifier.contains('drive.google.com')) {
-      // Extract file ID from Google Drive URL
-      RegExp regExp = RegExp(r'/d/([a-zA-Z0-9_-]+)');
-      Match? match = regExp.firstMatch(imageIdentifier);
-      if (match != null) {
-        String fileId = match.group(1)!;
-        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
-      }
-      
-      // Try another pattern for ?id= format
-      regExp = RegExp(r'[?&]id=([a-zA-Z0-9_-]+)');
-      match = regExp.firstMatch(imageIdentifier);
-      if (match != null) {
-        String fileId = match.group(1)!;
-        return 'https://lh3.googleusercontent.com/d/$fileId=w400-h400-p-k-no-nu';
-      }
-    }
-    
-    // If it contains 'googleusercontent.com', it's already a valid URL
-    if (imageIdentifier.contains('googleusercontent.com')) {
-      return imageIdentifier;
-    }
-    
-    // Assume it's a raw file ID and construct the URL
-    String cleanId = imageIdentifier.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
-    if (cleanId.isNotEmpty && cleanId.length > 5) {
-      return 'https://lh3.googleusercontent.com/d/$cleanId=w400-h400-p-k-no-nu';
-    }
-    
-    return null;
-  }
-
   void _showProductDetails(Product product) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ProductDetailScreen(
           product: product,
-          onAddToCart: (item) {
-            // التحقق من عدم التكرار
-            final existingIndex = _cart.indexWhere((i) => 
-              i.product.code == item.product.code && 
-              (i.selectedUnit ?? i.product.unit) == (item.selectedUnit ?? item.product.unit)
-            );
-            
-            if (existingIndex >= 0) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('هذا المنتج موجود مسبقاً في السلة بنفس الوحدة'),
-                  backgroundColor: Colors.orange,
-                  duration: Duration(seconds: 2),
-                ),
-              );
-              return;
-            }
-            
-            setState(() => _cart.add(item));
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('تمت إضافة "${product.name}" للسلة'),
-                backgroundColor: Colors.green,
-                action: SnackBarAction(
-                  label: 'عرض',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    // يمكن الانتقال لعرض السلة هنا
-                  },
-                ),
-              ),
-            );
-          },
         ),
       ),
     );
   }
 
   void _addToCartSimple(Product product) {
-    // إضافة سريعة بدون تفاصيل (للتوافق مع الكود القديم)
     _showProductDetails(product);
   }
 
@@ -373,11 +298,11 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                   itemBuilder: (context, index) {
                                     final item = _cart[index];
                                     return ListTile(
-                                      leading: item.product.imageUrl != null && item.product.imageUrl!.isNotEmpty
+                                      leading: item.product?.imageUrl != null && item.product!.imageUrl!.isNotEmpty
                                         ? ClipRRect(
                                             borderRadius: BorderRadius.circular(8),
                                             child: CachedNetworkImage(
-                                              imageUrl: item.product.imageUrl!,
+                                              imageUrl: item.product!.imageUrl!,
                                               width: 60,
                                               height: 60,
                                               fit: BoxFit.contain,
@@ -422,11 +347,11 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                                             ),
                                             child: const Icon(Icons.inventory_2, size: 30),
                                           ),
-                                      title: Text(item.product.name),
+                                      title: Text(item.product?.name ?? 'بدون اسم'),
                                       subtitle: Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          Text('الكمية: ${item.quantity} ${item.selectedUnit ?? item.product.unit}'),
+                                          Text('الكمية: ${item.quantity} ${item.selectedUnit ?? item.product?.unit ?? ""}'),
                                           if (item.note != null && item.note!.isNotEmpty)
                                             Text('ملاحظة: ${item.note}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
                                         ],

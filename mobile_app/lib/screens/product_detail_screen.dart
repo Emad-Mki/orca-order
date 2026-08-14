@@ -47,7 +47,7 @@ class ProductDetailScreen extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  '\$${product.price?.toStringAsFixed(2) ?? '0.00'}',
+                  '\$${product.price.toStringAsFixed(2)}',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: Colors.green,
                     fontWeight: FontWeight.bold,
@@ -56,7 +56,7 @@ class ProductDetailScreen extends StatelessWidget {
                 if (product.offerPrice != null && product.offerPrice! > 0) ...[
                   const SizedBox(width: 8),
                   Text(
-                    '\$${product.price?.toStringAsFixed(2) ?? '0.00'}',
+                    '\$${product.price.toStringAsFixed(2)}',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       decoration: TextDecoration.lineThrough,
                       color: Colors.grey,

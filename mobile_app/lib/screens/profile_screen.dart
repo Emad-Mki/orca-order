@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'homepage_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -16,7 +17,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+    final session = context.findAncestorStateOfType<HomePageState>()?.widget.session;
     _nameCtrl.text = session?['full_name'] ?? '';
     // الهاتف قد لا يكون في الجلسة، يمكن جلبه من API أو إضافته للجلسة مستقبلاً
   }
@@ -24,7 +25,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _updateProfile() async {
     setState(() => _loading = true);
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
+      final session = context.findAncestorStateOfType<HomePageState>()?.widget.session;
       await ApiService().post({
         'action': 'updateUser',
         'full_name': _nameCtrl.text.trim(),

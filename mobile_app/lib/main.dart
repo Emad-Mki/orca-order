@@ -28,12 +28,21 @@ class OrcaApp extends StatefulWidget {
   const OrcaApp({super.key});
 
   @override
-  State<OrcaApp> createState() => _OrcaAppState();
+  State<OrcaApp> createState() => OrcaAppState();
 }
 
-class _OrcaAppState extends State<OrcaApp> {
+class OrcaAppState extends State<OrcaApp> {
   Map<String, dynamic>? _session;
   bool _isLoading = true;
+  ThemeMode _themeMode = ThemeMode.light;
+
+  ThemeMode get themeMode => _themeMode;
+
+  void toggleTheme() {
+    setState(() {
+      _themeMode = _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
 
   @override
   void initState() {
@@ -92,7 +101,15 @@ class _OrcaAppState extends State<OrcaApp> {
         primarySwatch: Colors.blue,
         useMaterial3: true,
         fontFamily: 'Tajawal',
+        brightness: Brightness.light,
       ),
+      darkTheme: ThemeData(
+        primarySwatch: Colors.blue,
+        useMaterial3: true,
+        fontFamily: 'Tajawal',
+        brightness: Brightness.dark,
+      ),
+      themeMode: _themeMode,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

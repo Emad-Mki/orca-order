@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'homepage_screen.dart';
+import 'customer_statement_screen.dart';
 
 class CustomersScreen extends StatefulWidget {
-  const CustomersScreen({super.key});
+  final Map<String, dynamic> session;
+  const CustomersScreen({super.key, required this.session});
 
   @override
   State<CustomersScreen> createState() => _CustomersScreenState();
@@ -20,11 +23,10 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
   Future<void> _fetchCustomers() async {
     try {
-      final session = context.findAncestorStateOfType<_HomePageState>()?.widget.session;
       final data = await ApiService().post({
         'action': 'getCustomers',
-        'username': session?['username'],
-        'token': session?['token'],
+        'username': widget.session['username'],
+        'token': widget.session['token'],
       });
       if (mounted) {
         setState(() {

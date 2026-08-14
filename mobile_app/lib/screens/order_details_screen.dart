@@ -19,10 +19,10 @@ class OrderDetailsScreen extends StatefulWidget {
 }
 
 class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
-  List<dynamic> _items = [];
+  List<OrderItem> _items = [];
   bool _isLoading = true;
   String? _error;
-  Map<String, dynamic>? _fullOrder;
+  Order? _fullOrder;
   Map<String, dynamic>? _shipmentData;
   Map<String, dynamic>? _balanceInfo;
   late String role;
@@ -71,8 +71,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       
       if (mounted) {
         setState(() {
-          _items = data['items'] ?? [];
-          _fullOrder = data['order'];
+          if (data['items'] != null) {
+            _items = (data['items'] as List).map((i) => OrderItem.fromJson(i)).toList();
+          }
+          if (data['order'] != null) {
+            _fullOrder = Order.fromJson(data['order']);
+          }
           _shipmentData = data['shipment'];
           _balanceInfo = data['balanceInfo'];
           _isLoading = false;
@@ -161,31 +165,31 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                               return Card(
                                 margin: const EdgeInsets.symmetric(vertical: 4),
                                 child: ListTile(
-                                  title: Text(item['name'] ?? 'منتج غير معروف', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  title: Text(item.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                                   subtitle: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text('المطلوب: ${item['quantity_requested']} ${item['unit']}'),
-                                      if (item['quantity_approved'] > 0)
-                                        Text('المعتمد: ${item['quantity_approved']} ${item['unit']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                                      if (item['quantity_prepared'] > 0)
-                                        Text('المجهز: ${item['quantity_prepared']} ${item['unit']}', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
-                                      if (item['customer_note']?.toString().isNotEmpty == true)
-                                        Text('ملاحظة الزبون: ${item['customer_note']}', style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
-                                      if (item['accountant_note']?.toString().isNotEmpty == true)
-                                        Text('ملاحظة المحاسب: ${item['accountant_note']}', style: const TextStyle(fontSize: 12, color: Colors.blue)),
-                                      if (item['warehouse_note']?.toString().isNotEmpty == true)
-                                        Text('ملاحظة المستودع: ${item['warehouse_note']}', style: const TextStyle(fontSize: 12, color: Colors.orange)),
+                                      Text('المطلوب: ${item.quantityRequested} ${item.unit}'),
+                                      if (item.quantityApproved > 0)
+                                        Text('المعتمد: ${item.quantityApproved} ${item.unit}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                                      if (item.quantityPrepared > 0)
+                                        Text('المجهز: ${item.quantityPrepared} ${item.unit}', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                                      if (item.customerNote?.toString().isNotEmpty == true)
+                                        Text('ملاحظة الزبون: ${item.customerNote}', style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                                      if (item.accountantNote?.toString().isNotEmpty == true)
+                                        Text('ملاحظة المحاسب: ${item.accountantNote}', style: const TextStyle(fontSize: 12, color: Colors.blue)),
+                                      if (item.warehouseNote?.toString().isNotEmpty == true)
+                                        Text('ملاحظة المستودع: ${item.warehouseNote}', style: const TextStyle(fontSize: 12, color: Colors.orange)),
                                     ],
                                   ),
                                   trailing: showPrices ? Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
-                                      Text('\$' + _safePrice(item['final_price'] ?? item['price_offer']),
+                                      Text('\$' + _safePrice(item.finalPrice > 0 ? item.finalPrice : item.priceOffer),
                                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                      if ((item['final_price'] ?? 0) > 0)
-                                        Text('الإجمالي: \$' + _safePrice((item['final_price'] ?? 0) * ((item['quantity_approved'] ?? 0) > 0 ? (item['quantity_approved'] ?? 0) : (item['quantity_requested'] ?? 0))),
+                                      if (item.finalPrice > 0)
+                                        Text('الإجمالي: \$' + _safePrice(item.finalPrice * (item.quantityApproved > 0 ? item.quantityApproved : item.quantityRequested)),
                                             style: const TextStyle(fontSize: 10, color: Colors.grey)),
                                     ],
                                   ) : null,
@@ -226,17 +230,17 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   ],
                 ),
                 pw.SizedBox(height: 20),
-                pw.Text('رقم الطلب: ${_fullOrder?['order_id'] ?? widget.order['id']}'),
-                pw.Text('التاريخ: ${_fullOrder?['created_at'] ?? widget.order['date']}'),
-                pw.Text('الحالة: ${_fullOrder?['status'] ?? widget.order['status']}'),
+                pw.Text('رقم الطلب: ${_fullOrder?.orderNumber ?? widget.order['id']}'),
+                pw.Text('التاريخ: ${_fullOrder?.createdAt?.toString().split(' ')[0] ?? widget.order['date']}'),
+                pw.Text('الحالة: ${_fullOrder?.status ?? widget.order['status']}'),
                 pw.SizedBox(height: 20),
                 pw.TableHelper.fromTextArray(
                   headers: ['الصنف', 'الكمية', 'السعر', 'الإجمالي'],
                   data: _items.map((item) => [
-                    item['name'] ?? '',
-                    '${item['quantity_requested']} ${item['unit']}',
-                    '${formatMoneyShort(item['final_price'] ?? item['price_offer'])}',
-                    '${formatMoneyShort((toSafeDouble(item['final_price'] ?? item['price_offer'], fallback: 0.0)) * (toSafeDouble(item['quantity_requested'], fallback: 0.0)))}',
+                    item.name,
+                    '${item.quantityRequested} ${item.unit}',
+                    '${formatMoneyShort(item.finalPrice > 0 ? item.finalPrice : item.priceOffer)}',
+                    '${formatMoneyShort((item.finalPrice > 0 ? item.finalPrice : item.priceOffer) * item.quantityRequested)}',
                   ]).toList(),
                   headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   cellAlignment: pw.Alignment.centerRight,
@@ -246,7 +250,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 pw.Align(
                   alignment: pw.Alignment.centerLeft,
                   child: pw.Text(
-                    'الإجمالي: ${_items.fold(0.0, (sum, item) { final p = toSafeDouble(item['final_price'] ?? item['price_offer'], fallback: 0.0); final q = toSafeDouble(item['quantity_requested'], fallback: 0.0); return sum + (p * q); })} USD',
+                    'الإجمالي: ${_items.fold(0.0, (sum, item) => sum + ((item.finalPrice > 0 ? item.finalPrice : item.priceOffer) * item.quantityRequested))} USD',
                     style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
                   ),
                 ),
@@ -270,15 +274,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('طلب رقم: ${_fullOrder!['order_id']}', style: const TextStyle(fontWeight: FontWeight.bold)),
-              _buildStatusChip(_fullOrder!['status']),
+              Text('طلب رقم: ${_fullOrder!.orderNumber}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              _buildStatusChip(_fullOrder!.status),
             ],
           ),
-          Text('التاريخ: ${_fullOrder!['created_at'].toString().split('T')[0]}'),
-          if (_fullOrder!['note']?.toString().isNotEmpty == true)
+          Text('التاريخ: ${_fullOrder!.createdAt?.toString().split(' ')[0] ?? ''}'),
+          if (_fullOrder!.note?.toString().isNotEmpty == true)
              Padding(
                padding: const EdgeInsets.only(top: 8.0),
-               child: Text('ملاحظة الطلب: ${_fullOrder!['note']}', style: const TextStyle(fontStyle: FontStyle.italic)),
+               child: Text('ملاحظة الطلب: ${_fullOrder!.note}', style: const TextStyle(fontStyle: FontStyle.italic)),
              ),
         ],
       ),
@@ -315,14 +319,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Widget _buildOrderFinancialSummary() {
     double total = 0;
     for (var item in _items) {
-      final qty = toSafeDouble(
-        item['quantity_approved'] ?? item['quantity_requested'],
-        fallback: 0.0,
-      );
-      final price = toSafeDouble(
-        item['final_price'] ?? item['price_offer'],
-        fallback: 0.0,
-      );
+      final qty = item.quantityApproved > 0 ? item.quantityApproved : item.quantityRequested;
+      final price = item.finalPrice > 0 ? item.finalPrice : item.priceOffer;
       total += qty * price;
     }
 
@@ -657,18 +655,18 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   void _showPricingDialog() {
     List<Map<String, dynamic>> editedItems = _items.map((i) => {
-      'item_id': i['item_id'],
-      'name': i['name'],
-      'quantity_requested': i['quantity_requested'],
-      'quantity_approved': i['quantity_approved'] == 0 ? i['quantity_requested'] : i['quantity_approved'],
-      'final_price': i['final_price'] == 0 ? (i['price_offer'] ?? i['default_price'] ?? i['price'] ?? 0) : i['final_price'],
-      'default_price': i['default_price'] ?? i['price'] ?? 0,
-      'currency': i['currency'] ?? 'USD',
-      'accountant_note': i['accountant_note'] ?? '',
-      'stock': i['stock_available'],
-      'image_url': i['image_url'],
-      'image_file_id': i['image_file_id'],
-      'image_name': i['image_name'],
+      'item_id': i.itemId,
+      'name': i.name,
+      'quantity_requested': i.quantityRequested,
+      'quantity_approved': i.quantityApproved == 0 ? i.quantityRequested : i.quantityApproved,
+      'final_price': i.finalPrice == 0 ? (i.priceOffer > 0 ? i.priceOffer : i.defaultPrice) : i.finalPrice,
+      'default_price': i.defaultPrice,
+      'currency': i.currency,
+      'accountant_note': i.accountantNote ?? '',
+      'stock': i.stockAvailable,
+      'image_url': i.imageUrl,
+      'image_file_id': i.imageFileId,
+      'image_name': i.imageName,
     }).toList();
 
     showDialog(
@@ -1227,12 +1225,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   void _showWarehousePrepDialog() {
     List<Map<String, dynamic>> prepItems = _items.map((i) => {
-      'item_id': i['item_id'],
-      'name': i['name'],
-      'quantity_approved': i['quantity_approved'],
-      'quantity_prepared': i['quantity_prepared'] == 0 ? i['quantity_approved'] : i['quantity_prepared'],
-      'warehouse_note': i['warehouse_note'] ?? '',
-      'unit': i['unit']
+      'item_id': i.itemId,
+      'name': i.name,
+      'quantity_approved': i.quantityApproved,
+      'quantity_prepared': i.quantityPrepared == 0 ? i.quantityApproved : i.quantityPrepared,
+      'warehouse_note': i.warehouseNote ?? '',
+      'unit': i.unit
     }).toList();
 
     final pkgCtrl = TextEditingController();
@@ -1321,7 +1319,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   void _showCustomerEditDialog() {
     // Clone items locally for editing
-    List<Map<String, dynamic>> localItems = _items.map((i) => Map<String, dynamic>.from(i)).toList();
+    List<Map<String, dynamic>> localItems = _items.map((i) => {
+      'item_id': i.itemId,
+      'name': i.name,
+      'quantity_requested': i.quantityRequested,
+      'quantity_approved': i.quantityApproved,
+      'unit': i.unit,
+    }).toList();
     List<String> deletedItemIds = [];
     
     showDialog(
@@ -1349,9 +1353,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                         children: [
                           IconButton(
                             icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                            onPressed: requested > approved
+                            onPressed: requested > (approved > 0 ? approved : 1)
                               ? () => setDialogState(() => item['quantity_requested']--)
-                              : null, // Disable if at approved limit
+                              : null,
                           ),
                           Text('$requested', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                           IconButton(
