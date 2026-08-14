@@ -3,13 +3,18 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'services/api_service.dart';
 import 'repositories/order_repository.dart';
+import 'repositories/product_repository.dart';
+import 'repositories/customer_repository.dart';
+import 'repositories/auth_repository.dart';
 import 'models/models.dart';
 import 'screens/screens.dart';
+import 'providers/providers.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +41,13 @@ class OrcaAppState extends State<OrcaApp> {
   bool _isLoading = true;
   ThemeMode _themeMode = ThemeMode.light;
 
+  // Repositories (will be injected into providers)
+  late ApiService _apiService;
+  late AuthRepository _authRepository;
+  late OrderRepository _orderRepository;
+  late ProductRepository _productRepository;
+  late CustomerRepository _customerRepository;
+
   ThemeMode get themeMode => _themeMode;
 
   void toggleTheme() {
@@ -47,7 +59,16 @@ class OrcaAppState extends State<OrcaApp> {
   @override
   void initState() {
     super.initState();
+    _initRepositories();
     _loadSession();
+  }
+
+  void _initRepositories() {
+    _apiService = ApiService();
+    _authRepository = AuthRepository(_apiService);
+    _orderRepository = OrderRepository(_apiService);
+    _productRepository = ProductRepository(_apiService);
+    _customerRepository = CustomerRepository(_apiService);
   }
 
   Future<void> _loadSession() async {
@@ -94,35 +115,44 @@ class OrcaAppState extends State<OrcaApp> {
       );
     }
 
-    return MaterialApp(
-      title: 'Orca Order',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-        fontFamily: 'Tajawal',
-        brightness: Brightness.light,
-      ),
-      darkTheme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-        fontFamily: 'Tajawal',
-        brightness: Brightness.dark,
-      ),
-      themeMode: _themeMode,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider(_authRepository)),
+        ChangeNotifierProvider(create: (_) => OrdersProvider(_orderRepository)),
+        ChangeNotifierProvider(create: (_) => OrderDetailProvider(_orderRepository)),
+        ChangeNotifierProvider(create: (_) => ProductsProvider(_productRepository)),
+        ChangeNotifierProvider(create: (_) => CustomerProvider(_customerRepository)),
       ],
-      supportedLocales: const [
-        Locale('ar'),
-        Locale('en'),
-      ],
-      locale: const Locale('ar'),
-      home: _session == null 
-          ? LoginPage(onLoginSuccess: _saveSession)
-          : HomePage(session: _session!, onLogout: _logout),
+      child: MaterialApp(
+        title: 'Orca Order',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          primarySwatch: Colors.blue,
+          useMaterial3: true,
+          fontFamily: 'Tajawal',
+          brightness: Brightness.light,
+        ),
+        darkTheme: ThemeData(
+          primarySwatch: Colors.blue,
+          useMaterial3: true,
+          fontFamily: 'Tajawal',
+          brightness: Brightness.dark,
+        ),
+        themeMode: _themeMode,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [
+          Locale('ar'),
+          Locale('en'),
+        ],
+        locale: const Locale('ar'),
+        home: _session == null 
+            ? LoginPage(onLoginSuccess: _saveSession)
+            : HomePage(session: _session!, onLogout: _logout),
+      ),
     );
   }
 }

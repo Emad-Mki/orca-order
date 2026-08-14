@@ -1,40 +1,33 @@
 ```
-# Flutter/Dart specific
-.dart_tool/
-.build/
+# Dependencies
 .pub/
-*.iws
-*.lock
-*.tmp
-*.log
-*.cache
-coverage/
 .dart_tool/
-.flutter-plugins
-.flutter-plugin-dependencies
-.packages
-local.properties
-.key
-
-# Mobile app build outputs
-**/ios/**/.generated/
-**/android/**/generated/
-**/build/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Logs
-*.log
+build/
 
 # Environment
 .env
 .env.local
 *.env.*
 
-# Dependencies
-node_modules/
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE specific
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Flutter/Dart specific
+**/lib/**/*.g.dart
+**/lib/**/*.freezed.dart
+coverage/
+*.trace
 ```
