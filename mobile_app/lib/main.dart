@@ -2,16 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
-import 'services/api_service.dart';
-import 'repositories/order_repository.dart';
-import 'repositories/product_repository.dart';
-import 'repositories/customer_repository.dart';
-import 'repositories/auth_repository.dart';
+import 'repositories/repositories.dart';
 import 'models/models.dart';
 import 'screens/screens.dart';
 import 'providers/providers.dart';
@@ -42,8 +37,6 @@ class OrcaAppState extends State<OrcaApp> {
   ThemeMode _themeMode = ThemeMode.light;
 
   // Repositories (will be injected into providers)
-  late ApiService _apiService;
-  late AuthRepository _authRepository;
   late OrderRepository _orderRepository;
   late ProductRepository _productRepository;
   late CustomerRepository _customerRepository;
@@ -64,11 +57,9 @@ class OrcaAppState extends State<OrcaApp> {
   }
 
   void _initRepositories() {
-    _apiService = ApiService();
-    _authRepository = AuthRepository(_apiService);
-    _orderRepository = OrderRepository(_apiService);
-    _productRepository = ProductRepository(_apiService);
-    _customerRepository = CustomerRepository(_apiService);
+    _orderRepository = OrderRepository();
+    _productRepository = ProductRepository();
+    _customerRepository = CustomerRepository();
   }
 
   Future<void> _loadSession() async {
