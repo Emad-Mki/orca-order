@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../services/api_service.dart';
 import '../models/models.dart';
 import '../utils/number_utils.dart';
 import 'product_detail_screen.dart';
+import '../widgets/widgets.dart';
 
 /// شاشة إنشاء طلب جديد
 class NewOrderScreen extends StatefulWidget {
@@ -118,8 +118,6 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
     return Scaffold(
       appBar: AppBar(
         title: const Text('طلب جديد'),
@@ -134,36 +132,13 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
       body: Column(
         children: [
           // شريط اسم الزبون
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            color: isDark ? Colors.blueGrey[900] : Colors.blue[50],
-            child: Row(
-              children: [
-                const Icon(Icons.person, color: Colors.blue),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'الزبون: ${_customerName ?? "جاري التحميل..."}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          CustomerInfoBarWidget(customerName: _customerName),
           
           // حقل البحث
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _searchCtrl,
-              decoration: const InputDecoration(
-                hintText: 'ابحث عن منتج...',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-                filled: true,
-              ),
-            ),
+          SearchFieldWidget(
+            controller: _searchCtrl,
+            hintText: 'ابحث عن منتج...',
+            onChanged: (_) => _filterProducts(),
           ),
           
           // قائمة المنتجات
@@ -183,226 +158,38 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                     itemCount: _filteredProducts.length,
                     itemBuilder: (context, index) {
                       final p = _filteredProducts[index];
-                      return Card(
-                        clipBehavior: Clip.antiAlias,
-                        child: InkWell(
-                          onTap: () => _showProductDetails(p),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // صورة المنتج
-                              Expanded(
-                                child: p.imageUrl != null && p.imageUrl!.isNotEmpty
-                                  ? CachedNetworkImage(
-                                      imageUrl: p.imageUrl!,
-                                      fit: BoxFit.contain,
-                                      width: double.infinity,
-                                      imageBuilder: (context, imageProvider) => Container(
-                                        width: double.infinity,
-                                        decoration: BoxDecoration(
-                                          image: DecorationImage(
-                                            image: imageProvider,
-                                            fit: BoxFit.contain,
-                                          ),
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                      placeholder: (context, url) => Container(
-                                        color: Colors.grey[200],
-                                        child: const Center(child: CircularProgressIndicator()),
-                                      ),
-                                      errorWidget: (context, error, stackTrace) {
-                                        return Container(
-                                          color: Colors.grey[200],
-                                          child: const Icon(Icons.inventory_2, size: 40, color: Colors.grey),
-                                        );
-                                      },
-                                    )
-                                  : Container(
-                                      color: Colors.grey[200],
-                                      child: const Icon(Icons.inventory_2, size: 40, color: Colors.grey),
-                                    ),
-                              ),
-                              
-                              // معلومات المنتج
-                              Padding(
-                                padding: const EdgeInsets.all(8.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      p.name,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      p.code,
-                                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    p.price > 0
-                                      ? Text(
-                                          '\$${formatMoneyShort(p.price)}',
-                                          style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-                                        )
-                                      : const Text(
-                                          'يرجى التواصل للسعر',
-                                          style: TextStyle(color: Colors.orange, fontSize: 11),
-                                        ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      return ProductCardWidget(
+                        product: p,
+                        onTap: () => _showProductDetails(p),
                       );
                     },
                   ),
           ),
           
           // منطقة السلة والإرسال
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[900] : Colors.grey[100],
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4, offset: const Offset(0, -2))],
+          CartSummaryWidget(
+            cartItems: _cart,
+            isSubmitting: _isSubmitting,
+            onReviewTap: () => CartSummaryWidget.showReviewDialog(
+              context: context,
+              cartItems: _cart,
+              onSubmit: _submitOrder,
+              isSubmitting: _isSubmitting,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // عرض السلة
-                Row(
-                  children: [
-                    const Icon(Icons.shopping_cart, color: Colors.blue),
-                    const SizedBox(width: 8),
-                    Text(
-                      'السلة: ${_cart.length} أصناف',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    const Spacer(),
-                    if (_cart.isNotEmpty)
-                      TextButton(
-                        onPressed: () {
-                          // عرض تفاصيل السلة للمراجعة
-                          showDialog(
-                            context: context,
-                            builder: (_) => AlertDialog(
-                              title: const Text('مراجعة الطلب قبل الإرسال'),
-                              content: SizedBox(
-                                width: double.maxFinite,
-                                child: ListView.builder(
-                                  shrinkWrap: true,
-                                  itemCount: _cart.length,
-                                  itemBuilder: (context, index) {
-                                    final item = _cart[index];
-                                    return ListTile(
-                                      leading: item.product?.imageUrl != null && item.product!.imageUrl!.isNotEmpty
-                                        ? ClipRRect(
-                                            borderRadius: BorderRadius.circular(8),
-                                            child: CachedNetworkImage(
-                                              imageUrl: item.product!.imageUrl!,
-                                              width: 60,
-                                              height: 60,
-                                              fit: BoxFit.contain,
-                                              imageBuilder: (context, imageProvider) => Container(
-                                                width: 60,
-                                                height: 60,
-                                                decoration: BoxDecoration(
-                                                  image: DecorationImage(
-                                                    image: imageProvider,
-                                                    fit: BoxFit.contain,
-                                                  ),
-                                                  color: Colors.white,
-                                                  borderRadius: BorderRadius.circular(8),
-                                                ),
-                                              ),
-                                              placeholder: (context, url) => Container(
-                                                width: 60,
-                                                height: 60,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.grey[200],
-                                                  borderRadius: BorderRadius.circular(8),
-                                                ),
-                                                child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                                              ),
-                                              errorWidget: (context, error, stackTrace) => Container(
-                                                width: 60,
-                                                height: 60,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.grey[200],
-                                                  borderRadius: BorderRadius.circular(8),
-                                                ),
-                                                child: const Icon(Icons.inventory_2, size: 30),
-                                              ),
-                                            ),
-                                          )
-                                        : Container(
-                                            width: 60,
-                                            height: 60,
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey[200],
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: const Icon(Icons.inventory_2, size: 30),
-                                          ),
-                                      title: Text(item.product?.name ?? 'بدون اسم'),
-                                      subtitle: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text('الكمية: ${item.quantity} ${item.selectedUnit ?? item.product?.unit ?? ""}'),
-                                          if (item.note != null && item.note!.isNotEmpty)
-                                            Text('ملاحظة: ${item.note}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                                        ],
-                                      ),
-                                      trailing: Text('\$${formatMoneyShort(item.total)}'),
-                                    );
-                                  },
-                                ),
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text('إغلاق'),
-                                ),
-                                FilledButton(
-                                  onPressed: _isSubmitting ? null : _submitOrder,
-                                  child: _isSubmitting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text('تأكيد وإرسال'),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                        child: const Text('مراجعة'),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                
-                // ملاحظات عامة
-                TextField(
-                  controller: _orderNoteCtrl,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظات عامة للطلب (اختياري)',
-                    border: OutlineInputBorder(),
-                    filled: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                
-                // زر الإرسال
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: FilledButton.icon(
-                    onPressed: _cart.isEmpty || _isSubmitting ? null : _submitOrder,
-                    icon: const Icon(Icons.send),
-                    label: _isSubmitting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text('إرسال الطلب للمراجعة'),
-                  ),
-                ),
-              ],
+            onSubmitTap: _submitOrder,
+          ),
+          
+          // ملاحظات عامة
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: TextField(
+              controller: _orderNoteCtrl,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'ملاحظات عامة للطلب (اختياري)',
+                border: OutlineInputBorder(),
+                filled: true,
+              ),
             ),
           ),
         ],
@@ -410,5 +197,3 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
     );
   }
 }
-
-// شاشات فرعية
