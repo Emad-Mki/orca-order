@@ -12,7 +12,8 @@ class OrderRepository {
   /// جلب قائمة الطلبات
   Future<List<Order>> getOrders({String? customerId, String? status}) async {
     try {
-      final response = await _apiService.getOrders(
+      // استخدام الخدمة المنفصلة للطلبات
+      final response = await _apiService.orders.getOrders(
         customerId: customerId,
         status: status,
       );
@@ -30,7 +31,8 @@ class OrderRepository {
   /// جلب تفاصيل طلب محدد
   Future<Order?> getOrderDetails(String orderId) async {
     try {
-      final response = await _apiService.getOrderDetails(orderId);
+      // استخدام الخدمة المنفصلة للطلبات
+      final response = await _apiService.orders.getOrderDetails(orderId);
       
       if (response['ok'] != true && response['success'] != true) {
         throw Exception(response['error'] ?? 'فشل جلب تفاصيل الطلب');
@@ -49,7 +51,8 @@ class OrderRepository {
   /// إنشاء طلب جديد
   Future<String> createOrder(Order order) async {
     try {
-      final response = await _apiService.createOrder(order.toJson());
+      // استخدام الخدمة المنفصلة للطلبات
+      final response = await _apiService.orders.createOrder(order.toJson());
       
       if (response['ok'] != true && response['success'] != true) {
         throw Exception(response['error'] ?? 'فشل إنشاء الطلب');
@@ -65,7 +68,8 @@ class OrderRepository {
   /// تحديث حالة الطلب
   Future<bool> updateOrderStatus(String orderId, String status) async {
     try {
-      final response = await _apiService.updateOrderStatus(orderId, status);
+      // استخدام الخدمة المنفصلة للطلبات
+      final response = await _apiService.orders.updateOrderStatus(orderId, status);
       return response['ok'] == true || response['success'] == true;
     } catch (e) {
       print('Error updating order status: $e');
@@ -76,7 +80,8 @@ class OrderRepository {
   /// حفظ تسعير الطلب
   Future<bool> saveOrderPricing(String orderId, List<Map<String, dynamic>> items) async {
     try {
-      final response = await _apiService.saveOrderPricing(orderId, items);
+      // استخدام الخدمة المنفصلة للطلبات
+      final response = await _apiService.orders.saveOrderPricing(orderId, items);
       return response['ok'] == true || response['success'] == true;
     } catch (e) {
       print('Error saving order pricing: $e');
@@ -86,13 +91,15 @@ class OrderRepository {
 }
 
 /// مستودع العملاء
+/// مسؤول عن جلب بيانات العملاء وكشف الحساب
 class CustomerRepository {
   final ApiService _apiService = ApiService();
 
   /// جلب قائمة العملاء
   Future<List<Map<String, dynamic>>> getCustomers() async {
     try {
-      final response = await _apiService.getCustomers();
+      // استخدام الخدمة المنفصلة للعملاء
+      final response = await _apiService.customers.getCustomers();
       return List<Map<String, dynamic>>.from(response['customers'] ?? response['data'] ?? []);
     } catch (e) {
       print('Error fetching customers: $e');
@@ -103,7 +110,8 @@ class CustomerRepository {
   /// جلب كشف حساب العميل
   Future<BalanceInfo?> getCustomerStatement(String customerId) async {
     try {
-      final response = await _apiService.getCustomerStatement(customerId);
+      // استخدام الخدمة المنفصلة للعملاء
+      final response = await _apiService.customers.getCustomerStatement(customerId);
       
       if (response['ok'] != true && response['success'] != true) {
         throw Exception(response['error'] ?? 'فشل جلب كشف الحساب');
@@ -113,6 +121,40 @@ class CustomerRepository {
       return BalanceInfo.fromJson(data);
     } catch (e) {
       print('Error fetching customer statement: $e');
+      rethrow;
+    }
+  }
+
+  /// إضافة عميل جديد
+  Future<Map<String, dynamic>> addCustomer(Map<String, dynamic> customerData) async {
+    try {
+      // استخدام الخدمة المنفصلة للعملاء
+      final response = await _apiService.customers.addCustomer(customerData);
+      
+      if (response['ok'] != true && response['success'] != true) {
+        throw Exception(response['error'] ?? 'فشل إضافة العميل');
+      }
+
+      return response;
+    } catch (e) {
+      print('Error adding customer: $e');
+      rethrow;
+    }
+  }
+
+  /// تحديث بيانات عميل
+  Future<Map<String, dynamic>> updateCustomer(String customerId, Map<String, dynamic> customerData) async {
+    try {
+      // استخدام الخدمة المنفصلة للعملاء
+      final response = await _apiService.customers.updateCustomer(customerId, customerData);
+      
+      if (response['ok'] != true && response['success'] != true) {
+        throw Exception(response['error'] ?? 'فشل تحديث بيانات العميل');
+      }
+
+      return response;
+    } catch (e) {
+      print('Error updating customer: $e');
       rethrow;
     }
   }

@@ -1,35 +1,24 @@
 ```
-# Dependencies
-.pub/
-.dart_tool/
-
 # Build artifacts
 build/
-*.apk
-*.aab
-*.ipa
-*.app
+.dart_tool/
+*.g.dart
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
+# Dependencies
+.pub/
+pubspec.lock
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
 
 # Environment
 .env
 .env.local
 *.env.*
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
+# Editors
+.vscode/
+.idea/
+*.swp
 ```
