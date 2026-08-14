@@ -1,35 +1,61 @@
 ```
-# Build artifacts
+# Build and cache directories
 build/
-*.apk
-*.aab
-*.ipa
+.dart_tool/
+.ios/
+android/.gradle/
+android/build/
+android/app/build/
+ios/build/
+ios/Pods/
+ios/.symlinks/
+linux/flutter/ephemeral/
+linux/build/
+macos/flutter/ephemeral/
+macos/build/
+windows/flutter/ephemeral/
+windows/build/
 
 # Dependencies
-.pub/
-.dart_tool/
-packages/
+pubspec.lock
+**/node_modules/
+**/.pub-cache/
+**/.pub/
+**/vendor/
 
-# Logs
+# Logs and temporary files
 *.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
 
-# Environment
+# Environment variables
 .env
 .env.local
 *.env.*
 
-# IDE files
-.idea/
+# IDE specific
 .vscode/
+.idea/
 *.swp
 *.swo
 
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Coverage
+# Coverage and testing
 coverage/
 htmlcov/
 .coverage
+*.gcda
+*.gcno
+
+# Distribution / packaging
+*.zip
+*.tar.gz
+*.tar.xz
+*.deb
+*.rpm
+*.app
+*.exe
+*.dmg
+*.pkg
 ```
