@@ -1,43 +1,50 @@
 ```
-# Dart/Flutter specific
+# Flutter/Dart specific
 .dart_tool/
-.packages
-pubspec.lock
-build/
-*.g.dart
-
-# Environment
-.env
-.env.local
-.env.*
-
-# Logs
+.build/
+packages/
+*.iws
+*.lock
+*.tmp
+*.temp
 *.log
-**/logs
-
+local.properties
+# Compilation artifacts
+*.class
+*.dex
+*.o
+*.obj
+*.out
+*.pyc
+*.pyo
+*.so
+*.dll
+*.exe
 # Dependencies
 node_modules/
 vendor/
-
-# IDE
-.idea/
+deps/
+# Build outputs
+build/
+dist/
+target/
+out/
+# IDE files
 .vscode/
+.idea/
 *.swp
 *.swo
-
-# OS
+# System files
 .DS_Store
 Thumbs.db
-
-# Coverage
+# Environment variables
+.env
+.env.local
+*.env.*
+# Coverage reports
 coverage/
-*.coverage
 htmlcov/
-
-# Temporary
-*.tmp
-*~
-.DS_Store?
-ehthumbs.db
-Icon?
+.coverage
+# Logs
+*.log
 ```
