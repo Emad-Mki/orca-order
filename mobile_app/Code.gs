@@ -954,7 +954,7 @@ function _handleCreateOrder(body, user) {
       order_number: orderNumber,
       customer_id: customerId,
       customer_name: customer ? (customer.full_name || customer.company_name || 'عميل غير معروف') : 'عميل غير معروف',
-      status: 'submitted',
+      status: 'pending',
       currency: body.currency || 'USD',
       note: body.note || '',
       is_new: 'true',

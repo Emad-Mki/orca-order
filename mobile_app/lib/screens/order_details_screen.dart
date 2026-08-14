@@ -487,7 +487,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     // محاسب: تسعير الطلبية
-    if ((role == 'admin' || role == 'manager' || role == 'accountant') && (status == 'pending' || status == 'customer_changed')) {
+    if ((role == 'admin' || role == 'manager' || role == 'accountant') && (status == 'pending' || status == 'submitted' || status == 'customer_changed')) {
        buttons.add(
         Expanded(
           child: FilledButton.icon(
