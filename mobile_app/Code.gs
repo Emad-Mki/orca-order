@@ -276,6 +276,12 @@ function doPost(e) {
         case 'products':
           result = _handleProducts(body, user);
           break;
+        case 'searchProducts':
+          result = _handleSearchProducts(body, user);
+          break;
+        case 'getProductCategories':
+          result = _handleGetProductCategories(body, user);
+          break;
         case 'rebuildImageIndex':
           _needRole(user, ['admin']);
           result = rebuildImageIndex();
@@ -325,6 +331,9 @@ function doPost(e) {
           break;
         case 'createCustomer':
           result = _handleCreateCustomer(body, user);
+          break;
+        case 'updateCustomer':
+          result = _handleUpdateCustomer(body, user);
           break;
         case 'getCustomerStatement':
           result = _handleGetCustomerStatement(body, user);
@@ -515,6 +524,67 @@ function _handleProducts(body, user) {
         };
       })
   };
+}
+
+function _handleSearchProducts(body, user) {
+  const query = String(body.q || body.query || '').toLowerCase();
+  const category = body.category || body.group || '';
+  const products = _all('Products');
+  const imageIndex = _all('Product_Images');
+
+  // بناء خريطة للبحث السريع عن الصور O(1)
+  const imageMap = {};
+  imageIndex.forEach(img => {
+    if (img.normalized_name && img.status === 'active') {
+      imageMap[img.normalized_name] = img;
+    }
+  });
+
+  let filtered = products;
+  
+  // تصفية حسب البحث النصي
+  if (query) {
+    filtered = filtered.filter(p =>
+      String(p.code).toLowerCase().includes(query) ||
+      String(p.name).toLowerCase().includes(query) ||
+      String(p.group).toLowerCase().includes(query)
+    );
+  }
+  
+  // تصفية حسب الفئة
+  if (category) {
+    filtered = filtered.filter(p => String(p.group).toLowerCase() === String(category).toLowerCase());
+  }
+
+  return {
+    products: filtered.map(p => {
+      const imageName = p.image_name || p.code;
+      const normalized = normalizeImageName_(imageName);
+      const imgData = imageMap[normalized];
+
+      return {
+        code: p.code,
+        name: p.name,
+        category: p.group,
+        image_name: imageName,
+        image_url: imgData ? imgData.image_url : '',
+        image_id: imgData ? imgData.file_id : (p.image_id || ''),
+        origin: p.origin,
+        unit: p.unit_1,
+        quantity: Number(p.quantity || 0),
+        price: Number(p.display_price || 0),
+        display_price: Number(p.display_price || 0),
+        currency: p.currency || 'USD',
+        notes: p.notes || ''
+      };
+    })
+  };
+}
+
+function _handleGetProductCategories(body, user) {
+  const products = _all('Products');
+  const categories = [...new Set(products.map(p => String(p.group || '').trim()).filter(g => g))];
+  return { categories: categories.sort() };
 }
 
 function _handleUpdateProductQuantity(body, user) {
@@ -1496,6 +1566,49 @@ function _handleCreateCustomer(body, user) {
   });
 
   return { success: true, customer_id: customerId, message: 'تم إنشاء حساب العميل بنجاح' };
+}
+
+function _handleUpdateCustomer(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  const customerId = body.customer_id;
+  if (!customerId) throw new Error('معرف العميل مطلوب');
+
+  const customers = _all('Customers');
+  const customer = customers.find(c => String(c.customer_id) === String(customerId));
+  if (!customer) throw new Error('العميل غير موجود');
+
+  const updates = {};
+  if (body.full_name !== undefined) updates.full_name = body.full_name;
+  if (body.company_name !== undefined) updates.company_name = body.company_name;
+  if (body.phone !== undefined) updates.phone = body.phone;
+  if (body.address !== undefined) updates.address = body.address;
+  if (body.province !== undefined) updates.province = body.province;
+  if (body.notes !== undefined) updates.notes = body.notes;
+  if (body.opening_usd !== undefined) updates.opening_usd = body.opening_usd;
+  if (body.opening_syp !== undefined) updates.opening_syp = body.opening_syp;
+  if (body.status !== undefined) updates.status = body.status;
+
+  const updated = _updateByField('Customers', 'customer_id', customerId, updates);
+  
+  if (!updated) throw new Error('فشل تحديث بيانات العميل');
+
+  // تحديث اسم المستخدم إذا تم تقديمه
+  if (body.username) {
+    const username = String(body.username).toLowerCase();
+    const users = _all('Users');
+    const existingUser = users.find(u => String(u.customer_id) === String(customerId));
+    
+    if (existingUser) {
+      const userUpdates = {
+        username: username,
+        full_name: body.full_name || existingUser.full_name,
+        phone: body.phone || existingUser.phone
+      };
+      _updateByField('Users', 'user_id', existingUser.user_id, userUpdates);
+    }
+  }
+
+  return { success: true, message: 'تم تحديث بيانات العميل بنجاح' };
 }
 
 // ============================================================
