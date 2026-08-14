@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 
-/// شاشة الشحن
 class ShippingScreen extends StatefulWidget {
   const ShippingScreen({super.key});
 

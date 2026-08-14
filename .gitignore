@@ -1,61 +1,53 @@
 ```
-# Build and cache directories
-build/
-.dart_tool/
-.ios/
-android/.gradle/
-android/build/
-android/app/build/
-ios/build/
-ios/Pods/
-ios/.symlinks/
-linux/flutter/ephemeral/
-linux/build/
-macos/flutter/ephemeral/
-macos/build/
-windows/flutter/ephemeral/
-windows/build/
+# Build and compiled files
+*.pyc
+__pycache__/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.out
 
 # Dependencies
-pubspec.lock
-**/node_modules/
-**/.pub-cache/
-**/.pub/
-**/vendor/
-
-# Logs and temporary files
-*.log
-*.tmp
-*.temp
-.DS_Store
-Thumbs.db
-
-# Environment variables
+node_modules/
+venv/
+.venv/
 .env
 .env.local
 *.env.*
 
-# IDE specific
+# Build directories
+dist/
+build/
+target/
+.gradle/
+
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tmp
 
-# Coverage and testing
+# Logs
+*.log
+
+# Coverage
 coverage/
 htmlcov/
 .coverage
-*.gcda
-*.gcno
 
-# Distribution / packaging
-*.zip
-*.tar.gz
-*.tar.xz
-*.deb
-*.rpm
-*.app
-*.exe
-*.dmg
-*.pkg
+# Python specific
+.mypy_cache/
+.pytest_cache/
+
+# Mobile app specific build artifacts
+**/build/
+**/ios/Pods/
+**/android/build/
+*.apk
+*.aab
+*.ipa
 ```

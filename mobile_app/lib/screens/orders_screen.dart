@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
-import '../models/order.dart';
-import '../utils/number_utils.dart';
-import 'order_details_screen.dart';
 
-/// شاشة قائمة الطلبات
 class OrdersScreen extends StatefulWidget {
   final Map<String, dynamic> session;
   const OrdersScreen({super.key, required this.session});
@@ -383,4 +379,3 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     }
   }
 }
-

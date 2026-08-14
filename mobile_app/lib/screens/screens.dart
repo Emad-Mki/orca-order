@@ -1,0 +1,23 @@
+/// Export file for all screens
+library screens;
+
+export 'login_page.dart';
+export 'homepage_screen.dart';
+export 'dashboard_screen.dart';
+export 'products_screen.dart';
+export 'orders_screen.dart';
+export 'order_details_screen.dart';
+export 'new_order_screen.dart';
+export 'customers_screen.dart';
+export 'customer_statement_screen.dart';
+export 'payments_screen.dart';
+export 'shipping_screen.dart';
+export 'inventory_screen.dart';
+export 'inventory_movements_screen.dart';
+export 'reports_screen.dart';
+export 'notifications_screen.dart';
+export 'settings_screen.dart';
+export 'profile_screen.dart';
+export 'user_management_screen.dart';
+export 'system_settings_screen.dart';
+export 'nav_item.dart';

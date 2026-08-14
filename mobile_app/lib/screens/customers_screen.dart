@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 
-/// شاشة قائمة العملاء
 class CustomersScreen extends StatefulWidget {
   const CustomersScreen({super.key});
 
@@ -73,4 +72,3 @@ class _CustomersScreenState extends State<CustomersScreen> {
     );
   }
 }
-
