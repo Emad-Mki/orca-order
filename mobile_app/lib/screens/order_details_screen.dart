@@ -7,13 +7,13 @@ import '../services/api_service.dart';
 import '../models/order.dart';
 import '../models/order_item.dart';
 import '../utils/number_utils.dart';
-import 'order/order_header_widget.dart';
-import 'order/order_items_list_widget.dart';
-import 'order/order_pricing_section_widget.dart';
-import 'order/order_actions_widget.dart';
-import 'order/order_history_widget.dart';
-import 'order/order_shipping_widget.dart';
-import 'order/order_empty_state_widget.dart';
+import 'widgets/order_header_widget.dart';
+import 'widgets/order_items_list_widget.dart';
+import 'widgets/order_pricing_section_widget.dart';
+import 'widgets/order_actions_widget.dart';
+import 'widgets/order_history_widget.dart';
+import 'widgets/order_shipping_widget.dart';
+import 'widgets/order_empty_state_widget.dart';
 
 /// شاشة تفاصيل الطلب - النسخة المُحسّنة والمقسّمة
 /// تم تقسيم الشاشة إلى مكونات منفصلة لتحسين الصيانة والأداء
