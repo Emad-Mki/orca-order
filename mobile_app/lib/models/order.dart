@@ -18,6 +18,8 @@ class Order {
   final double totalAmount;
   final double previousBalance;
   final double currentBalance;
+  final double? shippingCost;
+  final double? discount;
   final List<OrderItem>? items;
 
   Order({
@@ -37,6 +39,8 @@ class Order {
     this.totalAmount = 0.0,
     this.previousBalance = 0.0,
     this.currentBalance = 0.0,
+    this.shippingCost,
+    this.discount,
     this.items,
   });
 
@@ -93,6 +97,8 @@ class Order {
       totalAmount: parsePrice(json['total_amount'] ?? json['total'] ?? json['grand_total']),
       previousBalance: parsePrice(json['previous_balance']),
       currentBalance: parsePrice(json['current_balance'] ?? json['balance']),
+      shippingCost: parsePrice(json['shipping_cost'] ?? json['shippingCost']),
+      discount: parsePrice(json['discount']),
       items: parseItems(json['items'] ?? json['order_items']),
     );
   }
@@ -121,6 +127,8 @@ class Order {
     'total_amount': totalAmount,
     'previous_balance': previousBalance,
     'current_balance': currentBalance,
+    'shipping_cost': shippingCost,
+    'discount': discount,
     'items': items?.map((item) => item.toJson()).toList(),
   };
 }
