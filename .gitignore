@@ -1,27 +1,26 @@
 ```
 # Build artifacts
 build/
-.dart_tool/
-.ios/
-.android/
+*.apk
+*.aab
+*.ipa
 
 # Dependencies
-.pub-cache/
-pubspec.lock
+.pub/
+.dart_tool/
+packages/
 
-# Logs and temp files
+# Logs
 *.log
-*.tmp
-*.swp
 
 # Environment
 .env
 .env.local
 *.env.*
 
-# Editors
-.vscode/
+# IDE files
 .idea/
+.vscode/
 *.swp
 *.swo
 
