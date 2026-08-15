@@ -10,6 +10,7 @@ import 'repositories/repositories.dart';
 import 'models/models.dart';
 import 'screens/screens.dart';
 import 'providers/providers.dart';
+import 'theme/theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -77,7 +78,7 @@ class OrcaAppState extends State<OrcaApp> {
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      debugPrint('Error loading session: \$e');
+      debugPrint('Error loading session: $e');
       setState(() => _isLoading = false);
     }
   }
@@ -119,18 +120,8 @@ class OrcaAppState extends State<OrcaApp> {
       child: MaterialApp(
         title: 'Orca Order',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          useMaterial3: true,
-          fontFamily: 'Tajawal',
-          brightness: Brightness.light,
-        ),
-        darkTheme: ThemeData(
-          primarySwatch: Colors.blue,
-          useMaterial3: true,
-          fontFamily: 'Tajawal',
-          brightness: Brightness.dark,
-        ),
+        theme: AppTheme.lightTheme,
+        darkTheme: AppTheme.darkTheme,
         themeMode: _themeMode,
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
