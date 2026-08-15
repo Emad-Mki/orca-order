@@ -1,0 +1,35 @@
+```
+# Build artifacts
+build/
+*.apk
+*.aab
+*.ipa
+
+# Dependencies
+vendor/
+node_modules/
+**/node_modules/
+.pub-cache/
+.dart_tool/
+.packages
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+```
