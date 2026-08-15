@@ -62,7 +62,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => OrderDetailsScreen(order: {'id': orderId}, session: session),
+            builder: (_) => OrderDetailsScreen(orderId: orderId, session: session),
           ),
         );
       }

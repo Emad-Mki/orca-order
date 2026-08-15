@@ -40,6 +40,7 @@ class OrcaAppState extends State<OrcaApp> {
   late OrderRepository _orderRepository;
   late ProductRepository _productRepository;
   late CustomerRepository _customerRepository;
+  late AuthRepository _authRepository;
 
   ThemeMode get themeMode => _themeMode;
 
@@ -60,6 +61,7 @@ class OrcaAppState extends State<OrcaApp> {
     _orderRepository = OrderRepository();
     _productRepository = ProductRepository();
     _customerRepository = CustomerRepository();
+    _authRepository = AuthRepository();
   }
 
   Future<void> _loadSession() async {

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/order.dart';
+import '../../models/models.dart';
 
 /// ويدجت رأس بطاقة الطلب - يعرض معلومات الطلب الأساسية
 class OrderHeaderWidget extends StatelessWidget {

@@ -128,7 +128,7 @@ class _PreparationOrdersScreenState extends State<PreparationOrdersScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => OrderDetailsScreen(order: order),
+        builder: (context) => OrderDetailsScreen(orderId: order.orderId),
       ),
     ).then((_) {
       // إعادة تحميل القائمة عند العودة

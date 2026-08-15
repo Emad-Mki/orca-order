@@ -11,6 +11,7 @@ class OrderActionsWidget extends StatelessWidget {
   final VoidCallback? onDeliver;
   final VoidCallback? onCancel;
   final VoidCallback? onEdit;
+  final VoidCallback? onPrint;
 
   const OrderActionsWidget({
     super.key,
@@ -23,6 +24,7 @@ class OrderActionsWidget extends StatelessWidget {
     this.onDeliver,
     this.onCancel,
     this.onEdit,
+    this.onPrint,
   });
 
   @override

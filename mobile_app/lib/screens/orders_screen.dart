@@ -267,7 +267,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                               context,
                               MaterialPageRoute(
                                 builder: (_) => OrderDetailsScreen(
-                                  order: order, 
+                                  orderId: order.orderId,
                                   session: widget.session,
                                 ),
                               ),

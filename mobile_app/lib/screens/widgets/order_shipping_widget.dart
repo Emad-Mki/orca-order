@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/order.dart';
+import '../../models/models.dart';
 
 /// ويدجت معلومات الشحن والتجهيز
 class OrderShippingWidget extends StatelessWidget {
@@ -42,7 +42,7 @@ class OrderShippingWidget extends StatelessWidget {
             if (role == 'admin' && shipmentData['shipping_cost_internal'] != null)
               _buildInfoRow(
                 'تكلفة الشحن الداخلية',
-                '\\$${shipmentData['shipping_cost_internal']}',
+                '\$${shipmentData['shipping_cost_internal']}',
                 valueColor: Colors.red,
               ),
             if (shipmentData['tracking_no']?.toString().isNotEmpty == true)

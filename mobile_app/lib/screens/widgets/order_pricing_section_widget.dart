@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../utils/number_utils.dart';
+import '../../utils/utils.dart';
 
 /// ويدجت قسم التسعير والملخص المالي للطلب
 class OrderPricingSectionWidget extends StatelessWidget {
@@ -31,25 +31,25 @@ class OrderPricingSectionWidget extends StatelessWidget {
           children: [
             _summaryRow(
               'إجمالي الفاتورة الحالية:',
-              '\\$${total.toStringAsFixed(2)}',
+              '\$${total.toStringAsFixed(2)}',
               isBold: true,
             ),
             if (discountAmount > 0)
               _summaryRow(
                 'الخصم:',
-                '-\\$${discountAmount.toStringAsFixed(2)}',
+                '-\$${discountAmount.toStringAsFixed(2)}',
                 color: Colors.green,
               ),
             if (shippingAmount > 0)
               _summaryRow(
                 'تكلفة الشحن:',
-                '+\\$${shippingAmount.toStringAsFixed(2)}',
+                '+\$${shippingAmount.toStringAsFixed(2)}',
                 color: Colors.orange,
               ),
             const Divider(),
             _summaryRow(
               'الصافي النهائي:',
-              '\\$${netTotal.toStringAsFixed(2)}',
+              '\$${netTotal.toStringAsFixed(2)}',
               isBold: true,
               color: Colors.blue,
             ),
@@ -57,11 +57,11 @@ class OrderPricingSectionWidget extends StatelessWidget {
               const Divider(),
               _summaryRow(
                 'رصيد الحساب السابق:',
-                '\\$${formatMoneyShort(balanceInfo!['current_balance'])}',
+                '\$${formatMoneyShort(balanceInfo!['current_balance'])}',
               ),
               _summaryRow(
                 'الرصيد النهائي بعد الفاتورة:',
-                '\\$${formatMoneyShort((balanceInfo!['current_balance'] ?? 0.0) + netTotal)}',
+                '\$${formatMoneyShort((balanceInfo!['current_balance'] ?? 0.0) + netTotal)}',
                 color: Colors.red,
                 isBold: true,
               ),

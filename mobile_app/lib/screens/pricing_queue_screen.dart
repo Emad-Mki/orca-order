@@ -122,7 +122,7 @@ class _PricingQueueScreenState extends State<PricingQueueScreen> {
       case 'pending':
         return Icons.pending_actions;
       case 'submitted':
-        return Icons.submit;
+        return Icons.send;
       case 'customer_changed':
         return Icons.edit_note;
       default:
@@ -420,7 +420,7 @@ class _PricingQueueScreenState extends State<PricingQueueScreen> {
       context,
       MaterialPageRoute(
         builder: (context) => OrderDetailsScreen(
-          order: order.toJson(),
+          orderId: order.orderId,
           session: widget.session,
         ),
       ),

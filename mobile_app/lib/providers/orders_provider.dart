@@ -85,7 +85,7 @@ class OrdersProvider extends ChangeNotifier {
 
   /// تحديث طلب موجود
   void updateOrder(Order updatedOrder) {
-    final index = _orders.indexWhere((o) => o.id == updatedOrder.id);
+    final index = _orders.indexWhere((o) => o.orderId == updatedOrder.orderId);
     if (index != -1) {
       _orders[index] = updatedOrder;
       notifyListeners();
@@ -94,7 +94,7 @@ class OrdersProvider extends ChangeNotifier {
 
   /// حذف طلب
   void removeOrder(String orderId) {
-    _orders.removeWhere((o) => o.id == orderId);
+    _orders.removeWhere((o) => o.orderId == orderId);
     notifyListeners();
   }
 }

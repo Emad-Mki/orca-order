@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/order_detail_provider.dart';
-import '../models/order_item.dart';
-import '../utils/number_utils.dart';
+import '../../providers/providers.dart';
+import '../../models/models.dart';
+import '../../utils/utils.dart';
 
 /// Widget لعرض قائمة أصناف الطلب مع دعم State Management
 class OrderItemsListView extends StatelessWidget {
@@ -55,9 +55,9 @@ class OrderItemsListView extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text('\\$' + formatMoneyShort(item.displayPrice),
+                Text('\$' + formatMoneyShort(item.displayPrice),
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                Text('الإجمالي: \\$' + formatMoneyShort(item.total),
+                Text('الإجمالي: \$' + formatMoneyShort(item.total),
                     style: const TextStyle(fontSize: 10, color: Colors.grey)),
               ],
             ) : null,

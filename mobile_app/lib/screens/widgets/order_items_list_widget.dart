@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../models/order_item.dart';
-import '../utils/number_utils.dart';
+import '../../models/models.dart';
+import '../../utils/utils.dart';
 
 /// ويدجت قائمة أصناف الطلب - يعرض جميع المنتجات في الطلب
 class OrderItemsListWidget extends StatelessWidget {
@@ -116,7 +116,7 @@ class OrderItemTileWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Text(
-          '\\$${formatMoneyShort(price)}',
+          '\$${formatMoneyShort(price)}',
           style: const TextStyle(
             fontWeight: FontWeight.bold,
             fontSize: 16,
@@ -124,7 +124,7 @@ class OrderItemTileWidget extends StatelessWidget {
         ),
         if (item.finalPrice > 0)
           Text(
-            'الإجمالي: \\$${formatMoneyShort(total)}',
+            'الإجمالي: \$${formatMoneyShort(total)}',
             style: const TextStyle(
               fontSize: 10,
               color: Colors.grey,

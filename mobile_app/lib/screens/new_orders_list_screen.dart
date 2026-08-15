@@ -293,7 +293,6 @@ class _NewOrdersListScreenState extends State<NewOrdersListScreen> {
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
                   onChanged: (_) => _applyFilters(),
-                  textDirection: TextDirection.rtl,
                 ),
                 const SizedBox(height: 12),
                 SingleChildScrollView(

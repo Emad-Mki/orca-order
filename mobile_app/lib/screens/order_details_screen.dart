@@ -17,13 +17,11 @@ import 'widgets/order_history_widget.dart';
 import 'widgets/order_shipping_widget.dart';
 import 'widgets/order_empty_state_widget.dart';
 
-/// شاشة تفاصيل الطلب - النسخة المعتمدة على Provider
-/// تم تحويل الشاشة لاستخدام State Management عبر Provider
 class OrderDetailsScreen extends StatefulWidget {
-  final Map<String, dynamic> order;
-  final Map<String, dynamic> session;
+  final String orderId;
+  final Map<String, dynamic>? session;
   
-  const OrderDetailsScreen({super.key, required this.order, required this.session});
+  const OrderDetailsScreen({super.key, required this.orderId, this.session});
 
   @override
   State<OrderDetailsScreen> createState() => _OrderDetailsScreenState();
@@ -37,7 +35,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   @override
   void initState() {
     super.initState();
-    role = widget.session['role']?.toString().toLowerCase() ?? 'customer';
+    role = widget.session?['role']?.toString().toLowerCase() ?? 'admin'; // Default to admin for now if session missing
     _initializeProvider();
     
     // تعليم الطلب كمقروء عند فتحه (للمدير/المحاسب فقط)
@@ -50,7 +48,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final repository = OrderRepository();
     _provider = OrderDetailProvider(repository);
     
-    await _provider.fetchOrderDetails(widget.order['id'].toString());
+    await _provider.fetchOrderDetails(widget.orderId);
     
     if (mounted) {
       setState(() => _isInitialized = true);
@@ -96,19 +94,27 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
           if (provider.errorMessage != null) {
             return Scaffold(
-              appBar: AppBar(title: Text('طلب #${widget.order['id']}')),
+              appBar: AppBar(title: Text('طلب #${widget.orderId}')),
               body: Center(child: Text('خطأ: ${provider.errorMessage}')),
             );
           }
+          
+          final order = provider.currentOrder;
+          if (order == null) {
+             return Scaffold(
+              appBar: AppBar(title: Text('طلب #${widget.orderId}')),
+              body: const Center(child: Text('الطلب غير موجود')),
+            );
+          }
 
-          final status = widget.order['status']?.toString().toLowerCase() ?? '';
+          final status = order.status.toLowerCase();
           
           return Scaffold(
             appBar: AppBar(
-              title: Text('طلب #${widget.order['id']}'),
+              title: Text('طلب #${order.orderNumber}'),
               actions: [
                 IconButton(icon: const Icon(Icons.picture_as_pdf), onPressed: () => _exportOrderPdf(provider)),
-                IconButton(icon: const Icon(Icons.refresh), onPressed: () => _provider.fetchOrderDetails(widget.order['id'].toString())),
+                IconButton(icon: const Icon(Icons.refresh), onPressed: () => _provider.fetchOrderDetails(widget.orderId)),
               ],
             ),
             body: Column(
@@ -120,11 +126,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('الحالة الحالية: ${provider.currentOrder?.status ?? widget.order['status']}', 
+                      Text('الحالة الحالية: ${order.status}', 
                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      Text('تاريخ الطلب: ${provider.currentOrder?.createdAt?.toString().split(' ')[0] ?? widget.order['date']}'),
-                      if (provider.currentOrder?.note != null && provider.currentOrder!.note.toString().isNotEmpty)
-                        Text('ملاحظة: ${provider.currentOrder!.note}'),
+                      Text('تاريخ الطلب: ${order.createdAt?.toString().split(' ')[0] ?? ''}'),
+                      if (order.note?.isNotEmpty == true)
+                        Text('ملاحظة: ${order.note}'),
                     ],
                   ),
                 ),
@@ -134,8 +140,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       : ListView(
                           padding: const EdgeInsets.all(8),
                           children: [
-                            if (provider.currentOrder != null) 
-                              OrderHeaderWidget(order: provider.currentOrder!),
+                            OrderHeaderWidget(
+                              order: order,
+                              statusText: _getStatusText(order.status),
+                              statusColor: _getStatusColor(order.status),
+                            ),
                             const Divider(),
                             OrderItemsListView(role: role),
                             if (provider.shipmentData != null) 
@@ -148,7 +157,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 OrderActionsWidget(
                   status: status,
                   role: role,
-                  onStatusChange: _updateStatus,
+                  onApprove: () => _updateStatus('approved'),
+                  onCancel: () => _updateStatus('cancelled'),
                   onPrint: () => _exportOrderPdf(provider),
                 ),
               ],
@@ -196,6 +206,30 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending': return Colors.orange;
+      case 'submitted': return Colors.blue;
+      case 'processing': return Colors.purple;
+      case 'approved': return Colors.green;
+      case 'rejected':
+      case 'cancelled': return Colors.red;
+      default: return Colors.grey;
+    }
+  }
+
+  String _getStatusText(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending': return 'بانتظار التسعير';
+      case 'submitted': return 'مُرسَل';
+      case 'processing': return 'قيد المعالجة';
+      case 'approved': return 'مُعتمَد';
+      case 'rejected': return 'مرفوض';
+      case 'cancelled': return 'مُلغى';
+      default: return status;
+    }
+  }
+
   Future<void> _exportOrderPdf(OrderDetailProvider provider) async {
     final pdf = pw.Document();
     final font = await PdfGoogleFonts.almaraiRegular();
@@ -219,9 +253,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   ],
                 ),
                 pw.SizedBox(height: 20),
-                pw.Text('رقم الطلب: ${provider.currentOrder?.orderNumber ?? widget.order['id']}'),
-                pw.Text('التاريخ: ${provider.currentOrder?.createdAt?.toString().split(' ')[0] ?? widget.order['date']}'),
-                pw.Text('الحالة: ${provider.currentOrder?.status ?? widget.order['status']}'),
+                pw.Text('رقم الطلب: ${provider.currentOrder?.orderNumber ?? widget.orderId}'),
+                pw.Text('التاريخ: ${provider.currentOrder?.createdAt?.toString().split(' ')[0] ?? ''}'),
+                pw.Text('الحالة: ${provider.currentOrder?.status ?? ''}'),
                 pw.SizedBox(height: 20),
                 pw.TableHelper.fromTextArray(
                   headers: ['الصنف', 'الكمية', 'السعر', 'الإجمالي'],

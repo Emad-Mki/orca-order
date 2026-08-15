@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.orca_order"
-    compileSdk = 37
+    compileSdk = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -21,7 +21,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = 37
+        targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
