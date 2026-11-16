@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "versionName": "1.0.0.01",
+  "buildNumber": 3,
+  "minimumSupportedBuild": 2,
+  "apkUrl": "https://github.com/Emad-Mki/Orca-Order-updates/releases/download/V1.0.0.01/app-release.apk",
+  "sha256": "3d9681ce38aec375183899991ca9a79a53d5264f5a6598278aa95014f08680ce",
+  "sizeBytes": 76561458,
+  "releaseNotes": "تحسينات وإصلاحات لهذا الإصدار.",
+  "publishedAt": "2026-11-14T06:10:01Z",
+  "packageName": "com.example.orca_order"
+}
