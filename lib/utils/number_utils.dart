@@ -23,6 +23,7 @@ double toSafeDouble(dynamic value, {double fallback = 0.0}) {
 String formatMoney(
   dynamic value, {
   String currency = 'USD',
+  int decimalPlaces = 2,
   bool showUnavailable = false,
   bool isUnavailable = false,
   String unavailableText = 'غير متوفر',
@@ -36,14 +37,20 @@ String formatMoney(
   if (amount.isNaN) return unpricedText;
   if (amount == 0.0 && !allowZero) return unpricedText;
 
-  return '${amount.toStringAsFixed(2)} $currency';
+  return '${amount.toStringAsFixed(decimalPlaces)} $currency';
 }
 
 /// تنسيق مختصر للعملة - يستخدم في القوائم
-String formatMoneyShort(dynamic value, {String currency = 'USD'}) {
-  if (value == null || value.toString().trim().isEmpty) return '0.00 $currency';
+String formatMoneyShort(
+  dynamic value, {
+  String currency = 'USD',
+  int decimalPlaces = 2,
+}) {
+  if (value == null || value.toString().trim().isEmpty) {
+    return '${0.toStringAsFixed(decimalPlaces)} $currency';
+  }
   final amount = toSafeDouble(value, fallback: 0.0);
-  return '${amount.toStringAsFixed(2)} $currency';
+  return '${amount.toStringAsFixed(decimalPlaces)} $currency';
 }
 
 /// التحقق مما إذا كان السعر موجوداً وصالحاً (> 0)

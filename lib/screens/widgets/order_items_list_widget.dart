@@ -116,7 +116,7 @@ class OrderItemTileWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Text(
-          '\$${formatMoneyShort(price)}',
+          formatMoneyShort(price, currency: item.currency),
           style: const TextStyle(
             fontWeight: FontWeight.bold,
             fontSize: 16,
@@ -124,7 +124,7 @@ class OrderItemTileWidget extends StatelessWidget {
         ),
         if (item.finalPrice != null && item.finalPrice! > 0)
           Text(
-            'الإجمالي: \$${formatMoneyShort(total)}',
+            'الإجمالي: ${formatMoneyShort(total, currency: item.currency)}',
             style: TextStyle(
               fontSize: 10,
               color: Theme.of(context).colorScheme.onSurfaceVariant,

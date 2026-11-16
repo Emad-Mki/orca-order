@@ -29,6 +29,9 @@ class _ProductSkeletonWidgetState extends State<ProductSkeletonWidget>
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return widget.isGrid ? _buildGridSkeleton() : _buildListSkeleton();
+    }
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
@@ -93,8 +96,8 @@ class _ProductSkeletonWidgetState extends State<ProductSkeletonWidget>
 
   Widget _shimmerBox(double width, double height, {double borderRadius = 0}) {
     final color = Theme.of(context).colorScheme.surfaceContainerHighest;
-    final opacity = 0.3 + (_controller.value * 0.4);
-    
+    final opacity = 0.35 + (_controller.value * 0.24);
+
     return Container(
       width: width,
       height: height,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/api_service.dart';
 import '../utils/permissions.dart';
+import '../widgets/app_update_settings_tile.dart';
 import 'profile_screen.dart';
 import 'sales_settings_screen.dart';
 
@@ -134,6 +135,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          const AppUpdateSettingsTile(),
+          const SizedBox(height: 16),
           Card(
             child: ListTile(
               leading: CircleAvatar(
@@ -183,17 +186,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           if (canManageSalesSettings)
-              ListTile(
-                leading: const Icon(Icons.currency_exchange),
-                title: const Text('إعدادات البيع والعملات'),
-                subtitle: const Text('عملة الفاتورة وأسعار الصرف والدقة'),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const SalesSettingsScreen(),
-                  ),
+            ListTile(
+              leading: const Icon(Icons.currency_exchange),
+              title: const Text('إعدادات البيع والعملات'),
+              subtitle: const Text('عملة الفاتورة وأسعار الصرف والدقة'),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const SalesSettingsScreen(),
                 ),
               ),
+            ),
           if (canManageSystem || canSyncData) ...[
             const Divider(height: 32),
             Text(canManageSystem ? 'إعدادات النظام' : 'مزامنة البيانات',

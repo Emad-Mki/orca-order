@@ -9,7 +9,11 @@ class Product {
   final String origin;
   final String oem;
   final String unit;
+  final String? availabilityStatus;
   final double price;
+  final bool priceConfigured;
+  final double? price2;
+  final double? price3;
   final double? offerPrice;
   final double quantity;
   final double? stockQuantity;
@@ -42,7 +46,11 @@ class Product {
     required this.origin,
     this.oem = '',
     required this.unit,
+    this.availabilityStatus,
     required this.price,
+    this.priceConfigured = true,
+    this.price2,
+    this.price3,
     this.offerPrice,
     this.quantity = 0,
     this.stockQuantity,
@@ -66,30 +74,59 @@ class Product {
   }) : group = group ?? category;
 
   factory Product.fromJson(Map<String, dynamic> json) {
+    final stockValue = json['stock_quantity'] ??
+        json['stock_available'] ??
+        json['stock'] ??
+        json['quantity'];
+
+    String? cleanUnit(dynamic value) {
+      final unit = value?.toString().trim() ?? '';
+      return unit.isEmpty ? null : unit;
+    }
+
+    double? parseOptionalPrice(dynamic value) {
+      if (value == null) return null;
+      var text = value.toString().trim();
+      if (text.isEmpty || text.toLowerCase() == 'null') return null;
+      text = text
+          .replaceAll(',', '')
+          .replaceAll('\$', '')
+          .replaceAll('USD', '')
+          .replaceAll('SYP', '')
+          .replaceAll(' ', '');
+      return double.tryParse(text);
+    }
+
     var unitsData = json['units'];
     List<String>? unitsList;
     if (unitsData is List) {
-      unitsList = unitsData.map((u) => u.toString()).toList();
+      unitsList = unitsData
+          .map((u) => u.toString().trim())
+          .where((unit) => unit.isNotEmpty)
+          .toList();
     } else if (unitsData is String) {
-      unitsList = unitsData.split(',').map((u) => u.trim()).toList();
+      unitsList = unitsData
+          .split(',')
+          .map((u) => u.trim())
+          .where((unit) => unit.isNotEmpty)
+          .toList();
     }
 
     if (unitsList == null || unitsList.isEmpty) {
       unitsList = [];
-      String u1 = json['unit'] ?? json['unit_1'] ?? '';
-      if (u1.isNotEmpty) unitsList.add(u1);
-      String u2 = json['unit_2']?.toString() ?? '';
-      if (u2.isNotEmpty) unitsList.add(u2);
-      String u3 = json['unit_3']?.toString() ?? '';
-      if (u3.isNotEmpty) unitsList.add(u3);
+      for (final unit in [
+        cleanUnit(json['unit_1'] ?? json['unit']),
+        cleanUnit(json['unit_2']),
+        cleanUnit(json['unit_3']),
+      ]) {
+        if (unit != null) unitsList.add(unit);
+      }
     }
 
-    // تحسين قراءة السعر - التحقق من حقول متعددة
-    dynamic priceValue = json['price'] ??
+    final priceValue = json['price'] ??
         json['display_price'] ??
         json['final_price'] ??
-        json['price_offer'] ??
-        0;
+        json['price_offer'];
 
     return Product(
       id: json['id'] != null ? int.tryParse(json['id'].toString()) : null,
@@ -101,17 +138,24 @@ class Product {
           json['sub_group']?.toString() ?? json['subGroup']?.toString() ?? '',
       origin: json['origin'] ?? '',
       oem: json['oem']?.toString() ?? json['OEM']?.toString() ?? '',
-      unit: json['unit'] ?? json['unit_1'] ?? '',
-      price: _parsePrice(priceValue),
+      unit: cleanUnit(json['unit_1'] ?? json['unit']) ?? '',
+      availabilityStatus: json['availability_status']?.toString(),
+      price: parseOptionalPrice(priceValue) ?? 0,
+      priceConfigured: json['price_configured'] == false
+          ? false
+          : parseOptionalPrice(priceValue) != null,
+      price2: parseOptionalPrice(json['price_2']),
+      price3: parseOptionalPrice(json['price_3']),
       offerPrice:
           json['offer_price'] != null ? _parsePrice(json['offer_price']) : null,
       quantity: (json['quantity'] ?? 0).toDouble(),
-      stockQuantity: json['stock_quantity'] != null
-          ? (json['stock_quantity'] as num).toDouble()
-          : (json['stock_available'] ?? json['stock'] ?? 0).toDouble(),
-      minOrderQuantity: json['min_order_quantity'] != null
+      stockQuantity: stockValue is num
+          ? stockValue.toDouble()
+          : double.tryParse(stockValue?.toString().trim() ?? ''),
+      minOrderQuantity: json['min_order_quantity'] is num
           ? (json['min_order_quantity'] as num).toDouble()
-          : 1.0,
+          : double.tryParse(
+              json['min_order_quantity']?.toString().trim() ?? ''),
       brand: json['brand']?.toString(),
       isActive: json['is_active'] == true ||
           json['is_active'] == 1 ||
@@ -121,16 +165,60 @@ class Product {
       imageName: json['image_name'],
       notes: json['notes'],
       currency: json['currency'] ?? 'USD',
-      stock: (json['stock_available'] ?? json['stock'] ?? 0).toInt(),
+      stock: stockValue is num
+          ? stockValue.toInt()
+          : int.tryParse(stockValue?.toString().trim() ?? '') ?? 0,
       description: json['description'],
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
       units: unitsList,
       uomName: json['uomName']?.toString(),
-      factor2: (json['factor_2'] ?? 1.0).toDouble(),
-      unit2: json['unit_2']?.toString(),
-      factor3: (json['factor_3'] ?? 1.0).toDouble(),
-      unit3: json['unit_3']?.toString(),
+      factor2: _parseOptionalNumber(json['factor_2']),
+      unit2: cleanUnit(json['unit_2']),
+      factor3: _parseOptionalNumber(json['factor_3']),
+      unit3: cleanUnit(json['unit_3']),
     );
+  }
+
+  List<String> get availableUnits {
+    final sourceUnits = units ??
+        [unit, unit2, unit3].whereType<String>().toList(growable: false);
+    final seen = <String>{};
+    return sourceUnits
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty && seen.add(value))
+        .toList(growable: false);
+  }
+
+  double? priceForUnit(String selectedUnit) {
+    if (selectedUnit == unit) return priceConfigured ? price : null;
+    if (selectedUnit == unit2) return price2;
+    if (selectedUnit == unit3) return price3;
+    return null;
+  }
+
+  double? factorForUnit(String selectedUnit) {
+    if (selectedUnit == unit) return 1;
+    if (selectedUnit == unit2) return factor2;
+    if (selectedUnit == unit3) return factor3;
+    return null;
+  }
+
+  bool get hasConflictingUnits {
+    final seen = <String, (double?, double?)>{};
+    final candidates = <(String, double?, double?)>[
+      (unit, priceForUnit(unit), factorForUnit(unit)),
+      if (unit2?.isNotEmpty == true)
+        (unit2!, priceForUnit(unit2!), factorForUnit(unit2!)),
+      if (unit3?.isNotEmpty == true)
+        (unit3!, priceForUnit(unit3!), factorForUnit(unit3!)),
+    ];
+    for (final candidate in candidates) {
+      final previous = seen[candidate.$1];
+      final current = (candidate.$2, candidate.$3);
+      if (previous != null && previous != current) return true;
+      seen[candidate.$1] = current;
+    }
+    return false;
   }
 
   /// دالة مساعدة لتحليل السعر بشكل آمن
@@ -152,6 +240,12 @@ class Product {
     return double.tryParse(str) ?? 0.0;
   }
 
+  static double? _parseOptionalNumber(dynamic value) {
+    if (value == null || value.toString().trim().isEmpty) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString().trim());
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'code': code,
@@ -162,7 +256,11 @@ class Product {
         'origin': origin,
         'oem': oem,
         'unit': unit,
+        'availability_status': availabilityStatus,
         'price': price,
+        'price_configured': priceConfigured,
+        'price_2': price2,
+        'price_3': price3,
         'offer_price': offerPrice,
         'quantity': quantity,
         'stock_quantity': stockQuantity,

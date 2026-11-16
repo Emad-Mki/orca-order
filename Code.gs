@@ -9,11 +9,11 @@
 // ============================================================
 const H = {
   Users: ['user_id','username','password_hash','salt','full_name','phone','role','customer_id','status','must_change_password','created_at','last_login','city','address','email','customer_type','internal_notes','sales_stock_id','cash_box_id','updated_at','updated_by'],
-  Customers: ['customer_id','full_name','company_name','phone','address','province','notes','opening_usd','opening_syp','status','created_at','is_system_record'],
-  Products: ['code','name','image_name','group','origin','unit_1','quantity','minimum_stock','unit_2','factor_2','quantity_2','factor_3','unit_3','quantity_3','display_price','currency','notes','updated_at','updated_by','image_file_id','sub_group','oem'],
-  Orders: ['order_id','customer_id','customer_name','status','currency','note','accounting_invoice_no','is_read','is_new','cancellation_reason','created_at','updated_at','created_by', 'subtotal', 'total', 'priced_by', 'priced_at', 'accountant_notes', 'posting_id', 'posted_at', 'matching_status', 'revision_no', 'client_request_id'],
-  Order_Items: ['item_id','order_id','code','unit','quantity_requested','quantity_approved','quantity_prepared','display_price_snapshot','final_price','currency','status','customer_note','accountant_note','warehouse_note','warehouse_package_numbers','warehouse_package_type','warehouse_custom_package_type', 'total_price'],
-  Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type','payment_method','invoice_currency','invoice_equivalent','exchange_rate','reference','client_request_id','change_amount','change_currency'],
+  Customers: ['customer_id','full_name','company_name','phone','address','province','notes','opening_usd','opening_syp','status','created_at','is_system_record','creation_request_id'],
+  Products: ['code','name','image_name','group','origin','unit_1','quantity','minimum_stock','unit_2','factor_2','quantity_2','unit_3','factor_3','quantity_3','display_price','price_2','price_3','currency','notes','updated_at','updated_by','image_file_id','sub_group','oem','availability_status'],
+  Orders: ['order_id', 'order_number', 'customer_id', 'customer_name', 'status', 'currency', 'note', 'accounting_invoice_no', 'is_read', 'is_new', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at', 'created_by', 'subtotal', 'total', 'priced_by', 'priced_at', 'accountant_notes', 'posting_id', 'posted_at', 'matching_status', 'revision_no', 'client_request_id'],
+  Order_Items: ['item_id', 'order_id', 'order_number', 'code', 'name_snapshot', 'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot', 'unit_1', 'unit_2', 'factor_2', 'unit_3', 'factor_3', 'quantity_requested', 'quantity_approved', 'quantity_prepared', 'display_price_snapshot', 'final_price', 'currency', 'status', 'customer_note', 'accountant_note', 'warehouse_note', 'warehouse_package_numbers', 'warehouse_package_type', 'warehouse_custom_package_type', 'total_price'],
+  Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type','payment_method','invoice_currency','invoice_equivalent','exchange_rate','reference','client_request_id','change_amount','change_currency','receipt_id','reversal_of'],
   Boxes_Balance: ['box_id','box_name','currency','balance','last_updated'],
   Sham_Cash_Balance: ['id','currency','balance','last_updated'],
   Inventory_Movements: ['movement_id','code','type','quantity','note','created_by','created_at', 'reference_id', 'posting_id', 'is_correction'],
@@ -26,9 +26,10 @@ const H = {
   Product_Images: ['image_name', 'normalized_name', 'file_id', 'image_url', 'mime_type', 'last_checked', 'status'],
   New_Products: ['code','name','description','unit','price','image_url','show_in_new','created_at'],
   Sales_Stock: ['user_id','code','quantity','updated_at','updated_by'],
-  Sales_Invoices: ['invoice_id','customer_id','customer_name','buyer_name','buyer_phone','seller_id','invoice_date','created_at','updated_at','modified_by','revision','status','currency','subtotal','discount','net_total','amount_received','payment_currency','payment_method','rate_syp_per_usd','equivalent_received','change_amount','net_received','notes','payment_reference','cash_box_id','client_request_id'],
-  Sales_Invoice_Items: ['item_id','invoice_id','code','name_snapshot','unit','quantity','unit_price','line_total','note'],
+  Sales_Invoices: ['invoice_id','invoice_number','created_by','created_by_role','customer_id','customer_name','buyer_name','buyer_phone','seller_id','invoice_date','created_at','updated_at','modified_by','revision','status','stock_source','currency','subtotal','discount','net_total','amount_received','payment_currency','payment_method','rate_syp_per_usd','equivalent_received','change_amount','net_received','notes','payment_reference','cash_box_id','client_request_id','total_received_usd','total_refunded_usd','net_paid_usd','balance_due_usd','financial_status','payment_detail_version','void_request_id','void_reason'],
+  Sales_Invoice_Items: ['item_id','invoice_id','code','name_snapshot','unit','quantity','unit_price','line_total','note','stock_source'],
   Sales_Invoice_Audit: ['audit_id','invoice_id','user_id','created_at','action','reason','before_json','after_json'],
+  Sales_Invoice_Allocations: ['allocation_id','receipt_id','invoice_id','customer_id','amount_usd','created_by','created_at','client_request_id'],
 };
 const _PASSWORD_HASH_ITERATIONS_ = 120000;
 const _SHA256_CONSTANTS_ = [
@@ -92,6 +93,18 @@ function _getHeaders(sheetName) {
   const lastCol = sheet.getLastColumn();
   if (lastCol === 0) return [];
   return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h).trim());
+}
+
+function _requireColumns_(sheetName, requiredColumns) {
+  const headers = _getHeaders(sheetName);
+  const missing = requiredColumns.filter(column => headers.indexOf(column) < 0);
+  if (missing.length) {
+    throw _apiError(
+      'SCHEMA_NOT_READY',
+      'مخطط ورقة ' + sheetName + ' غير مهيأ (' + missing.join(', ') + ')؛ شغّل setupSystem أولاً',
+      false
+    );
+  }
 }
 
 /**
@@ -503,6 +516,8 @@ function _withoutFinancialFields(record, role) {
 
   const financialFields = [
     'price', 'display_price', 'display_price_snapshot', 'price_offer',
+    'price_2', 'price_3',
+    'unit_price_snapshot', 'base_price_snapshot',
     'final_price', 'default_price', 'total_price', 'subtotal', 'total',
     'total_amount', 'grand_total', 'invoice_total', 'balance',
     'previous_balance', 'current_balance', 'opening_usd', 'opening_syp',
@@ -536,8 +551,14 @@ function _serializeProductForRole(product, role, imageUrl) {
     sub_group: product.sub_group || product.subGroup || '',
     origin: product.origin || '',
     oem: product.oem || product.OEM || '',
+    availability_status: product.availability_status || '',
     image_url: imageUrl || product.image_url || '',
     unit: product.unit_1 || product.unit || '',
+    unit_1: product.unit_1 || product.unit || '',
+    unit_2: product.unit_2 || '',
+    factor_2: product.factor_2 === '' ? null : product.factor_2,
+    unit_3: product.unit_3 || '',
+    factor_3: product.factor_3 === '' ? null : product.factor_3,
     currency: product.currency ||
       (userRole === 'salesperson'
         ? _salesProperty_('DEFAULT_PRODUCT_CURRENCY')
@@ -548,13 +569,21 @@ function _serializeProductForRole(product, role, imageUrl) {
     created_at: product.created_at || ''
   };
   if (['admin', 'manager', 'accountant', 'salesperson'].includes(userRole)) {
-    item.price = Number(product.display_price || product.price || 0);
+    item.price = product.display_price === '' || product.display_price == null
+      ? (product.price === '' || product.price == null ? null : Number(product.price))
+      : Number(product.display_price);
+    item.price_2 = product.price_2 === '' || product.price_2 == null ? null : Number(product.price_2);
+    item.price_3 = product.price_3 === '' || product.price_3 == null ? null : Number(product.price_3);
   }
-  if (['admin', 'manager', 'accountant', 'warehouse'].includes(userRole)) {
+  if (['admin', 'manager', 'accountant', 'warehouse', 'salesperson'].includes(userRole)) {
     item.quantity = Number(product.quantity || product.stock || 0);
     item.stock = item.quantity;
   } else if (userRole === 'customer') {
-    item.price = Number(product.display_price || product.price || 0);
+    item.price = product.display_price === '' || product.display_price == null
+      ? (product.price === '' || product.price == null ? null : Number(product.price))
+      : Number(product.display_price);
+    item.price_2 = product.price_2 === '' || product.price_2 == null ? null : Number(product.price_2);
+    item.price_3 = product.price_3 === '' || product.price_3 == null ? null : Number(product.price_3);
   }
   return item;
 }
@@ -801,6 +830,12 @@ function doPost(e) {
       case 'getCustomers':
         result = _handleGetCustomers(body, user);
         break;
+      case 'sales_customer_list':
+        result = _handleSalesCustomerList(body, user);
+        break;
+      case 'sales_customer_create':
+        result = _handleCreateSalesCustomer(body, user);
+        break;
       case 'customer_create':
       case 'createCustomer':
       case 'add_customer':
@@ -839,9 +874,27 @@ function doPost(e) {
       case 'deletePayment':
         result = _handleDeletePayment(body, user);
         break;
+      case 'payment_reverse':
+        result = _handleReversePayment(body, user);
+        break;
       case 'box_balances':
       case 'getBoxBalances':
         result = _handleGetBoxBalances(body, user);
+        break;
+      case 'cash_box_statement':
+        result = _handleCashBoxStatement(body, user);
+        break;
+      case 'cash_box_opening_balance':
+        result = _handleCashBoxOpeningBalance(body, user);
+        break;
+      case 'customer_receipt_create':
+        result = _handleCreateCustomerReceipt(body, user);
+        break;
+      case 'sales_invoice_collect':
+        result = _handleCollectSalesInvoice(body, user);
+        break;
+      case 'sales_invoice_allocate':
+        result = _handleAllocateCustomerReceipt(body, user);
         break;
       // --- المخزون ---
       case 'inventory_movements':
@@ -958,10 +1011,10 @@ function doPost(e) {
         result = _handleUpdateSalesSettings(body, user);
         break;
       case 'sales_invoice_create':
-        result = _handleCreateSalesInvoice(body, user);
+        result = _handleCreateSalesInvoiceV2(body, user);
         break;
       case 'sales_invoice_list':
-        result = _handleListSalesInvoices(body, user);
+        result = _handleListSalesInvoicesV2(body, user);
         break;
       case 'sales_invoice_void':
         result = _handleVoidSalesInvoice(body, user);
@@ -1323,7 +1376,7 @@ function _handleCreateManagedUser(body, user) {
       email: String(body.email || '').trim(),
       customer_type: validated.customer_type,
       internal_notes: String(body.internal_notes || '').trim(),
-      sales_stock_id: validated.role === 'salesperson' ? userId : '',
+      sales_stock_id: '',
       cash_box_id: cashBoxId,
       updated_at: now,
       updated_by: user.user_id,
@@ -1396,7 +1449,6 @@ function _handleUpdateManagedUser(body, user) {
       updated_by: user.user_id,
     };
     if (validated.role === 'salesperson') {
-      updates.sales_stock_id = target.sales_stock_id || target.user_id;
       updates.cash_box_id = String(body.cash_box_id ?? target.cash_box_id ?? '').trim() ||
         ('sales_' + target.user_id);
     }
@@ -1534,9 +1586,6 @@ function _handleProducts(body, user) {
   const products = _all('Products');
   const newProducts = _all('New_Products');
   const imageIndex = _all('Product_Images');
-  const salesStock = _normalizeRole(user.role) === 'salesperson'
-    ? _getSalesStockMap_(user)
-    : {};
   const newProductMap = {};
   newProducts.forEach(product => {
     newProductMap[String(product.code)] = product;
@@ -1577,10 +1626,6 @@ function _handleProducts(body, user) {
           user.role,
           imgData ? imgData.image_url : ''
         );
-        if (_normalizeRole(user.role) === 'salesperson') {
-          item.quantity = salesStock[String(p.code)] || 0;
-          item.stock = item.quantity;
-        }
         const newProduct = newProductMap[String(p.code)];
         item.is_new = p.show_in_new === 'true' ||
           p.show_in_new === true ||
@@ -1599,9 +1644,6 @@ function _handleNewProducts(body, user) {
     catalogProducts[String(product.code)] = product;
   });
   const imageMap = {};
-  const salesStock = _normalizeRole(user.role) === 'salesperson'
-    ? _getSalesStockMap_(user)
-    : {};
   _all('Product_Images').forEach(image => {
     if (image.normalized_name && image.status === 'active') {
       imageMap[image.normalized_name] = image;
@@ -1629,10 +1671,6 @@ function _handleNewProducts(body, user) {
         user.role,
         imageUrl
       );
-      if (_normalizeRole(user.role) === 'salesperson') {
-        product.quantity = salesStock[String(mergedProduct.code)] || 0;
-        product.stock = product.quantity;
-      }
       product.is_new = true;
       return product;
     })
@@ -1713,10 +1751,6 @@ function _handleSearchProducts(body, user) {
   const category = body.category || body.group || '';
   const products = _all('Products');
   const imageIndex = _all('Product_Images');
-  const salesStock = _normalizeRole(user.role) === 'salesperson'
-    ? _getSalesStockMap_(user)
-    : {};
-
   // بناء خريطة للبحث السريع عن الصور O(1)
   const imageMap = {};
   imageIndex.forEach(img => {
@@ -1752,10 +1786,6 @@ function _handleSearchProducts(body, user) {
         user.role,
         imgData ? imgData.image_url : ''
       );
-      if (_normalizeRole(user.role) === 'salesperson') {
-        product.quantity = salesStock[String(p.code)] || 0;
-        product.stock = product.quantity;
-      }
       product.image_name = imageName;
       product.image_id = imgData ? imgData.file_id : (p.image_id || '');
       product.origin = p.origin;
@@ -1772,78 +1802,94 @@ function _handleGetProductCategories(body, user) {
 
 function _handleUpdateProductQuantity(body, user) {
   _needRole(user, ['admin', 'warehouse']);
-  const code = body.code;
-  const delta = Number(body.quantity || 0);
-  if (!code) throw new Error('كود المنتج مطلوب');
-
-  if (_updateProductQuantity(code, delta)) {
-    const product = _all('Products').find(p => String(p.code) === String(code));
-    const productName = product ? product.name : code;
-    _add('Inventory_Movements', {
-      movement_id: Utilities.getUuid(),
-      code: code,
-      type: delta > 0 ? 'receipt' : 'adjustment',
-      quantity: Math.abs(delta),
-      note: body.note || 'تحديث مخزون يدوي',
-      created_by: user.user_id,
-      created_at: _now(),
-    });
-    _sendNotificationToRoles(
-      'admin,accountant,warehouse',
-      'تم تحديث المخزون',
-      'تم تحديث كمية المنتج ' + productName + '.',
-      'inventory.quantity_updated',
-      code,
-      { product_id: code, high_priority: false }
-    );
-    const minimum = Number(product && (
-      product.minimum_stock || product.min_stock || product.minimum_quantity
-    ) || 0);
-    const updatedQuantity = Number(product && product.quantity || 0);
-    if (minimum > 0 && updatedQuantity < minimum) {
-      _sendNotificationToRoles(
-        'admin,accountant',
-        'تنبيه انخفاض المخزون',
-        'انخفض مخزون المنتج ' + productName + ' عن الحد الأدنى.',
-        'alert.low_stock',
-        code,
-        { product_id: code, high_priority: true }
-      );
-    }
-    return { success: true, message: 'تم تحديث المخزون' };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'المخزون قيد التحديث، حاول مجددًا', true);
   }
-  throw new Error('المنتج غير موجود');
+  try {
+    const code = body.code;
+    const delta = Number(body.quantity || 0);
+    if (!code) throw new Error('كود المنتج مطلوب');
+
+    if (_updateProductQuantity(code, delta)) {
+      const product = _all('Products').find(p => String(p.code) === String(code));
+      const productName = product ? product.name : code;
+      _add('Inventory_Movements', {
+        movement_id: Utilities.getUuid(),
+        code: code,
+        type: delta > 0 ? 'receipt' : 'adjustment',
+        quantity: Math.abs(delta),
+        note: body.note || 'تحديث مخزون يدوي',
+        created_by: user.user_id,
+        created_at: _now(),
+      });
+      _sendNotificationToRoles(
+        'admin,accountant,warehouse',
+        'تم تحديث المخزون',
+        'تم تحديث كمية المنتج ' + productName + '.',
+        'inventory.quantity_updated',
+        code,
+        { product_id: code, high_priority: false }
+      );
+      const minimum = Number(product && (
+        product.minimum_stock || product.min_stock || product.minimum_quantity
+      ) || 0);
+      const updatedQuantity = Number(product && product.quantity || 0);
+      if (minimum > 0 && updatedQuantity < minimum) {
+        _sendNotificationToRoles(
+          'admin,accountant',
+          'تنبيه انخفاض المخزون',
+          'انخفض مخزون المنتج ' + productName + ' عن الحد الأدنى.',
+          'alert.low_stock',
+          code,
+          { product_id: code, high_priority: true }
+        );
+      }
+      return { success: true, message: 'تم تحديث المخزون' };
+    }
+    throw new Error('المنتج غير موجود');
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function _handleReceiveGoods(body, user) {
   _needRole(user, ['admin', 'accountant', 'warehouse']);
-  const code = body.code;
-  const qty = Number(body.quantity || 0);
-  if (!code || qty <= 0) throw new Error('بيانات استلام المواد غير صالحة');
-
-  if (_updateProductQuantity(code, qty)) {
-    const product = _all('Products').find(p => String(p.code) === String(code));
-    const productName = product ? product.name : code;
-    _add('Inventory_Movements', {
-      movement_id: Utilities.getUuid(),
-      code: code,
-      type: 'receipt',
-      quantity: qty,
-      note: body.note || '',
-      created_by: user.user_id,
-      created_at: _now(),
-    });
-    _sendNotificationToRoles(
-      'admin,accountant,warehouse',
-      'تم استلام مواد جديدة',
-      'تم تسجيل مواد مستلمة للمنتج ' + productName + '.',
-      'inventory.received',
-      code,
-      { product_id: code }
-    );
-    return { success: true, saved: true };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'المخزون قيد التحديث، حاول مجددًا', true);
   }
-  throw new Error('المنتج غير موجود');
+  try {
+    const code = body.code;
+    const qty = Number(body.quantity || 0);
+    if (!code || qty <= 0) throw new Error('بيانات استلام المواد غير صالحة');
+
+    if (_updateProductQuantity(code, qty)) {
+      const product = _all('Products').find(p => String(p.code) === String(code));
+      const productName = product ? product.name : code;
+      _add('Inventory_Movements', {
+        movement_id: Utilities.getUuid(),
+        code: code,
+        type: 'receipt',
+        quantity: qty,
+        note: body.note || '',
+        created_by: user.user_id,
+        created_at: _now(),
+      });
+      _sendNotificationToRoles(
+        'admin,accountant,warehouse',
+        'تم استلام مواد جديدة',
+        'تم تسجيل مواد مستلمة للمنتج ' + productName + '.',
+        'inventory.received',
+        code,
+        { product_id: code }
+      );
+      return { success: true, saved: true };
+    }
+    throw new Error('المنتج غير موجود');
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function _handleCreateProduct(body, user) {
@@ -1941,6 +1987,33 @@ function _updateProductQuantity(code, delta) {
   return false;
 }
 
+function _setProductStockQuantity_(code, quantity) {
+  const sheet = _ss().getSheetByName('Products');
+  if (!sheet) throw new Error('ورقة المنتجات غير موجودة');
+  const values = sheet.getDataRange().getValues();
+  if (!values.length) throw new Error('ورقة المنتجات لا تحتوي على عناوين');
+  const headers = values[0].map(header => String(header).trim());
+  const codeIndex = headers.indexOf('code');
+  const quantityIndex = headers.indexOf('quantity');
+  if (codeIndex < 0 || quantityIndex < 0) {
+    throw new Error('مخطط ورقة المنتجات لا يحتوي حقول الرمز والكمية');
+  }
+  const matchingRows = values
+    .map((row, index) => ({ row: row, index: index }))
+    .filter(entry =>
+      entry.index > 0 && String(entry.row[codeIndex]) === String(code)
+    );
+  if (matchingRows.length !== 1) {
+    throw _apiError(
+      'PRODUCT_STOCK_ROW_INVALID',
+      'يجب وجود سجل مخزون واحد فقط للمادة ' + code,
+      false
+    );
+  }
+  const rowIndex = matchingRows[0].index;
+  sheet.getRange(rowIndex + 1, quantityIndex + 1).setValue(quantity);
+}
+
 // ============================================================
 // 7. صور المنتجات (Product Images - Indexing)
 // ============================================================
@@ -2013,6 +2086,7 @@ function rebuildImageIndex() {
 // 8. الطلبات (Orders)
 // ============================================================
 function _handleGetOrders(body, user) {
+  const startedAt = Date.now();
   const userRole = _normalizeRole(user.role);
   let orders = _all('Orders');
 
@@ -2035,9 +2109,12 @@ function _handleGetOrders(body, user) {
   if (body.status) {
     orders = orders.filter(o => String(o.status) === String(body.status));
   }
-  const customers = _all('Customers');
+  const customersById = {};
+  _all('Customers').forEach(customer => {
+    customersById[String(customer.customer_id)] = customer;
+  });
   orders = orders.map(o => {
-    const customer = customers.find(c => c.customer_id === o.customer_id);
+    const customer = customersById[String(o.customer_id)];
     return {
       ...(userRole === 'admin' || userRole === 'manager' || userRole === 'accountant'
           ? o
@@ -2057,6 +2134,11 @@ function _handleGetOrders(body, user) {
     return dateB - dateA;
   });
 
+  Logger.log(
+    'orders_list_ms=' + (Date.now() - startedAt) +
+    ' order_count=' + orders.length +
+    ' role=' + userRole
+  );
   return { orders: orders };
 }
 
@@ -2090,9 +2172,15 @@ function _handleOrderDetails(body, user) {
 }
 
 function _handleOrderDetailsWithRealId(order, orderId, user) {
+  const startedAt = Date.now();
   const userRole = _normalizeRole(user.role);
-  const items = _all('Order_Items').filter(i => String(i.order_id) === orderId);
+  const allOrderItems = _all('Order_Items');
+  const items = allOrderItems.filter(i => String(i.order_id) === orderId);
   const products = _all('Products');
+  const productsByCode = {};
+  products.forEach(product => {
+    productsByCode[String(product.code)] = product;
+  });
   const imageIndex = _all('Product_Images');
   const shipment = _all('Shipments').find(s => String(s.order_id) === orderId);
   const customer = _all('Customers').find(c => c.customer_id === order.customer_id);
@@ -2106,7 +2194,7 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
   });
 
   const detailedItems = items.map(i => {
-    const p = products.find(prod => prod.code === i.code);
+    const p = productsByCode[String(i.code)];
     let imageUrl = '';
 
     if (p) {
@@ -2124,8 +2212,20 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
     const item = {
       item_id: i.item_id || '',
       code: i.code || '',
-      name: p ? p.name : (i.name || 'منتج غير معروف'),
+      name: i.name_snapshot || (p ? p.name : (i.name || 'منتج غير معروف')),
       unit: i.unit || (p ? p.unit : ''),
+      unit_factor: i.unit_factor !== undefined && i.unit_factor !== '' ? Number(i.unit_factor) : null,
+      base_price_snapshot: i.base_price_snapshot !== undefined && i.base_price_snapshot !== '' ? Number(i.base_price_snapshot) : null,
+      unit_price_snapshot: i.unit_price_snapshot !== undefined && i.unit_price_snapshot !== ''
+        ? Number(i.unit_price_snapshot)
+        : (i.display_price_snapshot !== undefined && i.display_price_snapshot !== ''
+            ? Number(i.display_price_snapshot)
+            : null),
+      unit_1: i.unit_1 || (p ? p.unit_1 || '' : ''),
+      unit_2: i.unit_2 || (p ? p.unit_2 || '' : ''),
+      factor_2: i.factor_2 !== undefined && i.factor_2 !== '' ? Number(i.factor_2) : (p && p.factor_2 !== '' ? Number(p.factor_2) : null),
+      unit_3: i.unit_3 || (p ? p.unit_3 || '' : ''),
+      factor_3: i.factor_3 !== undefined && i.factor_3 !== '' ? Number(i.factor_3) : (p && p.factor_3 !== '' ? Number(p.factor_3) : null),
       image_url: imageUrl,
 
       // الكميات الصريحة
@@ -2136,7 +2236,11 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
       // الأسعار (سيتم حذفها للأدوار غير المصرح لها)
       price_offer: i.display_price_snapshot !== undefined && i.display_price_snapshot !== '' ? Number(i.display_price_snapshot) : null,
       final_price: i.final_price !== undefined && i.final_price !== '' ? Number(i.final_price) : null,
-      default_price: p ? Number(p.display_price || 0) : null,
+      default_price: i.unit_price_snapshot !== undefined && i.unit_price_snapshot !== ''
+        ? Number(i.unit_price_snapshot)
+        : (i.display_price_snapshot !== undefined && i.display_price_snapshot !== ''
+            ? Number(i.display_price_snapshot)
+            : null),
       total_price: i.total_price !== undefined && i.total_price !== '' ? Number(i.total_price) : null,
 
       status: i.status || 'pending',
@@ -2181,7 +2285,12 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
   if (customer && userRole !== 'warehouse') {
     const allPayments = _all('Payments');
     const allOrders = _all('Orders');
-    const allOrderItems = _all('Order_Items');
+    const itemsByOrderId = {};
+    allOrderItems.forEach(item => {
+      const itemOrderId = String(item.order_id || '').trim();
+      if (!itemsByOrderId[itemOrderId]) itemsByOrderId[itemOrderId] = [];
+      itemsByOrderId[itemOrderId].push(item);
+    });
     
     // تصفية الدفعات والطلبات للعميل الحالي
     const customerPayments = allPayments.filter(p => p.customer_id === order.customer_id);
@@ -2198,10 +2307,7 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
     const currentOrderId = String(order.order_id || '').trim();
     
     customerOrders.forEach(o => {
-      const orderItems = allOrderItems.filter(i => {
-        const oid = String(i.order_id || '').trim();
-        return oid === String(o.order_id || '').trim();
-      });
+      const orderItems = itemsByOrderId[String(o.order_id || '').trim()] || [];
       
       let orderSum = 0;
       orderItems.forEach(item => {
@@ -2278,6 +2384,11 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
     ? _withoutFinancialFields(shipment, userRole)
     : shipment || null;
 
+  Logger.log(
+    'order_details_ms=' + (Date.now() - startedAt) +
+    ' item_count=' + detailedItems.length +
+    ' role=' + userRole
+  );
   return {
     order: orderResponse,
     shipment: safeShipment,
@@ -2311,6 +2422,85 @@ function resolveOrderIdentifier_(body) {
 }
 
 /**
+ * Generates ORD-YYMMDD-NNNNN with an annual sequence while the caller holds ScriptLock.
+ */
+function _generateOrderNumber(existingOrders, now) {
+  const createdAt = now || new Date();
+  const timeZone = Session.getScriptTimeZone();
+  const datePrefix = Utilities.formatDate(createdAt, timeZone, 'yyMMdd');
+  const yearPrefix = 'ORD-' + datePrefix.substring(0, 2);
+  const props = PropertiesService.getScriptProperties();
+  const propKey = 'SEQ_ORD_' + datePrefix.substring(0, 2);
+  const savedSequence = props.getProperty(propKey);
+  let current = savedSequence == null ? 0 : Number(savedSequence);
+  if (!Number.isSafeInteger(current) || current < 0) {
+    throw _apiError('ORDER_SEQUENCE_INVALID', 'عداد أرقام الطلبات غير صالح', false);
+  }
+
+  // Recover from a missing/reset annual property. This full scan is one-time per
+  // annual sequence; subsequent allocations use the centrally locked property.
+  if (savedSequence == null) {
+    (existingOrders || []).forEach(order => {
+      const number = String(order.order_number || '');
+      const match = number.match(/^ORD-(\d{6})-(\d{5})$/);
+      if (match && number.startsWith(yearPrefix)) {
+        current = Math.max(current, Number(match[2]));
+      }
+    });
+  }
+  if (current >= 99999) {
+    throw _apiError('ORDER_SEQUENCE_EXHAUSTED', 'اكتمل تسلسل الطلبات لهذه السنة', false);
+  }
+
+  const next = current + 1;
+  props.setProperty(propKey, String(next));
+  return 'ORD-' + datePrefix + '-' + String(next).padStart(5, '0');
+}
+
+/**
+ * Generates a globally shared SAL number while the caller holds ScriptLock.
+ */
+function _generateSalesInvoiceNumber_(existingInvoices, createdAt) {
+  const date = createdAt || new Date();
+  const datePrefix = Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    'yyMMdd'
+  );
+  const year = datePrefix.substring(0, 2);
+  const propertyKey = 'SEQ_SAL_' + year;
+  const properties = PropertiesService.getScriptProperties();
+  const savedValue = properties.getProperty(propertyKey);
+  let current = savedValue == null ? 500000 : Number(savedValue);
+  if (!Number.isSafeInteger(current) || current < 500000) {
+    throw _apiError(
+      'SALES_INVOICE_SEQUENCE_INVALID',
+      'عداد فواتير المبيعات لهذه السنة غير صالح',
+      false
+    );
+  }
+
+  (existingInvoices || []).forEach(invoice => {
+    const match = String(invoice.invoice_number || '')
+      .match(/^SAL-(\d{6})-(\d{6})$/);
+    if (match && match[1].substring(0, 2) === year) {
+      current = Math.max(current, Number(match[2]));
+    }
+  });
+  if (current >= 999999) {
+    throw _apiError(
+      'SALES_INVOICE_SEQUENCE_EXHAUSTED',
+      'اكتمل نطاق أرقام فواتير المبيعات لهذه السنة؛ لم يُعد العداد إلى البداية',
+      false
+    );
+  }
+
+  const next = current + 1;
+  properties.setProperty(propertyKey, String(next));
+  return 'SAL-' + datePrefix + '-' + String(next).padStart(6, '0');
+}
+
+/**
  * معالجة إنشاء طلب جديد
  * ينشئ order_id فريد ويربط البنود به
  */
@@ -2341,24 +2531,35 @@ function _handleCreateOrder(body, user) {
       throw _apiError('EMPTY_ORDER', 'لا يمكن إرسال طلب فارغ', false);
     }
     
-    // التحقق من client_request_id لمنع التكرار
-    const clientRequestId = body.client_request_id || body.request_id || body.requestId || null;
-    if (clientRequestId) {
-      const existingOrders = _all('Orders');
-      const existing = existingOrders.find(o => {
-        const existingReqId = String(o.client_request_id || o.request_id || '').trim();
-        return existingReqId !== '' && existingReqId === String(clientRequestId).trim();
-      });
-      
-      if (existing) {
-        return {
-          success: true, 
-          message: 'تم استلام الطلب مسبقاً',
-          order_id: existing.order_id,
-          order_number: existing.order_number || existing.order_id,
-          is_duplicate: true
-        };
+    const clientRequestId = String(
+      body.client_request_id || body.request_id || body.requestId || ''
+    ).trim();
+    if (!clientRequestId) {
+      throw _apiError('CLIENT_REQUEST_ID_REQUIRED', 'معرف العملية مطلوب لإرسال الطلب بأمان', false);
+    }
+
+    const existingOrders = _all('Orders');
+    const existing = existingOrders.find(o =>
+      String(o.client_request_id || '').trim() === clientRequestId
+    );
+    if (existing) {
+      _requireOrderOwnership(user, existing);
+      if (String(existing.customer_id) !== String(customerId)) {
+        throw _apiError('REQUEST_ID_CONFLICT', 'معرف العملية مستخدم لطلب آخر', false);
       }
+      const savedItems = _all('Order_Items').filter(
+        item => String(item.order_id) === String(existing.order_id)
+      );
+      if (savedItems.length === 0) {
+        throw _apiError('ORDER_RETRY_INCOMPLETE', 'تعذر التحقق من اكتمال الطلب السابق؛ يرجى مراجعة الدعم قبل إعادة الإرسال', false);
+      }
+      return {
+        success: true,
+        message: 'تم استلام الطلب مسبقاً',
+        order_id: existing.order_id,
+        order_number: existing.order_number || existing.order_id,
+        is_duplicate: true
+      };
     }
     
     const customer = _all('Customers').find(c => c.customer_id === customerId);
@@ -2366,40 +2567,13 @@ function _handleCreateOrder(body, user) {
       throw _apiError('CUSTOMER_NOT_FOUND', 'ملف العميل المرتبط بالحساب غير موجود', false);
     }
 
-    // إنشاء رقم طلب فريد بتنسيق OR-YYYYMMDD-XXXXXX
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const randomPart = String(Math.floor(Math.random() * 1000000)).padStart(6, '0');
-    const orderNumber = 'OR-' + dateStr + '-' + randomPart;
-    const orderId = 'ORD-' + Date.now() + '-' + randomPart;
-    
-    const orderObj = {
-      order_id: orderId,
-      order_number: orderNumber,
-      customer_id: customerId,
-      customer_name: body.customer_name || (customer ? (customer.full_name || customer.company_name) : 'عميل غير معروف'),
-      status: 'pending',
-      currency: body.currency || 'USD',
-      note: body.note || body.notes || '',
-      is_new: 'true',
-      is_read: 'false',
-      created_at: _now(),
-      updated_at: _now(),
-      created_by: body.createdBy || (user ? (user.username || user.user_id) : 'unknown'),
-      created_by_role: body.createdByRole || (user ? user.role : ''),
-      client_request_id: clientRequestId || ''
-    };
-    
-    // حفظ الطلب الرئيسي
-    _add('Orders', orderObj);
-
-    // حفظ البنود
-    let itemsSaved = 0;
+    // Validate every line before writing the order header or any item.
     const productsByCode = {};
     _all('Products').forEach(product => {
       productsByCode[String(product.code)] = product;
     });
-    for (const item of items) {
+    const requestedCurrency = String(body.currency || 'USD').trim().toUpperCase();
+    const validatedItems = items.map(item => {
       const qty = Number(item.quantity ?? item.quantity_requested);
       const code = String(item.code || '').trim();
       if (!code || !Number.isFinite(qty) || qty <= 0) {
@@ -2409,15 +2583,108 @@ function _handleCreateOrder(body, user) {
       if (!product) {
         throw _apiError('PRODUCT_NOT_FOUND', 'المنتج غير موجود: ' + code, false);
       }
+      const productCurrency =
+        String(product.currency || 'USD').trim().toUpperCase();
+      if (productCurrency !== requestedCurrency) {
+        throw _apiError('PRODUCT_CURRENCY_MISMATCH', 'عملة المنتج ' + code + ' لا تطابق عملة الطلب', false);
+      }
+      const unit1 = String(product.unit_1 || '').trim();
+      const unit2 = String(product.unit_2 || '').trim();
+      const unit3 = String(product.unit_3 || '').trim();
+      const duplicateUnits = {};
+      [
+        [unit1, '1', product.display_price],
+        [unit2, product.factor_2, product.price_2],
+        [unit3, product.factor_3, product.price_3]
+      ].forEach(definition => {
+        const label = definition[0];
+        if (!label) return;
+        const data = String(definition[1]) + '|' + String(definition[2]);
+        if (duplicateUnits[label] && duplicateUnits[label] !== data) {
+          throw _apiError('CONFLICTING_PRODUCT_UNITS', 'تعريف وحدات المنتج متعارض: ' + code, false);
+        }
+        duplicateUnits[label] = data;
+      });
+      const unit = String(item.unit || unit1).trim();
+      if (!unit || ![unit1, unit2, unit3].filter(Boolean).includes(unit)) {
+        throw _apiError('INVALID_PRODUCT_UNIT', 'الوحدة المحددة غير معرفة للمنتج ' + code, false);
+      }
+      let factor = 1;
+      let unitPrice;
+      if (unit === unit1) {
+        unitPrice = product.display_price;
+      } else if (unit === unit2) {
+        factor = Number(String(product.factor_2 || '').trim());
+        unitPrice = product.price_2;
+      } else {
+        factor = Number(String(product.factor_3 || '').trim());
+        unitPrice = product.price_3;
+      }
+      if (unit !== unit1 && (!Number.isFinite(factor) || factor <= 0)) {
+        throw _apiError('UNIT_CONVERSION_REQUIRED', 'معامل تحويل الوحدة غير مضبوط للمنتج ' + code, false);
+      }
+      if (unitPrice == null || String(unitPrice).trim() === '' || !Number.isFinite(Number(unitPrice))) {
+        throw _apiError('UNIT_PRICE_REQUIRED', 'سعر الوحدة غير مضبوط للمنتج ' + code, false);
+      }
+      return { item: item, product: product, code: code, unit: unit, quantity: qty, factor: factor, unitPrice: Number(unitPrice) };
+    });
 
+    _requireColumns_('Orders', [
+      'order_id', 'order_number', 'customer_id', 'status', 'created_at',
+      'updated_at', 'client_request_id'
+    ]);
+    _requireColumns_('Order_Items', [
+      'item_id', 'order_id', 'order_number', 'code', 'name_snapshot',
+      'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot',
+      'quantity_requested', 'display_price_snapshot'
+    ]);
+
+    // The global script lock protects both the annual sequence and this write.
+    const orderNumber = _generateOrderNumber(existingOrders);
+    const orderId = 'ORD-' + Utilities.getUuid();
+    
+    const orderObj = {
+      order_id: orderId,
+      order_number: orderNumber,
+      customer_id: customerId,
+      customer_name: body.customer_name || (customer ? (customer.full_name || customer.company_name) : 'عميل غير معروف'),
+      status: 'pending',
+      currency: requestedCurrency,
+      note: body.note || body.notes || '',
+      is_new: 'true',
+      is_read: 'false',
+      created_at: _now(),
+      updated_at: _now(),
+      created_by: user ? (user.username || user.user_id) : 'unknown',
+      created_by_role: user ? user.role : '',
+      client_request_id: clientRequestId
+    };
+    
+    // حفظ الطلب الرئيسي
+    _add('Orders', orderObj);
+
+    // حفظ البنود
+    let itemsSaved = 0;
+    for (const validated of validatedItems) {
+      const item = validated.item;
+      const product = validated.product;
       _add('Order_Items', {
         item_id: 'ITM-' + Utilities.getUuid(),
         order_id: orderId,
         order_number: orderNumber,
-        code: code,
-        unit: item.unit || product.unit_1 || '',
-        quantity_requested: qty,
-        display_price_snapshot: Number(product.display_price || 0),
+        code: validated.code,
+        name_snapshot: product.name || '',
+        unit: validated.unit,
+        unit_factor: validated.factor,
+        base_price_snapshot: product.display_price === '' || product.display_price == null ? '' : Number(product.display_price),
+        unit_price_snapshot: validated.unitPrice,
+        unit_1: product.unit_1 || '',
+        unit_2: product.unit_2 || '',
+        factor_2: product.factor_2 || '',
+        unit_3: product.unit_3 || '',
+        factor_3: product.factor_3 || '',
+        quantity_requested: validated.quantity,
+        display_price_snapshot: validated.unitPrice,
         currency: orderObj.currency,
         status: 'pending',
         customer_note: item.note || item.customer_note || ''
@@ -2803,8 +3070,9 @@ function _handleMarkOrderAsRead(body, user) {
 
   const sheet = _ss().getSheetByName('Orders');
   const rowIndex = orderIndex + 2;
-  const isReadCol = H.Orders.indexOf('is_read') + 1;
-  const isNewCol = H.Orders.indexOf('is_new') + 1;
+  const headers = _getHeaders('Orders');
+  const isReadCol = headers.indexOf('is_read') + 1;
+  const isNewCol = headers.indexOf('is_new') + 1;
 
   sheet.getRange(rowIndex, isReadCol).setValue('true');
   sheet.getRange(rowIndex, isNewCol).setValue('false');
@@ -2830,20 +3098,41 @@ function _handleCancelOrder(body, user) {
     _requireOrderOwnership(user, order);
 
     if (['cancelled', 'deleted'].includes(status)) {
-      throw _apiError('INVALID_STATE', 'الطلب ملغى مسبقاً', false);
+      if (status === 'cancelled') {
+        return { success: true, status: 'cancelled', is_duplicate: true };
+      }
+      throw _apiError('INVALID_STATE', 'لا يمكن إلغاء طلب محذوف', false);
     }
     if (role === 'customer' &&
         !['pending', 'submitted', 'processing', 'customer_changed', 'priced'].includes(status)) {
       throw _apiError('INVALID_STATE', 'يمكن للزبون إلغاء الطلب في مرحلتي المعالجة والتسعير فقط', false);
     }
 
-    _reverseOrderInventoryForCancellation_(order, user, reason || 'إلغاء الفاتورة');
-
     const sheet = _ss().getSheetByName('Orders');
     const rowIndex = orderIndex + 2;
-    sheet.getRange(rowIndex, H.Orders.indexOf('status') + 1).setValue('cancelled');
-    sheet.getRange(rowIndex, H.Orders.indexOf('cancellation_reason') + 1).setValue(reason);
-    sheet.getRange(rowIndex, H.Orders.indexOf('updated_at') + 1).setValue(_now());
+    const headers = _getHeaders('Orders');
+    const requiredColumns = [
+      'status',
+      'cancellation_reason',
+      'cancelled_at',
+      'cancelled_by',
+      'updated_at'
+    ];
+    const missingColumn = requiredColumns.find(field => headers.indexOf(field) < 0);
+    if (missingColumn) {
+      throw new Error('عمود الطلب غير مهيأ: ' + missingColumn + '؛ شغّل setupSystem أولاً');
+    }
+    _reverseOrderInventoryForCancellation_(order, user, reason || 'إلغاء الفاتورة');
+
+    const setOrderValue = (field, value) => {
+      const column = headers.indexOf(field) + 1;
+      sheet.getRange(rowIndex, column).setValue(value);
+    };
+    setOrderValue('status', 'cancelled');
+    setOrderValue('cancellation_reason', reason);
+    setOrderValue('cancelled_at', _now());
+    setOrderValue('cancelled_by', user.user_id || '');
+    setOrderValue('updated_at', _now());
 
     _add('Audit_Log', {
       log_id: Utilities.getUuid(),
@@ -2957,9 +3246,10 @@ function _handleDeleteOrder(body, user) {
 
   const sheet = _ss().getSheetByName('Orders');
   const rowIndex = orderIndex + 2;
-  const statusCol = H.Orders.indexOf('status') + 1;
-  const reasonCol = H.Orders.indexOf('cancellation_reason') + 1;
-  const updatedCol = H.Orders.indexOf('updated_at') + 1;
+  const headers = _getHeaders('Orders');
+  const statusCol = headers.indexOf('status') + 1;
+  const reasonCol = headers.indexOf('cancellation_reason') + 1;
+  const updatedCol = headers.indexOf('updated_at') + 1;
 
   sheet.getRange(rowIndex, statusCol).setValue('deleted');
   sheet.getRange(rowIndex, reasonCol).setValue(reason);
@@ -3031,6 +3321,16 @@ function _handleUpdateOrderPricing(body, user) {
       const price = Number(item.final_price !== undefined ? item.final_price : (item.price || item.unitPrice || 0));
       const note = item.accountant_note || item.note || '';
       const lineTotal = available ? qty * price : 0;
+      const unit = item.unit || '';
+
+      // Additional tracking fields
+      const unitFactor = item.unit_factor;
+      const basePriceSnapshot = item.base_price_snapshot;
+      const unit1 = item.unit_1;
+      const unit2 = item.unit_2;
+      const factor2 = item.factor_2;
+      const unit3 = item.unit_3;
+      const factor3 = item.factor_3;
 
       if (existingItems[code]) {
         // تحديث بند موجود
@@ -3040,14 +3340,44 @@ function _handleUpdateOrderPricing(body, user) {
         if (statusIdx !== -1) itemsSheet.getRange(row, statusIdx + 1).setValue(status);
         if (accNoteIdx !== -1) itemsSheet.getRange(row, accNoteIdx + 1).setValue(note);
         if (totalIdx !== -1) itemsSheet.getRange(row, totalIdx + 1).setValue(lineTotal);
-        if (unitIdx !== -1 && item.unit) itemsSheet.getRange(row, unitIdx + 1).setValue(item.unit);
+        if (unitIdx !== -1 && unit) itemsSheet.getRange(row, unitIdx + 1).setValue(unit);
+
+        // Update new tracking fields if present
+        const ufIdx = itemsHeaders.indexOf('unit_factor');
+        if (ufIdx !== -1 && unitFactor !== undefined) itemsSheet.getRange(row, ufIdx + 1).setValue(unitFactor);
+
+        const bpsIdx = itemsHeaders.indexOf('base_price_snapshot');
+        if (bpsIdx !== -1 && basePriceSnapshot !== undefined) itemsSheet.getRange(row, bpsIdx + 1).setValue(basePriceSnapshot);
+
+        const u1Idx = itemsHeaders.indexOf('unit_1');
+        if (u1Idx !== -1 && unit1 !== undefined) itemsSheet.getRange(row, u1Idx + 1).setValue(unit1);
+
+        const u2Idx = itemsHeaders.indexOf('unit_2');
+        if (u2Idx !== -1 && unit2 !== undefined) itemsSheet.getRange(row, u2Idx + 1).setValue(unit2);
+
+        const f2Idx = itemsHeaders.indexOf('factor_2');
+        if (f2Idx !== -1 && factor2 !== undefined) itemsSheet.getRange(row, f2Idx + 1).setValue(factor2);
+
+        const u3Idx = itemsHeaders.indexOf('unit_3');
+        if (u3Idx !== -1 && unit3 !== undefined) itemsSheet.getRange(row, u3Idx + 1).setValue(unit3);
+
+        const f3Idx = itemsHeaders.indexOf('factor_3');
+        if (f3Idx !== -1 && factor3 !== undefined) itemsSheet.getRange(row, f3Idx + 1).setValue(factor3);
       } else {
         // إضافة بند جديد
         _add('Order_Items', {
           item_id: 'ITM-' + Utilities.getUuid().substring(0, 8),
           order_id: orderId,
+          order_number: currentOrderData.order_number || '',
           code: code,
-          unit: item.unit || '',
+          unit: unit,
+          unit_factor: unitFactor,
+          base_price_snapshot: basePriceSnapshot,
+          unit_1: unit1,
+          unit_2: unit2,
+          factor_2: factor2,
+          unit_3: unit3,
+          factor_3: factor3,
           quantity_requested: qty,
           quantity_approved: qty,
           final_price: price,
@@ -3246,6 +3576,12 @@ function _handleEditOrder(body, user) {
       if (!product) {
         throw _apiError('PRODUCT_NOT_FOUND', 'الصنف غير موجود: ' + code, false);
       }
+
+      // Calculate unit factor based on selected unit
+      let unitFactor = 1.0;
+      if (unit === String(product.unit_2 || '').trim()) unitFactor = Number(product.factor_2) || 1.0;
+      else if (unit === String(product.unit_3 || '').trim()) unitFactor = Number(product.factor_3) || 1.0;
+
       const allowedUnits = [
         product.unit_1, product.unit_2, product.unit_3,
         existing ? existing.values[col('unit')] : ''
@@ -3293,6 +3629,8 @@ function _handleEditOrder(body, user) {
         product: product,
         quantity: quantity,
         unit: unit,
+        unitFactor: unitFactor,
+        basePriceSnapshot: Number(product.display_price || 0),
         note: String(item.note || '').trim(),
         status: lineStatus,
         price: price,
@@ -3379,6 +3717,13 @@ function _handleEditOrder(body, user) {
       const fields = {
         code: item.code,
         unit: item.unit,
+        unit_factor: item.unitFactor,
+        base_price_snapshot: item.basePriceSnapshot,
+        unit_1: item.product.unit_1 || '',
+        unit_2: item.product.unit_2 || '',
+        factor_2: item.product.factor_2 || '',
+        unit_3: item.product.unit_3 || '',
+        factor_3: item.product.factor_3 || '',
         quantity_requested: item.quantity,
         status: item.status,
         display_price_snapshot: item.snapshotPrice
@@ -3407,8 +3752,16 @@ function _handleEditOrder(body, user) {
         _add('Order_Items', Object.assign({
           item_id: 'ITM-' + Utilities.getUuid(),
           order_id: orderId,
+          order_number: order.order_number || '',
           code: item.code,
           unit: item.unit,
+          unit_factor: item.unitFactor,
+          base_price_snapshot: item.basePriceSnapshot,
+          unit_1: item.product.unit_1 || '',
+          unit_2: item.product.unit_2 || '',
+          factor_2: item.product.factor_2 || '',
+          unit_3: item.product.unit_3 || '',
+          factor_3: item.product.factor_3 || '',
           quantity_requested: item.quantity,
           display_price_snapshot: item.snapshotPrice,
           currency: order.currency || 'USD',
@@ -3866,12 +4219,24 @@ function _handleGetCustomers(body, user) {
   const payments = _all('Payments');
   const orders = _all('Orders');
   const orderItems = _all('Order_Items');
+  const salesInvoices = _all('Sales_Invoices');
 
   return {
     customers: customers.map(c => {
-      const totalPaid = payments
-        .filter(p => p.customer_id === c.customer_id)
-        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const customerPayments = payments.filter(p =>
+        String(p.customer_id) === String(c.customer_id)
+      );
+      let totalPaid = 0;
+      let needsFinancialReview = false;
+      customerPayments.forEach(payment => {
+        const equivalent = _paymentEquivalentUsd_(payment);
+        if (equivalent === null) {
+          needsFinancialReview = true;
+          return;
+        }
+        totalPaid += String(payment.action_type || 'receive') === 'pay'
+          ? -equivalent : equivalent;
+      });
 
       const customerOrders = orders.filter(o =>
         o.customer_id === c.customer_id &&
@@ -3881,9 +4246,26 @@ function _handleGetCustomers(body, user) {
       let totalOrdersValue = 0;
       customerOrders.forEach(o => {
         const items = orderItems.filter(oi => oi.order_id === o.order_id);
+        const currency = String(o.currency || 'USD').toUpperCase();
+        const rate = Number(o.exchange_rate || o.rate_syp_per_usd || 0);
         items.forEach(item => {
-          totalOrdersValue += Number(item.final_price || item.display_price_snapshot || 0) * Number(item.quantity_approved || item.quantity_requested || 0);
+          const value = Number(item.final_price || item.display_price_snapshot || 0) *
+            Number(item.quantity_approved || item.quantity_requested || 0);
+          if (currency === 'USD') totalOrdersValue += value;
+          else if (currency === 'SYP' && rate > 0) totalOrdersValue += value / rate;
+          else needsFinancialReview = true;
         });
+      });
+      let salesInvoiceValue = 0;
+      salesInvoices.filter(invoice =>
+        String(invoice.customer_id) === String(c.customer_id) &&
+        String(invoice.status) === 'posted'
+      ).forEach(invoice => {
+        if (String(invoice.currency || 'USD').toUpperCase() === 'USD') {
+          salesInvoiceValue += Number(invoice.net_total || 0);
+        } else {
+          needsFinancialReview = true;
+        }
       });
 
       return {
@@ -3897,10 +4279,93 @@ function _handleGetCustomers(body, user) {
         opening_usd: c.opening_usd,
         opening_syp: c.opening_syp,
         status: c.status,
-        balance: Number((totalOrdersValue - totalPaid + Number(c.opening_usd || 0)).toFixed(2))
+        balance: Number((
+          totalOrdersValue + salesInvoiceValue - totalPaid +
+          Number(c.opening_usd || 0)
+        ).toFixed(2)),
+        needs_financial_review: needsFinancialReview,
       };
     })
   };
+}
+
+function _handleSalesCustomerList(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant', 'salesperson']);
+  const query = String(body.query || '').trim().toLowerCase();
+  return {
+    customers: _all('Customers')
+      .filter(customer =>
+        !['deleted', 'inactive'].includes(String(customer.status || '').toLowerCase()) &&
+        String(customer.customer_id || '') !== 'CUS-SHOP' &&
+        (!query || [
+          customer.customer_id,
+          customer.full_name,
+          customer.company_name,
+          customer.phone,
+        ].join(' ').toLowerCase().includes(query))
+      )
+      .map(customer => ({
+        customer_id: String(customer.customer_id),
+        full_name: String(customer.full_name || ''),
+        company_name: String(customer.company_name || ''),
+        phone: String(customer.phone || ''),
+      })),
+  };
+}
+
+function _handleCreateSalesCustomer(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant', 'salesperson']);
+  const fullName = String(body.full_name || '').trim();
+  const phone = String(body.phone || '').trim();
+  if (fullName.length < 2 || fullName.length > 120 || phone.length > 32) {
+    throw _apiError('INVALID_CUSTOMER', 'اسم الزبون مطلوب ورقم الهاتف غير صالح', false);
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    throw _apiError('BUSY', 'إدارة الزبائن مشغولة، حاول مجددًا', true);
+  }
+  try {
+    const requestId = String(body.client_request_id || '').trim();
+    if (requestId.length >= 12) {
+      const prior = _all('Customers').find(row =>
+        String(row.creation_request_id || '') === requestId
+      );
+      if (prior) return { success: true, customer: prior, duplicate: true };
+    }
+    const customerId = 'CUS-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12).toUpperCase();
+    const customer = {
+      customer_id: customerId,
+      full_name: fullName,
+      company_name: String(body.company_name || '').trim(),
+      phone: phone,
+      address: '',
+      province: '',
+      notes: String(body.notes || '').trim(),
+      opening_usd: 0,
+      opening_syp: '',
+      status: 'active',
+      created_at: _now(),
+      is_system_record: false,
+      creation_request_id: requestId,
+    };
+    _add('Customers', customer);
+    _add('Audit_Log', {
+      log_id: Utilities.getUuid(),
+      user_id: user.user_id,
+      action: 'CREATE_SALES_CUSTOMER_RECORD',
+      entity: 'Customers',
+      entity_id: customerId,
+      details: JSON.stringify({
+        full_name: fullName,
+        phone: phone,
+        role: _normalizeRole(user.role),
+      }),
+      created_at: _now(),
+    });
+    return { success: true, customer: customer };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function _handleCreateCustomer(body, user) {
@@ -4173,102 +4638,218 @@ function _handleRecordPayment(body, user) {
 
 function _handleUpdatePayment(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
-  const paymentId = body.payment_id;
-  if (!paymentId) throw new Error('رقم الدفعة مطلوب');
-
-  const payments = _all('Payments');
-  const paymentIndex = payments.findIndex(p => p.payment_id === paymentId);
-  if (paymentIndex === -1) throw new Error('الدفعة غير موجودة');
-
-  const oldPayment = payments[paymentIndex];
-  const newAmount = Number(body.amount || oldPayment.amount);
-  const newActionType = body.action_type || oldPayment.action_type;
-  const newBoxType = body.box_type || oldPayment.box_type;
-  const newCurrency = body.currency || oldPayment.currency;
-  const newCustomerId = body.customer_id !== undefined ? body.customer_id : oldPayment.customer_id;
-  const newNote = body.note !== undefined ? body.note : oldPayment.note;
-
-  _updateBoxBalance(oldPayment.box_type, oldPayment.currency, Number(oldPayment.amount), oldPayment.action_type === 'receive' ? 'pay' : 'receive');
-  _updateBoxBalance(newBoxType, newCurrency, newAmount, newActionType === 'receive' ? 'receive' : 'pay');
-
-  const sheet = _ss().getSheetByName('Payments');
-  const rowIndex = paymentIndex + 2;
-  const paymentsHeaders = H.Payments;
-
-  sheet.getRange(rowIndex, paymentsHeaders.indexOf('amount') + 1).setValue(newAmount);
-  sheet.getRange(rowIndex, paymentsHeaders.indexOf('action_type') + 1).setValue(newActionType);
-  sheet.getRange(rowIndex, paymentsHeaders.indexOf('box_type') + 1).setValue(newBoxType);
-  sheet.getRange(rowIndex, paymentsHeaders.indexOf('currency') + 1).setValue(newCurrency);
-
-  if (body.customer_id !== undefined) {
-    sheet.getRange(rowIndex, paymentsHeaders.indexOf('customer_id') + 1).setValue(newCustomerId);
-  }
-  if (body.note !== undefined) {
-    sheet.getRange(rowIndex, paymentsHeaders.indexOf('note') + 1).setValue(newNote);
-  }
-
-  _add('Audit_Log', {
-    log_id: Utilities.getUuid(),
-    user_id: user.user_id,
-    action: 'UPDATE_PAYMENT',
-    entity: 'Payments',
-    entity_id: paymentId,
-    details: 'تعديل دفعة',
-    created_at: _now(),
-  });
-
-  return { success: true };
+  throw _apiError(
+    'PAYMENTS_IMMUTABLE',
+    'الحركات المالية لا تعدل أو تحذف؛ استخدم إجراء العكس الموثق ثم سجل الحركة الصحيحة.',
+    false
+  );
 }
 
 function _handleDeletePayment(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
+  throw _apiError(
+    'PAYMENTS_IMMUTABLE',
+    'الحركات المالية لا تحذف؛ استخدم إجراء العكس الموثق للمحافظة على سجل التدقيق.',
+    false
+  );
+}
+
+function _handleReversePayment(body, user) {
+  _needRole(user, ['admin', 'accountant']);
   const paymentId = body.payment_id;
-  if (!paymentId) throw new Error('رقم الدفعة مطلوب');
-
-  const payments = _all('Payments');
-  const paymentIndex = payments.findIndex(p => p.payment_id === paymentId);
-  if (paymentIndex === -1) throw new Error('الدفعة غير موجودة');
-
-  const payment = payments[paymentIndex];
-  _updateBoxBalance(payment.box_type, payment.currency, Number(payment.amount), payment.action_type === 'receive' ? 'pay' : 'receive');
-
-  const sheet = _ss().getSheetByName('Payments');
-  sheet.deleteRow(paymentIndex + 2);
-
-  _add('Audit_Log', {
-    log_id: Utilities.getUuid(),
-    user_id: user.user_id,
-    action: 'DELETE_PAYMENT',
-    entity: 'Payments',
-    entity_id: paymentId,
-    details: 'حذف دفعة',
-    created_at: _now(),
-  });
-
-  return { success: true };
+  const reason = String(body.reason || '').trim();
+  const requestId = String(body.client_request_id || '').trim();
+  if (!paymentId || reason.length < 3 || requestId.length < 12) {
+    throw _apiError(
+      'INVALID_PAYMENT_REVERSAL',
+      'رقم الحركة وسبب العكس ومعرف العملية مطلوبة',
+      false
+    );
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'جارٍ ترحيل عملية أخرى، حاول مجددًا', true);
+  }
+  let boxSnapshot = null;
+  let boxTouched = false;
+  let reversalAdded = false;
+  let original = null;
+  try {
+    const duplicate = _all('Payments').find(payment =>
+      String(payment.client_request_id || '') === requestId
+    );
+    if (duplicate) {
+      return {
+        success: true,
+        payment_id: duplicate.payment_id,
+        duplicate: true,
+      };
+    }
+    original = _all('Payments').find(payment =>
+      String(payment.payment_id) === String(paymentId)
+    );
+    if (!original) {
+      throw _apiError('PAYMENT_NOT_FOUND', 'الحركة المالية غير موجودة', false);
+    }
+    if (String(original.reversal_of || '').trim()) {
+      throw _apiError('PAYMENT_ALREADY_REVERSED', 'لا يمكن عكس حركة عكسية', false);
+    }
+    if (_all('Payments').some(payment =>
+      String(payment.reversal_of || '') === String(paymentId)
+    )) {
+      throw _apiError('PAYMENT_ALREADY_REVERSED', 'سبق عكس هذه الحركة', false);
+    }
+    const amount = Number(original.amount);
+    const currency = String(original.currency || '').toUpperCase();
+    const oldAction = String(original.action_type || 'receive');
+    if (!Number.isFinite(amount) || amount <= 0 ||
+        !['USD', 'SYP'].includes(currency) ||
+        !['receive', 'pay'].includes(oldAction) ||
+        !String(original.box_type || '').trim()) {
+      throw _apiError('INVALID_PAYMENT', 'بيانات الحركة الأصلية غير صالحة للعكس', false);
+    }
+    const equivalent = _paymentEquivalentUsd_(original);
+    if (currency === 'SYP' && equivalent === null) {
+      throw _apiError(
+        'PAYMENT_REQUIRES_MANUAL_REVIEW',
+        'الحركة السورية القديمة بلا سعر صرف تاريخي؛ لا يمكن ربطها برصيد دولار. راجعها يدويًا قبل العكس.',
+        false
+      );
+    }
+    _requireColumns_('Payments', ['reversal_of', 'invoice_equivalent']);
+    boxSnapshot = _cashBoxSnapshot_(original.box_type, currency);
+    const reverseAction = oldAction === 'receive' ? 'pay' : 'receive';
+    const reversal = {
+      payment_id: 'PR-' + Utilities.getUuid().replace(/-/g, '').toUpperCase(),
+      customer_id: original.customer_id || '',
+      order_id: original.order_id || '',
+      receipt_id: original.receipt_id || '',
+      amount: amount,
+      currency: currency,
+      box_type: original.box_type,
+      method: 'payment_reversal',
+      payment_method: 'payment_reversal',
+      payment_date: _now(),
+      note: reason,
+      created_by: user.user_id,
+      created_at: _now(),
+      action_type: reverseAction,
+      invoice_currency: 'USD',
+      invoice_equivalent: equivalent,
+      exchange_rate: original.exchange_rate || '',
+      reference: original.reference || '',
+      client_request_id: requestId,
+      reversal_of: paymentId,
+    };
+    _add('Payments', reversal);
+    reversalAdded = true;
+    boxTouched = true;
+    _updateBoxBalance(
+      original.box_type,
+      currency,
+      amount,
+      reverseAction
+    );
+    const auditId = Utilities.getUuid();
+    _add('Audit_Log', {
+      log_id: auditId,
+      user_id: user.user_id,
+      action: 'REVERSE_PAYMENT',
+      entity: 'Payments',
+      entity_id: paymentId,
+      details: JSON.stringify({
+        reversal_payment_id: reversal.payment_id,
+        reason: reason,
+        before: original,
+        after: reversal,
+      }),
+      created_at: reversal.created_at,
+    });
+    return {
+      success: true,
+      payment_id: reversal.payment_id,
+      reversal_of: paymentId,
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    if (boxTouched && boxSnapshot) {
+      try {
+        _restoreBoxBalance_(
+          original ? original.box_type : '',
+          original ? original.currency : '',
+          boxSnapshot
+        );
+      } catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (reversalAdded) {
+      try {
+        const reversal = _all('Payments').find(row =>
+          String(row.client_request_id || '') === requestId
+        );
+        if (reversal) {
+          _deleteRowsByField_('Payments', 'payment_id', reversal.payment_id);
+        }
+      } catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (rollbackErrors.length) {
+      Logger.log('Payment reversal rollback failed: ' + rollbackErrors.join('; '));
+      throw _apiError('PAYMENT_REVERSAL_ROLLBACK_FAILED', 'تعذر التراجع عن عكس الحركة المالية؛ راجع سجل النظام', false);
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function _handleGetBoxBalances(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
   const boxesBalance = _all('Boxes_Balance');
-  let cashBoxSYP = boxesBalance.find(b => b.box_name === 'cash_box' && b.currency === 'SYP');
-  let cashBoxUSD = boxesBalance.find(b => b.box_name === 'cash_box' && b.currency === 'USD');
-  let shamCashSYP = boxesBalance.find(b => b.box_name === 'sham_cash' && b.currency === 'SYP');
-  let shamCashUSD = boxesBalance.find(b => b.box_name === 'sham_cash' && b.currency === 'USD');
+  const getBalance = (name, currency) => {
+    const matches = boxesBalance.filter(box =>
+      String(box.box_name) === name && String(box.currency).toUpperCase() === currency
+    );
+    if (matches.length > 1) {
+      throw _apiError(
+        'DUPLICATE_CASH_BOX',
+        'يوجد أكثر من سجل للصندوق ' + name + ' بعملة ' + currency +
+          '. يلزم توحيد السجلات يدويًا قبل استخدامه.',
+        false
+      );
+    }
+    return Number(matches.length ? matches[0].balance || 0 : 0);
+  };
 
   return {
     balances: {
-      cash_box_syp: Number((cashBoxSYP ? cashBoxSYP.balance : 0) || 0),
-      cash_box_usd: Number((cashBoxUSD ? cashBoxUSD.balance : 0) || 0),
-      sham_cash_syp: Number((shamCashSYP ? shamCashSYP.balance : 0) || 0),
-      sham_cash_usd: Number((shamCashUSD ? shamCashUSD.balance : 0) || 0),
+      cash_box_syp: getBalance('cash_box', 'SYP'),
+      cash_box_usd: getBalance('cash_box', 'USD'),
+      sham_cash_syp: getBalance('sham_cash', 'SYP'),
+      sham_cash_usd: getBalance('sham_cash', 'USD'),
     }
   };
 }
 
 function _updateBoxBalance(boxType, currency, amount, actionType) {
   const boxesBalance = _all('Boxes_Balance');
-  let box = boxesBalance.find(b => b.box_name === boxType && b.currency === currency);
+  const normalizedCurrency = String(currency || '').toUpperCase();
+  const matches = boxesBalance.filter(b =>
+    String(b.box_name) === String(boxType) &&
+    String(b.currency).toUpperCase() === normalizedCurrency
+  );
+  if (matches.length > 1) {
+    throw _apiError(
+      'DUPLICATE_CASH_BOX',
+      'يوجد أكثر من سجل للصندوق ' + boxType + ' بعملة ' + normalizedCurrency +
+        '. يلزم توحيد السجلات يدويًا قبل الترحيل.',
+      false
+    );
+  }
+  if (!Number.isFinite(Number(amount)) || Number(amount) <= 0 ||
+      !['receive', 'pay'].includes(actionType) ||
+      !['USD', 'SYP'].includes(normalizedCurrency)) {
+    throw _apiError('INVALID_CASH_MOVEMENT', 'حركة الصندوق غير صالحة', false);
+  }
+  let box = matches.length ? matches[0] : null;
   const sheet = _ss().getSheetByName('Boxes_Balance');
 
   if (!box) {
@@ -4276,11 +4857,11 @@ function _updateBoxBalance(boxType, currency, amount, actionType) {
     _add('Boxes_Balance', {
       box_id: boxId,
       box_name: boxType,
-      currency: currency,
+      currency: normalizedCurrency,
       balance: 0,
       last_updated: _now(),
     });
-    box = { box_id: boxId, box_name: boxType, currency: currency, balance: 0 };
+    box = { box_id: boxId, box_name: boxType, currency: normalizedCurrency, balance: 0 };
   }
 
   const boxesBalanceUpdated = _all('Boxes_Balance');
@@ -4295,6 +4876,16 @@ function _updateBoxBalance(boxType, currency, amount, actionType) {
   }
   const rowIndex = boxIndex + 2;
   const currentBalance = Number(boxesBalanceUpdated[boxIndex].balance || 0);
+  if (!Number.isFinite(currentBalance)) {
+    throw _apiError('INVALID_CASH_BALANCE', 'رصيد الصندوق الحالي غير صالح', false);
+  }
+  if (actionType === 'pay' && currentBalance < Number(amount)) {
+    throw _apiError(
+      'INSUFFICIENT_CASH_BOX_BALANCE',
+      'رصيد الصندوق ' + boxType + ' بعملة ' + normalizedCurrency + ' لا يكفي للصرف',
+      false
+    );
+  }
 
   let newBalance;
   if (actionType === 'receive') {
@@ -4347,6 +4938,35 @@ function _deleteSalesStockRow_(userId, code) {
   }
 }
 
+function _setSalesStockQuantity_(userId, code, quantity) {
+  const sheet = _ss().getSheetByName('Sales_Stock');
+  if (!sheet) throw new Error('ورقة مخزون المندوبين القديمة غير موجودة');
+  const values = sheet.getDataRange().getValues();
+  if (!values.length) throw new Error('ورقة مخزون المندوبين القديمة فارغة');
+  const headers = values[0].map(header => String(header).trim());
+  const userIndex = headers.indexOf('user_id');
+  const codeIndex = headers.indexOf('code');
+  const quantityIndex = headers.indexOf('quantity');
+  if ([userIndex, codeIndex, quantityIndex].some(index => index < 0)) {
+    throw new Error('مخطط مخزون المندوبين التاريخي غير صالح');
+  }
+  const matchingRows = values
+    .map((row, index) => ({ row: row, index: index }))
+    .filter(entry =>
+      entry.index > 0 &&
+      String(entry.row[userIndex]) === String(userId) &&
+      String(entry.row[codeIndex]) === String(code)
+    );
+  if (matchingRows.length !== 1) {
+    throw _apiError(
+      'LEGACY_SELLER_STOCK_ROW_INVALID',
+      'تعذر تحديد رصيد تاريخي وحيد للمادة ' + code,
+      false
+    );
+  }
+  sheet.getRange(matchingRows[0].index + 1, quantityIndex + 1).setValue(quantity);
+}
+
 function _salesProperty_(key) {
   return String(PropertiesService.getScriptProperties().getProperty(key) || '').trim();
 }
@@ -4382,7 +5002,7 @@ function _handleUpdateSalesSettings(body, user) {
   const rateText = String(body.rate_syp_per_usd ?? '').trim();
   const usdDecimals = Number(body.usd_decimals);
   const sypDecimals = Number(body.syp_decimals);
-  if (!['USD', 'SYP'].includes(invoiceCurrency) ||
+  if (invoiceCurrency !== 'USD' ||
       !['USD', 'SYP'].includes(shamCurrency) ||
       !['USD', 'SYP'].includes(productCurrency) ||
       !Number.isInteger(usdDecimals) || usdDecimals < 0 || usdDecimals > 4 ||
@@ -4390,7 +5010,7 @@ function _handleUpdateSalesSettings(body, user) {
       (rateText && (!Number.isFinite(Number(rateText)) || Number(rateText) <= 0))) {
     throw _apiError(
       'INVALID_SALES_SETTINGS',
-      'تحقق من العملات ومنازل الدقة، وسعر الصرف إن تم إدخاله',
+      'عملة الفواتير USD؛ تحقق من عملة شام كاش ودقة العملات وسعر الصرف',
       false
     );
   }
@@ -4477,6 +5097,8 @@ function _roundSalesAmount_(amount, currency) {
 function _salesPaymentCurrency_(method) {
   if (method === 'cash_syp') return 'SYP';
   if (method === 'cash_usd') return 'USD';
+  if (method === 'sham_cash_syp') return 'SYP';
+  if (method === 'sham_cash_usd') return 'USD';
   if (method !== 'sham_cash') {
     throw _apiError('INVALID_PAYMENT_METHOD', 'طريقة القبض مطلوبة وصالحة', false);
   }
@@ -4492,24 +5114,240 @@ function _salesPaymentCurrency_(method) {
 }
 
 function _handleSalesConfiguration(body, user) {
-  _needRole(user, ['salesperson']);
+  _needRole(user, ['admin', 'manager', 'accountant', 'salesperson']);
   const settings = _getSalesSettings_();
-  const account = _all('Users').find(row =>
-    String(row.user_id) === String(user.user_id)
-  );
   return {
-    invoice_currency: settings.invoice_currency,
+    invoice_currency: settings.invoice_currency || 'USD',
     sham_cash_currency: settings.sham_cash_currency,
     default_product_currency: settings.default_product_currency,
     rate_syp_per_usd: settings.rate_syp_per_usd,
     usd_decimals: settings.usd_decimals,
     syp_decimals: settings.syp_decimals,
-    cash_box_configured: !!(account && account.cash_box_id),
   };
 }
 
+function _salesMethodInfo_(method) {
+  const methods = {
+    cash_usd: { currency: 'USD', box: 'cash_box' },
+    cash_syp: { currency: 'SYP', box: 'cash_box' },
+    sham_cash_usd: { currency: 'USD', box: 'sham_cash' },
+    sham_cash_syp: { currency: 'SYP', box: 'sham_cash' },
+  };
+  const info = methods[String(method || '').trim()];
+  if (!info) {
+    throw _apiError('INVALID_PAYMENT_METHOD', 'اختر وسيلة دفع وصندوقًا صالحًا', false);
+  }
+  return info;
+}
+
+function _salesPositiveNumber_(value, fieldName) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    throw _apiError('INVALID_FINANCIAL_AMOUNT', fieldName + ' يجب أن يكون موجبًا', false);
+  }
+  return number;
+}
+
+function _normalizeSalesPaymentLines_(rawLines, options) {
+  const label = options.label || 'الحركة';
+  if (rawLines === undefined || rawLines === null) return [];
+  if (!Array.isArray(rawLines)) {
+    throw _apiError('INVALID_PAYMENT_LINES', 'صيغة أسطر ' + label + ' غير صالحة', false);
+  }
+  return rawLines.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw _apiError('INVALID_PAYMENT_LINE', 'سطر ' + label + ' رقم ' + (index + 1) + ' غير صالح', false);
+    }
+    const method = String(raw.method || '').trim();
+    const methodInfo = _salesMethodInfo_(method);
+    const currency = methodInfo.currency;
+    const amount = _roundSalesAmount_(
+      _salesPositiveNumber_(raw.amount, 'مبلغ ' + label),
+      currency
+    );
+    if (amount <= 0) {
+      throw _apiError('INVALID_FINANCIAL_AMOUNT', 'مبلغ ' + label + ' أقل من دقة العملة', false);
+    }
+    if (currency === 'USD') {
+      return {
+        method: method,
+        box: methodInfo.box,
+        currency: currency,
+        amount: amount,
+        equivalent_usd: _roundSalesAmount_(amount, 'USD'),
+        exchange_rate: '',
+        reference: String(raw.reference || '').trim(),
+        note: String(raw.note || '').trim(),
+      };
+    }
+
+    const equivalentInput = raw.equivalent_usd === '' ||
+      raw.equivalent_usd === undefined || raw.equivalent_usd === null
+      ? null : Number(raw.equivalent_usd);
+    const rateInput = raw.exchange_rate === '' ||
+      raw.exchange_rate === undefined || raw.exchange_rate === null
+      ? null : Number(raw.exchange_rate);
+    if (equivalentInput !== null &&
+        (!Number.isFinite(equivalentInput) || equivalentInput <= 0)) {
+      throw _apiError('INVALID_EXCHANGE_RATE', 'المقابل الدولاري يجب أن يكون موجبًا', false);
+    }
+    if (rateInput !== null && (!Number.isFinite(rateInput) || rateInput <= 0)) {
+      throw _apiError('INVALID_EXCHANGE_RATE', 'سعر الصرف يجب أن يكون ليرات موجبة لكل دولار', false);
+    }
+    if (equivalentInput !== null && rateInput !== null) {
+      const implied = amount / rateInput;
+      if (Math.abs(implied - equivalentInput) > 0.011) {
+        throw _apiError(
+          'EXCHANGE_VALUES_MISMATCH',
+          'المبلغ السوري وسعر الصرف لا يطابقان المقابل الدولاري',
+          false
+        );
+      }
+    }
+    let equivalentUsd = equivalentInput === null
+      ? rateInput === null ? null : _roundSalesAmount_(amount / rateInput, 'USD')
+      : _roundSalesAmount_(equivalentInput, 'USD');
+    let rate = equivalentUsd === null
+      ? null : amount / equivalentUsd;
+    if (equivalentUsd !== null && equivalentUsd <= 0) {
+      throw _apiError('INVALID_EXCHANGE_RATE', 'المقابل الدولاري بعد التقريب يساوي صفرًا', false);
+    }
+    return {
+      method: method,
+      box: methodInfo.box,
+      currency: currency,
+      amount: amount,
+      equivalent_usd: equivalentUsd,
+      exchange_rate: rate,
+      reference: String(raw.reference || '').trim(),
+      note: String(raw.note || '').trim(),
+    };
+  });
+}
+
+function _completeSalesPaymentRates_(received, refunded, options) {
+  const missing = received.concat(refunded).filter(line =>
+    line.currency === 'SYP' && line.equivalent_usd === null
+  );
+  const usdReceived = received.reduce((sum, line) =>
+    sum + Number(line.equivalent_usd || 0), 0);
+  const usdRefunded = refunded.reduce((sum, line) =>
+    sum + Number(line.equivalent_usd || 0), 0);
+  if (missing.length) {
+    if (!options.settle_full) {
+      throw _apiError(
+        'EXCHANGE_RATE_REQUIRED',
+        'أدخل المقابل الدولاري أو سعر الصرف لكل حركة سورية، أو اختر تسوية الفاتورة بالكامل',
+        false
+      );
+    }
+    const netSyp = missing
+      .filter(line => received.includes(line))
+      .reduce((sum, line) => sum + line.amount, 0) -
+      missing
+        .filter(line => refunded.includes(line))
+        .reduce((sum, line) => sum + line.amount, 0);
+    const knownNetUsd = usdReceived - usdRefunded;
+    const targetNetUsd = Number(options.net_total) - knownNetUsd;
+    if (Math.abs(netSyp) < 0.000001 ||
+        Math.abs(targetNetUsd) < 0.005 ||
+        netSyp * targetNetUsd <= 0) {
+      throw _apiError(
+        'EXCHANGE_RATE_UNDETERMINED',
+        'لا يمكن استنتاج سعر صرف وحيد من هذه الحركات؛ أدخل المقابل الدولاري أو سعر الصرف لكل سطر',
+        false
+      );
+    }
+    const inferredRate = netSyp / targetNetUsd;
+    if (!Number.isFinite(inferredRate) || inferredRate <= 0) {
+      throw _apiError('INVALID_EXCHANGE_RATE', 'تعذر استنتاج سعر صرف موجب', false);
+    }
+    missing.forEach(line => {
+      line.exchange_rate = inferredRate;
+      line.equivalent_usd = _roundSalesAmount_(line.amount / inferredRate, 'USD');
+    });
+  }
+
+  received.forEach(line => {
+    if (line.currency === 'SYP') {
+      line.exchange_rate = line.amount / line.equivalent_usd;
+    }
+  });
+  refunded.forEach(line => {
+    if (line.currency === 'SYP') {
+      line.exchange_rate = line.amount / line.equivalent_usd;
+    }
+  });
+  const totalReceivedUsd = _roundSalesAmount_(
+    received.reduce((sum, line) => sum + line.equivalent_usd, 0),
+    'USD'
+  );
+  const totalRefundedUsd = _roundSalesAmount_(
+    refunded.reduce((sum, line) => sum + line.equivalent_usd, 0),
+    'USD'
+  );
+  return {
+    total_received_usd: totalReceivedUsd,
+    total_refunded_usd: totalRefundedUsd,
+    net_paid_usd: _roundSalesAmount_(totalReceivedUsd - totalRefundedUsd, 'USD'),
+  };
+}
+
+function _cashBoxSnapshot_(boxName, currency) {
+  const boxes = _all('Boxes_Balance').filter(box =>
+    String(box.box_name) === String(boxName) &&
+    String(box.currency).toUpperCase() === String(currency).toUpperCase()
+  );
+  if (boxes.length > 1) {
+    throw _apiError(
+      'DUPLICATE_CASH_BOX',
+      'يوجد أكثر من سجل للصندوق ' + boxName + ' بعملة ' + currency +
+        '. يلزم توحيدها يدويًا قبل الترحيل.',
+      false
+    );
+  }
+  return boxes.length ? Object.assign({}, boxes[0]) : null;
+}
+
+function _writeSalesPayment_(line, input) {
+  const paymentId = 'SP-' + Utilities.getUuid().replace(/-/g, '').toUpperCase();
+  const record = {
+    payment_id: paymentId,
+    customer_id: input.customer_id,
+    order_id: input.invoice_id || '',
+    receipt_id: input.receipt_id || '',
+    amount: line.amount,
+    currency: line.currency,
+    box_type: line.box,
+    method: line.method,
+    payment_method: line.method,
+    payment_date: input.payment_date,
+    note: line.note || input.note || '',
+    created_by: input.user_id,
+    created_at: input.created_at,
+    action_type: input.action_type,
+    invoice_currency: 'USD',
+    invoice_equivalent: line.equivalent_usd,
+    exchange_rate: line.currency === 'SYP' ? line.exchange_rate : '',
+    reference: line.reference || '',
+    client_request_id: input.client_request_id,
+  };
+  _add('Payments', record);
+  try {
+    _updateBoxBalance(line.box, line.currency, line.amount, input.action_type);
+  } catch (error) {
+    try {
+      _deleteRowsByField_('Payments', 'payment_id', paymentId);
+    } catch (rollbackError) {
+      Logger.log('Unable to remove unposted payment ' + paymentId + ': ' + rollbackError);
+    }
+    throw error;
+  }
+  return record;
+}
+
 function _handleSalespeopleList(body, user) {
-  _needRole(user, ['admin', 'manager', 'warehouse']);
+  _needRole(user, ['admin', 'manager', 'accountant', 'warehouse']);
   return {
     salespeople: _all('Users')
       .filter(account =>
@@ -4520,144 +5358,17 @@ function _handleSalespeopleList(body, user) {
         user_id: account.user_id,
         full_name: account.full_name,
         username: account.username,
-        sales_stock_id: account.sales_stock_id || account.user_id,
       })),
   };
 }
 
 function _handleSalesStockTransfer(body, user) {
   _needRole(user, ['admin', 'manager', 'warehouse']);
-  const targetId = String(body.seller_user_id || '').trim();
-  const code = String(body.code || '').trim();
-  const quantity = Number(body.quantity);
-  const reason = String(body.reason || '').trim();
-  if (!targetId || !code || !Number.isFinite(quantity) || quantity <= 0 ||
-      !Number.isInteger(quantity) || !reason) {
-    throw _apiError('INVALID_STOCK_TRANSFER', 'بيانات تحويل المخزون غير مكتملة أو غير صالحة', false);
-  }
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(20000)) throw _apiError('BUSY', 'المخزون قيد التحديث، حاول مجددًا', true);
-  let stockId = '';
-  let previousCentral = null;
-  let previousSalesQty = null;
-  let createdStockRow = false;
-  const transferId = 'TR-' + Utilities.getUuid().replace(/-/g, '').toUpperCase();
-  try {
-    const seller = _all('Users').find(u =>
-      String(u.user_id) === targetId &&
-      _normalizeRole(u.role) === 'salesperson' &&
-      _isActiveStatus_(u.status)
-    );
-    if (!seller) throw _apiError('SALESPERSON_NOT_FOUND', 'مندوب المبيعات غير موجود أو غير مفعل', false);
-    const product = _all('Products').find(p => String(p.code) === code);
-    if (!product) throw _apiError('PRODUCT_NOT_FOUND', 'المادة غير موجودة', false);
-    const currentCentral = Number(product.quantity || 0);
-    if (currentCentral < quantity) {
-      throw _apiError(
-        'INSUFFICIENT_CENTRAL_STOCK',
-        'المتاح في المخزون المركزي للمادة ' + code + ': ' + currentCentral,
-        false
-      );
-    }
-    previousCentral = currentCentral;
-    stockId = String(seller.sales_stock_id || seller.user_id);
-    const stockRows = _all('Sales_Stock');
-    const currentRow = stockRows.find(r =>
-      String(r.user_id) === stockId && String(r.code) === code
-    );
-    previousSalesQty = Number(currentRow && currentRow.quantity || 0);
-    const now = _now();
-    _updateByField('Products', 'code', code, { quantity: currentCentral - quantity });
-    if (currentRow) {
-      const sheet = _ss().getSheetByName('Sales_Stock');
-      const values = sheet.getDataRange().getValues();
-      const headers = values[0].map(String);
-      const rowIndex = values.findIndex((r, i) =>
-        i > 0 && String(r[headers.indexOf('user_id')]) === stockId &&
-        String(r[headers.indexOf('code')]) === code
-      );
-      if (rowIndex < 1) throw new Error('تعذر تحديد رصيد المندوب');
-      sheet.getRange(rowIndex + 1, headers.indexOf('quantity') + 1)
-        .setValue(previousSalesQty + quantity);
-      if (headers.indexOf('updated_at') >= 0) {
-        sheet.getRange(rowIndex + 1, headers.indexOf('updated_at') + 1).setValue(now);
-      }
-      if (headers.indexOf('updated_by') >= 0) {
-        sheet.getRange(rowIndex + 1, headers.indexOf('updated_by') + 1).setValue(user.user_id);
-      }
-    } else {
-      createdStockRow = true;
-      _add('Sales_Stock', {
-        user_id: stockId,
-        code: code,
-        quantity: quantity,
-        updated_at: now,
-        updated_by: user.user_id
-      });
-    }
-    _add('Inventory_Movements', {
-      movement_id: 'MV-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12),
-      code: code,
-      type: 'seller_stock_transfer',
-      quantity: quantity,
-      note: reason,
-      created_by: user.user_id,
-      created_at: now,
-      reference_id: transferId,
-      is_correction: 'false',
-    });
-    _managedUserAudit_(
-      user,
-      'TRANSFER_SELLER_STOCK',
-      targetId,
-      { code: code, quantity: previousSalesQty },
-      { code: code, quantity: previousSalesQty + quantity },
-      reason
-    );
-    return {
-      success: true,
-      code: code,
-      seller_user_id: targetId,
-      available_quantity: previousSalesQty + quantity
-    };
-  } catch (error) {
-    const rollbackErrors = [];
-    try {
-      if (previousCentral !== null && code) {
-        _updateByField('Products', 'code', code, { quantity: previousCentral });
-      }
-      if (previousSalesQty !== null && stockId) {
-        if (createdStockRow) {
-          _deleteSalesStockRow_(stockId, code);
-        } else {
-          const sheet = _ss().getSheetByName('Sales_Stock');
-          const values = sheet.getDataRange().getValues();
-          const headers = values[0].map(String);
-          const rowIndex = values.findIndex((r, i) =>
-            i > 0 && String(r[headers.indexOf('user_id')]) === stockId &&
-            String(r[headers.indexOf('code')]) === code
-          );
-          if (rowIndex > 0) {
-            sheet.getRange(rowIndex + 1, headers.indexOf('quantity') + 1).setValue(previousSalesQty);
-          }
-        }
-      }
-      _deleteRowsByField_('Inventory_Movements', 'reference_id', transferId);
-    } catch (rollbackError) {
-      rollbackErrors.push(String(rollbackError));
-    }
-    if (rollbackErrors.length) {
-      Logger.log('Seller stock transfer rollback failed ' + transferId + ': ' + rollbackErrors.join('; '));
-      throw _apiError(
-        'STOCK_TRANSFER_ROLLBACK_FAILED',
-        'تعذر التراجع الكامل عن تحويل المخزون. مرجع العملية: ' + transferId,
-        false
-      );
-    }
-    throw error;
-  } finally {
-    lock.releaseLock();
-  }
+  throw _apiError(
+    'SALESPERSON_STOCK_REMOVED',
+    'تخصيص مخزون مستقل للمندوب متوقف؛ جميع المبيعات تخصم من المخزون العام',
+    false
+  );
 }
 
 function _handleCreateSalesInvoice(body, user) {
@@ -4735,10 +5446,10 @@ function _handleCreateSalesInvoice(body, user) {
       _normalizeRole(row.role) === 'salesperson' &&
       _isActiveStatus_(row.status)
     );
-    if (!account || !account.sales_stock_id || !String(account.cash_box_id || '').trim()) {
+    if (!account || !String(account.cash_box_id || '').trim()) {
       throw _apiError(
         'SELLER_SETUP_REQUIRED',
-        'يجب ربط حساب المندوب بمخزون بيع وصندوق تحصيل قبل تسجيل الفواتير',
+        'يجب ربط حساب المندوب بصندوق تحصيل قبل تسجيل الفواتير',
         false
       );
     }
@@ -4750,7 +5461,6 @@ function _handleCreateSalesInvoice(body, user) {
     const productRows = _all('Products');
     const productMap = {};
     productRows.forEach(row => productMap[String(row.code)] = row);
-    const sellerStock = _all('Sales_Stock');
     const seen = {};
     let subtotal = 0;
     const preparedItems = [];
@@ -4781,15 +5491,11 @@ function _handleCreateSalesInvoice(body, user) {
           false
         );
       }
-      const stock = sellerStock.find(row =>
-        String(row.user_id) === String(account.sales_stock_id) &&
-        String(row.code) === code
-      );
-      const available = Number(stock && stock.quantity || 0);
-      if (!Number.isFinite(available) || available < quantity) {
+      const available = Number(product.quantity || 0);
+      if (!Number.isFinite(available)) {
         throw _apiError(
-          'INSUFFICIENT_SELLER_STOCK',
-          'المتاح للمندوب من ' + (product.name || code) + ': ' + available,
+          'INVALID_CENTRAL_STOCK',
+          'رصيد المخزون العام للمادة ' + (product.name || code) + ' غير صالح',
           false
         );
       }
@@ -4806,7 +5512,6 @@ function _handleCreateSalesInvoice(body, user) {
         line_total: lineTotal,
         note: String(item.note || ''),
         available: available,
-        stock_id: account.sales_stock_id,
       });
     });
     subtotal = Math.round((subtotal + Number.EPSILON) * Math.pow(10, invoiceDecimals)) /
@@ -4829,6 +5534,8 @@ function _handleCreateSalesInvoice(body, user) {
           invoiceCurrency === 'USD' ? exchangeRate : 1 / exchangeRate) +
         Number.EPSILON) * Math.pow(10, paymentDecimals)
     ) / Math.pow(10, paymentDecimals);
+    _requireColumns_('Products', ['code', 'quantity']);
+    _requireColumns_('Sales_Invoices', ['stock_source']);
     const customerId = _ensureShopCustomer_();
     const now = _now();
     const invoice = {
@@ -4844,6 +5551,7 @@ function _handleCreateSalesInvoice(body, user) {
       modified_by: '',
       revision: 1,
       status: 'posted',
+      stock_source: 'central',
       currency: invoiceCurrency,
       subtotal: subtotal,
       discount: roundedDiscount,
@@ -4863,16 +5571,8 @@ function _handleCreateSalesInvoice(body, user) {
     preparedItems.forEach(item => {
       const previous = item.available;
       const next = previous - item.quantity;
-      const sheet = _ss().getSheetByName('Sales_Stock');
-      const values = sheet.getDataRange().getValues();
-      const headers = values[0].map(String);
-      const rowIndex = values.findIndex((r, i) =>
-        i > 0 && String(r[headers.indexOf('user_id')]) === item.stock_id &&
-        String(r[headers.indexOf('code')]) === item.code
-      );
-      if (rowIndex < 1) throw new Error('تعذر تحديد مخزون المادة ' + item.code);
-      sheet.getRange(rowIndex + 1, headers.indexOf('quantity') + 1).setValue(next);
-      stockChanges.push({ stock_id: item.stock_id, code: item.code, before: previous });
+      stockChanges.push({ code: item.code, before: previous });
+      _setProductStockQuantity_(item.code, next);
     });
     _add('Sales_Invoices', invoice);
     preparedItems.forEach(item => {
@@ -4886,6 +5586,7 @@ function _handleCreateSalesInvoice(body, user) {
         unit_price: item.unit_price,
         line_total: item.line_total,
         note: item.note,
+        stock_source: 'central',
       });
       _add('Inventory_Movements', {
         movement_id: 'MV-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12),
@@ -4971,20 +5672,7 @@ function _handleCreateSalesInvoice(body, user) {
     const rollbackErrors = [];
     stockChanges.forEach(change => {
       try {
-        const rows = _all('Sales_Stock');
-        const index = rows.findIndex(row =>
-          String(row.user_id) === change.stock_id && String(row.code) === change.code
-        );
-        if (index >= 0) {
-          const sheet = _ss().getSheetByName('Sales_Stock');
-          const values = sheet.getDataRange().getValues();
-          const headers = values[0].map(String);
-          const sheetRow = values.findIndex((r, i) =>
-            i > 0 && String(r[headers.indexOf('user_id')]) === change.stock_id &&
-            String(r[headers.indexOf('code')]) === change.code
-          );
-          if (sheetRow > 0) sheet.getRange(sheetRow + 1, headers.indexOf('quantity') + 1).setValue(change.before);
-        }
+        _setProductStockQuantity_(change.code, change.before);
       } catch (rollbackError) {
         rollbackErrors.push(String(rollbackError));
       }
@@ -5012,6 +5700,370 @@ function _handleCreateSalesInvoice(body, user) {
       throw _apiError(
         'SALES_ROLLBACK_FAILED',
         'فشل جزء من حفظ الفاتورة وتعذر إكمال التراجع تلقائيًا. رقم العملية: ' + invoiceId,
+        false
+      );
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _handleCreateSalesInvoiceV2(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant', 'salesperson']);
+  const creatorRole = _normalizeRole(user.role);
+  const creatorId = String(user.user_id || '');
+  const requestId = String(body.client_request_id || '').trim();
+  if (requestId.length < 12 || requestId.length > 100) {
+    throw _apiError('IDEMPOTENCY_KEY_REQUIRED', 'معرف عملية فريد مطلوب لمنع تكرار الفاتورة', false);
+  }
+  const invoiceCurrency = String(_salesProperty_('SALES_INVOICE_CURRENCY') || 'USD').toUpperCase();
+  if (invoiceCurrency !== 'USD') {
+    throw _apiError(
+      'SALES_CURRENCY_NOT_CONFIGURED',
+      'عملة الفواتير بالدولار فقط؛ اضبط SALES_INVOICE_CURRENCY على USD',
+      false
+    );
+  }
+  const usdDecimals = _salesCurrencyDecimals_('USD');
+  const sypDecimals = _salesCurrencyDecimals_('SYP');
+  const discountInput = Number(body.discount || 0);
+  const items = body.items;
+  if (!Array.isArray(items) || items.length === 0 ||
+      !Number.isFinite(discountInput) || discountInput < 0) {
+    throw _apiError('INVALID_SALES_INVOICE', 'بيانات الفاتورة أو الحسم غير صالحة', false);
+  }
+  const received = _normalizeSalesPaymentLines_(body.received_lines, {
+    label: 'الاستلام',
+  });
+  const refunded = _normalizeSalesPaymentLines_(body.refunded_lines, {
+    label: 'الباقي المعاد',
+  });
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'جارٍ ترحيل عملية أخرى، حاول مجددًا', true);
+  }
+
+  const invoiceId = 'SI-' + Utilities.getUuid().replace(/-/g, '').toUpperCase();
+  const requestPrefix = requestId;
+  const stockChanges = [];
+  const boxSnapshots = {};
+  const paymentIds = [];
+  let invoiceAdded = false;
+  let auditAdded = false;
+  let itemsAdded = false;
+  let movementsAdded = false;
+  let boxKeysChanged = [];
+  try {
+    const prior = _all('Sales_Invoices').find(row =>
+      String(row.client_request_id) === requestId &&
+      String(row.created_by || row.seller_id) === creatorId
+    );
+    if (prior) {
+      return {
+        success: true,
+        invoice_id: prior.invoice_id,
+        invoice_number: prior.invoice_number || '',
+        balance_due_usd: prior.balance_due_usd || 0,
+        financial_status: prior.financial_status || '',
+        duplicate: true,
+      };
+    }
+    if (_all('Sales_Invoices').some(row =>
+      String(row.client_request_id) === requestId
+    )) {
+      throw _apiError('IDEMPOTENCY_KEY_CONFLICT', 'معرف العملية مستخدم لفاتورة أخرى', false);
+    }
+
+    const users = _all('Users');
+    const creator = users.find(row =>
+      String(row.user_id) === creatorId &&
+      _normalizeRole(row.role) === creatorRole &&
+      _isActiveStatus_(row.status)
+    );
+    if (!creator) {
+      throw _apiError('CREATOR_SETUP_REQUIRED', 'حساب منشئ الفاتورة غير فعال', false);
+    }
+    const productRows = _all('Products');
+    const productMap = {};
+    productRows.forEach(row => productMap[String(row.code)] = row);
+    const seen = {};
+    let subtotal = 0;
+    const preparedItems = [];
+    items.forEach(item => {
+      const code = String(item.code || '').trim();
+      const quantity = Number(item.quantity);
+      const unitPrice = Number(item.unit_price);
+      if (!code || seen[code] || !Number.isInteger(quantity) || quantity <= 0 ||
+          !Number.isFinite(unitPrice) || unitPrice < 0) {
+        throw _apiError(
+          'INVALID_SALES_ITEM',
+          'كل مادة يجب أن تكون فريدة وبكمية موجبة وسعر غير سالب',
+          false
+        );
+      }
+      seen[code] = true;
+      const product = productMap[code];
+      if (!product) throw _apiError('PRODUCT_NOT_FOUND', 'المادة غير موجودة: ' + code, false);
+      const productCurrency = String(
+        product.currency || _salesProperty_('DEFAULT_PRODUCT_CURRENCY') || ''
+      ).toUpperCase();
+      if (productCurrency !== 'USD') {
+        throw _apiError(
+          'PRODUCT_CURRENCY_MISMATCH',
+          'عملة سعر المادة ' + (product.name || code) + ' ليست USD',
+          false
+        );
+      }
+      const available = Number(product.quantity || 0);
+      if (!Number.isFinite(available)) {
+        throw _apiError('INVALID_CENTRAL_STOCK', 'رصيد المخزون العام غير صالح للمادة ' + code, false);
+      }
+      const lineTotal = _roundSalesAmount_(quantity * unitPrice, 'USD');
+      subtotal += lineTotal;
+      preparedItems.push({
+        code: code,
+        name: String(product.name || code),
+        unit: String(item.unit || product.unit_1 || ''),
+        quantity: quantity,
+        unit_price: _roundSalesAmount_(unitPrice, 'USD'),
+        line_total: lineTotal,
+        note: String(item.note || ''),
+        available: available,
+      });
+    });
+    subtotal = _roundSalesAmount_(subtotal, 'USD');
+    const discount = _roundSalesAmount_(discountInput, 'USD');
+    if (discount > subtotal) {
+      throw _apiError('INVALID_DISCOUNT', 'الحسم لا يجوز أن يتجاوز مجموع الفاتورة', false);
+    }
+    const netTotal = _roundSalesAmount_(subtotal - discount, 'USD');
+    const settlement = _completeSalesPaymentRates_(received, refunded, {
+      settle_full: body.settle_full === true || String(body.settle_full) === 'true',
+      net_total: netTotal,
+    });
+    const balanceDue = _roundSalesAmount_(netTotal - settlement.net_paid_usd, 'USD');
+    const selectedCustomerId = String(body.customer_id || '').trim();
+    const isWalkIn = !selectedCustomerId || selectedCustomerId === 'CUS-SHOP';
+    const customerId = isWalkIn ? _ensureShopCustomer_() : selectedCustomerId;
+    const customer = _all('Customers').find(row =>
+      String(row.customer_id) === customerId &&
+      !['inactive', 'deleted'].includes(String(row.status || '').toLowerCase())
+    );
+    if (!customer) {
+      throw _apiError('CUSTOMER_NOT_FOUND', 'الزبون المحدد غير موجود أو غير فعال', false);
+    }
+    if (balanceDue > 0.005 && isWalkIn) {
+      throw _apiError(
+        'CUSTOMER_REQUIRED_FOR_DEBT',
+        'يوجد مبلغ متبقٍ؛ اختر زبونًا محددًا لتسجيل الدين بدل «زبائن محل»',
+        false
+      );
+    }
+    if (balanceDue < -0.005 &&
+        (isWalkIn || body.confirm_customer_credit !== true)) {
+      throw _apiError(
+        'CUSTOMER_CREDIT_CONFIRMATION_REQUIRED',
+        'المقبوض الصافي يتجاوز الفاتورة؛ سجّل الباقي المعاد أو أكد الزيادة كرصيد دائن لزبون محدد',
+        false
+      );
+    }
+
+    _requireColumns_('Products', ['code', 'quantity']);
+    _requireColumns_('Sales_Invoices', [
+      'invoice_number', 'created_by', 'created_by_role', 'stock_source',
+      'financial_status', 'balance_due_usd',
+    ]);
+    _requireColumns_('Payments', ['receipt_id', 'invoice_equivalent']);
+    const createdAt = new Date();
+    const now = createdAt.toISOString();
+    const invoiceNumber = _generateSalesInvoiceNumber_(
+      _all('Sales_Invoices'),
+      createdAt
+    );
+    const financialStatus = balanceDue <= 0.005
+      ? 'paid' : settlement.net_paid_usd > 0 ? 'partial' : 'unpaid';
+    const invoice = {
+      invoice_id: invoiceId,
+      invoice_number: invoiceNumber,
+      created_by: creatorId,
+      created_by_role: creatorRole,
+      customer_id: customerId,
+      customer_name: String(customer.full_name || 'زبائن محل'),
+      buyer_name: String(body.buyer_name || '').trim(),
+      buyer_phone: String(body.buyer_phone || '').trim(),
+      seller_id: creatorRole === 'salesperson' ? creatorId : '',
+      invoice_date: now,
+      created_at: now,
+      updated_at: '',
+      modified_by: '',
+      revision: 1,
+      status: 'posted',
+      stock_source: 'central',
+      currency: 'USD',
+      subtotal: subtotal,
+      discount: discount,
+      net_total: netTotal,
+      amount_received: settlement.total_received_usd,
+      payment_currency: 'USD',
+      payment_method: 'mixed',
+      rate_syp_per_usd: '',
+      equivalent_received: settlement.total_received_usd,
+      change_amount: settlement.total_refunded_usd,
+      net_received: settlement.net_paid_usd,
+      total_received_usd: settlement.total_received_usd,
+      total_refunded_usd: settlement.total_refunded_usd,
+      net_paid_usd: settlement.net_paid_usd,
+      balance_due_usd: balanceDue,
+      financial_status: financialStatus,
+      payment_detail_version: 2,
+      notes: String(body.notes || '').trim(),
+      payment_reference: '',
+      cash_box_id: '',
+      client_request_id: requestId,
+    };
+
+    preparedItems.forEach(item => {
+      stockChanges.push({ code: item.code, before: item.available });
+      _setProductStockQuantity_(item.code, item.available - item.quantity);
+    });
+    _add('Sales_Invoices', invoice);
+    invoiceAdded = true;
+    itemsAdded = true;
+    preparedItems.forEach(item => {
+      _add('Sales_Invoice_Items', {
+        item_id: 'SII-' + Utilities.getUuid().replace(/-/g, '').slice(0, 16),
+        invoice_id: invoiceId,
+        code: item.code,
+        name_snapshot: item.name,
+        unit: item.unit,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        line_total: item.line_total,
+        note: item.note,
+        stock_source: 'central',
+      });
+    });
+    movementsAdded = true;
+    preparedItems.forEach(item => {
+      _add('Inventory_Movements', {
+        movement_id: 'MV-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12),
+        code: item.code,
+        type: 'sale',
+        quantity: item.quantity,
+        note: 'فاتورة مبيع ' + invoiceId,
+        created_by: user.user_id,
+        created_at: now,
+        reference_id: invoiceId,
+        is_correction: 'false',
+      });
+    });
+    const paymentInput = {
+      customer_id: customerId,
+      invoice_id: invoiceId,
+      receipt_id: '',
+      payment_date: invoice.invoice_date,
+      created_at: now,
+      user_id: user.user_id,
+      client_request_id: requestPrefix,
+    };
+    received.forEach((line, index) => {
+      const beforeKey = line.box + ':' + line.currency;
+      if (!Object.prototype.hasOwnProperty.call(boxSnapshots, beforeKey)) {
+        boxSnapshots[beforeKey] = _cashBoxSnapshot_(line.box, line.currency);
+      }
+      boxKeysChanged.push(beforeKey);
+      const payment = _writeSalesPayment_(line, Object.assign({}, paymentInput, {
+        action_type: 'receive',
+        client_request_id: requestPrefix + ':receive:' + index,
+      }));
+      paymentIds.push(payment.payment_id);
+    });
+    refunded.forEach((line, index) => {
+      const beforeKey = line.box + ':' + line.currency;
+      if (!Object.prototype.hasOwnProperty.call(boxSnapshots, beforeKey)) {
+        boxSnapshots[beforeKey] = _cashBoxSnapshot_(line.box, line.currency);
+      }
+      boxKeysChanged.push(beforeKey);
+      const payment = _writeSalesPayment_(line, Object.assign({}, paymentInput, {
+        action_type: 'pay',
+        client_request_id: requestPrefix + ':refund:' + index,
+      }));
+      paymentIds.push(payment.payment_id);
+    });
+    _add('Sales_Invoice_Audit', {
+      audit_id: Utilities.getUuid(),
+      invoice_id: invoiceId,
+      user_id: user.user_id,
+      created_at: now,
+      action: 'CREATE_POSTED_SALES_INVOICE',
+      reason: '',
+      before_json: '',
+      after_json: JSON.stringify({
+        invoice: invoice,
+        received_lines: received,
+        refunded_lines: refunded,
+      }),
+    });
+    auditAdded = true;
+    return {
+      success: true,
+      invoice_id: invoiceId,
+      invoice_number: invoiceNumber,
+      invoice: invoice,
+      received_lines: received,
+      refunded_lines: refunded,
+      total_received_usd: settlement.total_received_usd,
+      total_refunded_usd: settlement.total_refunded_usd,
+      net_paid_usd: settlement.net_paid_usd,
+      balance_due_usd: balanceDue,
+      financial_status: financialStatus,
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    stockChanges.forEach(change => {
+      try {
+        _setProductStockQuantity_(change.code, change.before);
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
+    });
+    Array.from(new Set(boxKeysChanged)).reverse().forEach(key => {
+      const parts = key.split(':');
+      try {
+        _restoreBoxBalance_(parts[0], parts[1], boxSnapshots[key]);
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
+    });
+    paymentIds.forEach(paymentId => {
+      try {
+        _deleteRowsByField_('Payments', 'payment_id', paymentId);
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
+    });
+    if (invoiceAdded) {
+      try { _deleteRowsByField_('Sales_Invoices', 'invoice_id', invoiceId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (itemsAdded) {
+      try { _deleteRowsByField_('Sales_Invoice_Items', 'invoice_id', invoiceId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (movementsAdded) {
+      try { _deleteRowsByField_('Inventory_Movements', 'reference_id', invoiceId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (auditAdded) {
+      try { _deleteRowsByField_('Sales_Invoice_Audit', 'invoice_id', invoiceId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (rollbackErrors.length) {
+      Logger.log('Sales invoice v2 rollback failed for ' + invoiceId + ': ' + rollbackErrors.join('; '));
+      throw _apiError(
+        'SALES_ROLLBACK_FAILED',
+        'تعذر التراجع الكامل عن الفاتورة؛ رقم العملية: ' + invoiceId + '، راجع سجل النظام',
         false
       );
     }
@@ -5060,6 +6112,202 @@ function _handleListSalesInvoices(body, user) {
 }
 
 function _handleVoidSalesInvoice(body, user) {
+  const requestedInvoice = _all('Sales_Invoices').find(row =>
+    String(row.invoice_id) === String(body.invoice_id || '').trim()
+  );
+  if (requestedInvoice && Number(requestedInvoice.payment_detail_version) >= 2) {
+    return _handleVoidSalesInvoiceV2(body, user);
+  }
+  return _handleVoidSalesInvoiceLegacy(body, user);
+}
+
+function _handleVoidSalesInvoiceV2(body, user) {
+  _needRole(user, ['admin', 'accountant']);
+  const invoiceId = String(body.invoice_id || '').trim();
+  const reason = String(body.reason || '').trim();
+  const requestId = String(body.client_request_id || '').trim();
+  if (!invoiceId || reason.length < 3 || requestId.length < 12) {
+    throw _apiError(
+      'INVALID_VOID_REQUEST',
+      'رقم الفاتورة وسبب الإلغاء ومعرف العملية مطلوبة',
+      false
+    );
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'جارٍ ترحيل عملية أخرى، حاول مجددًا', true);
+  }
+  const restoredStock = [];
+  const movementIds = [];
+  const releasedAllocationIds = [];
+  let invoiceBefore = null;
+  let invoiceUpdated = false;
+  let auditAdded = false;
+  let allocationAdded = false;
+  try {
+    const invoice = _all('Sales_Invoices').find(row =>
+      String(row.invoice_id) === invoiceId
+    );
+    if (!invoice) {
+      throw _apiError('INVOICE_NOT_FOUND', 'الفاتورة غير موجودة', false);
+    }
+    if (String(invoice.status) !== 'posted') {
+      if (String(invoice.status) === 'voided' &&
+          String(invoice.void_request_id || '') === requestId) {
+        return { success: true, invoice_id: invoiceId, duplicate: true };
+      }
+      throw _apiError('INVOICE_NOT_POSTED', 'لا يمكن إلغاء فاتورة غير مرحلة', false);
+    }
+    const items = _all('Sales_Invoice_Items').filter(row =>
+      String(row.invoice_id) === invoiceId
+    );
+    if (!items.length) {
+      throw _apiError('INVOICE_ITEMS_MISSING', 'تفاصيل الفاتورة غير موجودة', false);
+    }
+    if (String(invoice.stock_source || '') !== 'central') {
+      throw _apiError(
+        'LEGACY_INVOICE_REVIEW_REQUIRED',
+        'هذه فاتورة تاريخية بمصدر مخزون قديم؛ راجعها يدويًا قبل الإلغاء',
+        false
+      );
+    }
+    const allocations = _all('Sales_Invoice_Allocations').filter(row =>
+      String(row.invoice_id) === invoiceId && Number(row.amount_usd) > 0
+    );
+    if (allocations.length) {
+      _requireColumns_('Sales_Invoice_Allocations', [
+        'receipt_id', 'invoice_id', 'customer_id', 'amount_usd',
+      ]);
+    }
+    const now = _now();
+    items.forEach(item => {
+      const product = _all('Products').find(row =>
+        String(row.code) === String(item.code)
+      );
+      if (!product) {
+        throw _apiError('PRODUCT_NOT_FOUND', 'المادة غير موجودة: ' + item.code, false);
+      }
+      const before = Number(product.quantity || 0);
+      const quantity = Number(item.quantity);
+      if (!Number.isFinite(before) || !Number.isInteger(quantity) || quantity <= 0) {
+        throw _apiError('INVALID_CENTRAL_STOCK', 'بيانات مخزون الفاتورة غير صالحة', false);
+      }
+      restoredStock.push({ code: item.code, before: before });
+      _setProductStockQuantity_(item.code, before + quantity);
+      const movementId = 'MV-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12);
+      _add('Inventory_Movements', {
+        movement_id: movementId,
+        code: item.code,
+        type: 'sale_void',
+        quantity: quantity,
+        note: 'عكس فاتورة ' + invoiceId + ': ' + reason,
+        created_by: user.user_id,
+        created_at: now,
+        reference_id: invoiceId,
+        is_correction: 'true',
+      });
+      movementIds.push(movementId);
+    });
+    allocations.forEach(allocation => {
+      const release = {
+        allocation_id: 'AL-' + Utilities.getUuid().replace(/-/g, '').slice(0, 16),
+        receipt_id: allocation.receipt_id,
+        invoice_id: invoiceId,
+        customer_id: invoice.customer_id,
+        amount_usd: -Math.abs(Number(allocation.amount_usd)),
+        created_by: user.user_id,
+        created_at: now,
+        client_request_id: requestId + ':release:' + allocation.allocation_id,
+      };
+      _add('Sales_Invoice_Allocations', release);
+      releasedAllocationIds.push(release.allocation_id);
+    });
+    allocationAdded = allocations.length > 0;
+    invoiceBefore = Object.assign({}, invoice);
+    invoiceUpdated = _updateByField('Sales_Invoices', 'invoice_id', invoiceId, {
+      status: 'voided',
+      financial_status: 'voided',
+      updated_at: now,
+      modified_by: user.user_id,
+      revision: Number(invoice.revision || 0) + 1,
+      void_request_id: requestId,
+      void_reason: reason,
+    });
+    if (!invoiceUpdated) throw new Error('تعذر تحديث حالة الفاتورة');
+    _add('Sales_Invoice_Audit', {
+      audit_id: Utilities.getUuid(),
+      invoice_id: invoiceId,
+      user_id: user.user_id,
+      created_at: now,
+      action: 'VOID_SALES_INVOICE_KEEP_RECEIPTS_AS_CUSTOMER_CREDIT',
+      reason: reason,
+      before_json: JSON.stringify(invoiceBefore),
+      after_json: JSON.stringify({
+        status: 'voided',
+        cash_refunded: false,
+        stock_restored: true,
+        released_allocations: allocations.length,
+      }),
+    });
+    auditAdded = true;
+    return {
+      success: true,
+      invoice_id: invoiceId,
+      status: 'voided',
+      cash_refunded: false,
+      message: 'عُكس المخزون وأُلغيت تخصيصات السداد؛ بقيت المقبوضات رصيدًا دائنًا للزبون ولم يُسجل رد نقدي.',
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    restoredStock.reverse().forEach(change => {
+      try { _setProductStockQuantity_(change.code, change.before); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    });
+    if (movementIds.length) {
+      try {
+        movementIds.forEach(id =>
+          _deleteRowsByField_('Inventory_Movements', 'movement_id', id)
+        );
+      } catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (allocationAdded) {
+      releasedAllocationIds.forEach(id => {
+        try {
+          _deleteRowsByField_('Sales_Invoice_Allocations', 'allocation_id', id);
+        } catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+      });
+    }
+    if (invoiceUpdated && invoiceBefore) {
+      try {
+        _updateByField('Sales_Invoices', 'invoice_id', invoiceId, invoiceBefore);
+      } catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (auditAdded) {
+      try {
+        const audits = _all('Sales_Invoice_Audit').filter(row =>
+          String(row.invoice_id) === invoiceId &&
+          String(row.action) === 'VOID_SALES_INVOICE_KEEP_RECEIPTS_AS_CUSTOMER_CREDIT'
+        );
+        audits.forEach(row =>
+          _deleteRowsByField_('Sales_Invoice_Audit', 'audit_id', row.audit_id)
+        );
+      } catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (rollbackErrors.length) {
+      Logger.log('Sales invoice void v2 rollback failed for ' + invoiceId + ': ' + rollbackErrors.join('; '));
+      throw _apiError(
+        'INVOICE_VOID_ROLLBACK_FAILED',
+        'تعذر التراجع الكامل عن إلغاء الفاتورة؛ رقم العملية: ' + invoiceId,
+        false
+      );
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _handleVoidSalesInvoiceLegacy(body, user) {
   _needRole(user, ['admin', 'accountant']);
   const invoiceId = String(body.invoice_id || '').trim();
   const reason = String(body.reason || '').trim();
@@ -5117,32 +6365,48 @@ function _handleVoidSalesInvoice(body, user) {
     const stockId = String(account && account.sales_stock_id || invoice.seller_id);
     const now = _now();
     items.forEach(item => {
-      const current = _all('Sales_Stock').find(row =>
-        String(row.user_id) === stockId && String(row.code) === String(item.code)
-      );
-      if (!current) {
-        throw _apiError(
-          'SELLER_STOCK_ROW_MISSING',
-          'تعذر عكس مخزون المادة ' + item.code,
-          false
+      if (String(invoice.stock_source || '') === 'central') {
+        const product = _all('Products').find(row =>
+          String(row.code) === String(item.code)
         );
+        if (!product) {
+          throw _apiError('PRODUCT_NOT_FOUND', 'المادة غير موجودة: ' + item.code, false);
+        }
+        const before = Number(product.quantity || 0);
+        const quantity = Number(item.quantity);
+        if (!Number.isFinite(before) || !Number.isFinite(quantity) || quantity <= 0) {
+          throw _apiError('INVALID_CENTRAL_STOCK', 'بيانات مخزون المادة غير صالحة', false);
+        }
+        restoredStock.push({
+          source: 'central',
+          code: item.code,
+          before: before,
+        });
+        _setProductStockQuantity_(item.code, before + quantity);
+      } else {
+        const current = _all('Sales_Stock').find(row =>
+          String(row.user_id) === stockId && String(row.code) === String(item.code)
+        );
+        if (!current) {
+          throw _apiError(
+            'SELLER_STOCK_ROW_MISSING',
+            'تعذر عكس مخزون المندوب التاريخي للمادة ' + item.code,
+            false
+          );
+        }
+        const before = Number(current.quantity || 0);
+        const quantity = Number(item.quantity);
+        if (!Number.isFinite(before) || !Number.isFinite(quantity) || quantity <= 0) {
+          throw _apiError('INVALID_SELLER_STOCK', 'رصيد المندوب التاريخي غير صالح', false);
+        }
+        restoredStock.push({
+          source: 'legacy_seller',
+          stockId: stockId,
+          code: item.code,
+          before: before,
+        });
+        _setSalesStockQuantity_(stockId, item.code, before + quantity);
       }
-      const before = Number(current.quantity || 0);
-      if (!Number.isFinite(before)) {
-        throw _apiError('INVALID_SELLER_STOCK', 'رصيد المندوب غير صالح', false);
-      }
-      const sheet = _ss().getSheetByName('Sales_Stock');
-      const values = sheet.getDataRange().getValues();
-      const headers = values[0].map(String);
-      const rowIndex = values.findIndex((row, index) =>
-        index > 0 &&
-        String(row[headers.indexOf('user_id')]) === stockId &&
-        String(row[headers.indexOf('code')]) === String(item.code)
-      );
-      if (rowIndex < 1) throw new Error('تعذر تحديد رصيد المادة ' + item.code);
-      sheet.getRange(rowIndex + 1, headers.indexOf('quantity') + 1)
-        .setValue(before + Number(item.quantity));
-      restoredStock.push({ stockId: stockId, code: item.code, before: before });
       const movementId = 'MV-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12);
       _add('Inventory_Movements', {
         movement_id: movementId,
@@ -5208,19 +6472,12 @@ function _handleVoidSalesInvoice(body, user) {
     return { success: true, invoice_id: invoiceId, status: 'voided' };
   } catch (error) {
     const rollbackErrors = [];
-    restoredStock.forEach(change => {
+    [...restoredStock].reverse().forEach(change => {
       try {
-        const sheet = _ss().getSheetByName('Sales_Stock');
-        const values = sheet.getDataRange().getValues();
-        const headers = values[0].map(String);
-        const rowIndex = values.findIndex((row, index) =>
-          index > 0 &&
-          String(row[headers.indexOf('user_id')]) === change.stockId &&
-          String(row[headers.indexOf('code')]) === String(change.code)
-        );
-        if (rowIndex > 0) {
-          sheet.getRange(rowIndex + 1, headers.indexOf('quantity') + 1)
-            .setValue(change.before);
+        if (change.source === 'central') {
+          _setProductStockQuantity_(change.code, change.before);
+        } else {
+          _setSalesStockQuantity_(change.stockId, change.code, change.before);
         }
       } catch (rollbackError) {
         rollbackErrors.push(String(rollbackError));
@@ -5271,7 +6528,7 @@ function _handleVoidSalesInvoice(body, user) {
 }
 
 function _handleSalesSummary(body, user) {
-  _needRole(user, ['admin', 'accountant', 'salesperson']);
+  _needRole(user, ['admin', 'accountant', 'manager', 'salesperson']);
   const role = _normalizeRole(user.role);
   const from = body.from_date ? Date.parse(body.from_date) : -Infinity;
   const to = body.to_date ? Date.parse(body.to_date) : Infinity;
@@ -5282,10 +6539,13 @@ function _handleSalesSummary(body, user) {
     const date = Date.parse(invoice.invoice_date || invoice.created_at || '');
     return invoice.status === 'posted' &&
       (role !== 'salesperson' || String(invoice.seller_id) === String(user.user_id)) &&
+      (!body.seller_id || String(invoice.seller_id) === String(body.seller_id)) &&
+      (!body.customer_id || String(invoice.customer_id) === String(body.customer_id)) &&
       Number.isFinite(date) && date >= from && date <= to;
   });
   const totals = {};
   const receipts = {};
+  const financial = { paid_usd: 0, outstanding_usd: 0, partial_count: 0, unpaid_count: 0 };
   invoices.forEach(invoice => {
     const currency = String(invoice.currency || 'USD');
     totals[currency] = (totals[currency] || 0) + Number(invoice.net_total || 0);
@@ -5294,12 +6554,836 @@ function _handleSalesSummary(body, user) {
     receipts[key] = (receipts[key] || 0) + Number(
       invoice.net_received ?? invoice.amount_received ?? 0
     );
+    const paymentSummary = _salesInvoicePaymentSummary_(invoice);
+    financial.paid_usd += paymentSummary.total_paid_usd;
+    financial.outstanding_usd += Math.max(0, paymentSummary.balance_due_usd);
+    if (paymentSummary.financial_status === 'partial') financial.partial_count++;
+    if (paymentSummary.financial_status === 'unpaid') financial.unpaid_count++;
   });
   return {
     invoices_count: invoices.length,
     sales_by_invoice_currency: totals,
     receipts_by_payment_currency_and_method: receipts,
+    financial_summary_usd: financial,
   };
+}
+
+function _paymentEquivalentUsd_(payment) {
+  if (payment.invoice_equivalent !== '' &&
+      payment.invoice_equivalent !== null &&
+      payment.invoice_equivalent !== undefined) {
+    const saved = Number(payment.invoice_equivalent);
+    if (Number.isFinite(saved)) return saved;
+  }
+  const amount = Number(payment.amount);
+  if (!Number.isFinite(amount)) return null;
+  const currency = String(payment.currency || '').toUpperCase();
+  if (currency === 'USD') return amount;
+  const rate = Number(payment.exchange_rate);
+  if (currency === 'SYP' && Number.isFinite(rate) && rate > 0) {
+    return _roundSalesAmount_(amount / rate, 'USD');
+  }
+  return null;
+}
+
+function _salesInvoicePaymentSummary_(invoice) {
+  const payments = _all('Payments').filter(payment =>
+    String(payment.order_id || '') === String(invoice.invoice_id)
+  );
+  const allocations = _all('Sales_Invoice_Allocations').filter(allocation =>
+    String(allocation.invoice_id) === String(invoice.invoice_id)
+  );
+  let netPaid = 0;
+  let needsReview = false;
+  payments.forEach(payment => {
+    const equivalent = _paymentEquivalentUsd_(payment);
+    if (equivalent === null) {
+      needsReview = true;
+      return;
+    }
+    netPaid += String(payment.action_type || 'receive') === 'pay'
+      ? -equivalent : equivalent;
+  });
+  allocations.forEach(allocation => {
+    const amount = Number(allocation.amount_usd);
+    if (Number.isFinite(amount)) netPaid += amount;
+    else needsReview = true;
+  });
+  if (!payments.length && Number.isFinite(Number(invoice.net_received))) {
+    netPaid = Number(invoice.net_received);
+  }
+  const netTotal = Number(invoice.net_total || 0);
+  const balance = _roundSalesAmount_(netTotal - netPaid, 'USD');
+  let financialStatus = balance <= 0.005 ? 'paid' : netPaid > 0 ? 'partial' : 'unpaid';
+  if (String(invoice.status) === 'voided') financialStatus = 'voided';
+  return {
+    total_paid_usd: _roundSalesAmount_(netPaid, 'USD'),
+    balance_due_usd: balance,
+    financial_status: financialStatus,
+    needs_financial_review: needsReview,
+  };
+}
+
+function _handleListSalesInvoicesV2(body, user) {
+  _needRole(user, ['admin', 'accountant', 'manager', 'salesperson']);
+  const role = _normalizeRole(user.role);
+  const query = String(body.query || '').trim().toLowerCase();
+  const from = body.from_date ? Date.parse(body.from_date) : -Infinity;
+  const to = body.to_date ? Date.parse(body.to_date) : Infinity;
+  if (isNaN(from) || isNaN(to) || from > to) {
+    throw _apiError('INVALID_DATE_RANGE', 'نطاق التاريخ غير صالح', false);
+  }
+  const customers = _all('Customers');
+  const users = _all('Users');
+  let invoices = _all('Sales_Invoices').filter(invoice =>
+    role !== 'salesperson' || String(invoice.seller_id) === String(user.user_id)
+  );
+  invoices = invoices.filter(invoice => {
+    const date = Date.parse(invoice.invoice_date || invoice.created_at || '');
+    const customer = customers.find(row =>
+      String(row.customer_id) === String(invoice.customer_id)
+    );
+    const seller = users.find(row =>
+      String(row.user_id) === String(invoice.seller_id)
+    );
+    const summary = _salesInvoicePaymentSummary_(invoice);
+    invoice._calculated_financial = summary;
+    const paymentMatches = !body.payment_method ||
+      _all('Payments').some(payment =>
+        String(payment.order_id || '') === String(invoice.invoice_id) &&
+        String(payment.payment_method || payment.method || '') === String(body.payment_method)
+      );
+    return (!body.status || String(invoice.status) === String(body.status)) &&
+      (!body.financial_status ||
+        summary.financial_status === String(body.financial_status)) &&
+      (!body.customer_id ||
+        String(invoice.customer_id) === String(body.customer_id)) &&
+      (!body.seller_id || String(invoice.seller_id) === String(body.seller_id)) &&
+      paymentMatches &&
+      Number.isFinite(date) && date >= from && date <= to &&
+      (!query || [
+        invoice.invoice_number,
+        invoice.invoice_id,
+        invoice.customer_name,
+        customer && customer.full_name,
+        invoice.buyer_name,
+        invoice.buyer_phone,
+        invoice.payment_method,
+        invoice.status,
+        seller && seller.full_name,
+      ].join(' ').toLowerCase().includes(query));
+  }).sort((a, b) =>
+    Date.parse(b.invoice_date || b.created_at) -
+    Date.parse(a.invoice_date || a.created_at)
+  );
+  return {
+    invoices: invoices.map(invoice => {
+      const summary = invoice._calculated_financial ||
+        _salesInvoicePaymentSummary_(invoice);
+      delete invoice._calculated_financial;
+      const customer = customers.find(row =>
+        String(row.customer_id) === String(invoice.customer_id)
+      );
+      const seller = users.find(row =>
+        String(row.user_id) === String(invoice.seller_id)
+      );
+      const creator = users.find(row =>
+        String(row.user_id) === String(invoice.created_by || invoice.seller_id)
+      );
+      return Object.assign({}, invoice, summary, {
+        customer_name: customer ? customer.full_name : invoice.customer_name,
+        seller_name: seller ? seller.full_name : String(invoice.seller_id || ''),
+        creator_name: creator
+          ? creator.full_name
+          : String(invoice.created_by || invoice.seller_id || ''),
+        creator_role: _normalizeRole(
+          invoice.created_by_role || (creator && creator.role) || ''
+        ),
+        items: _all('Sales_Invoice_Items').filter(item =>
+          String(item.invoice_id) === String(invoice.invoice_id)
+        ),
+        payments: _all('Payments').filter(payment =>
+          String(payment.order_id || '') === String(invoice.invoice_id)
+        ),
+      });
+    }),
+  };
+}
+
+function _handleCreateCustomerReceipt(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  const requestId = String(body.client_request_id || '').trim();
+  const customerId = String(body.customer_id || '').trim();
+  if (requestId.length < 12 || requestId.length > 100 || !customerId) {
+    throw _apiError('INVALID_RECEIPT', 'معرف العملية والزبون مطلوبان', false);
+  }
+  const lines = _normalizeSalesPaymentLines_(body.received_lines, {
+    label: 'القبض',
+  });
+  if (!lines.length) {
+    throw _apiError('INVALID_RECEIPT', 'أضف مبلغًا واحدًا على الأقل إلى سند القبض', false);
+  }
+  const totalUsd = _roundSalesAmount_(
+    lines.reduce((sum, line) => sum + line.equivalent_usd, 0),
+    'USD'
+  );
+  const allocations = Array.isArray(body.allocations) ? body.allocations : [];
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'جارٍ ترحيل عملية أخرى، حاول مجددًا', true);
+  }
+  const receiptId = 'RC-' + Utilities.getUuid().replace(/-/g, '').toUpperCase();
+  const paymentIds = [];
+  const boxSnapshots = {};
+  const changedBoxes = [];
+  let allocationRowsAdded = false;
+  let auditAdded = false;
+  try {
+    const existingReceipt = _all('Payments').find(payment =>
+      String(payment.receipt_id || '') === requestId ||
+      String(payment.client_request_id || '').startsWith(requestId + ':')
+    );
+    if (existingReceipt) {
+      if (String(existingReceipt.customer_id) !== customerId) {
+        throw _apiError('IDEMPOTENCY_KEY_CONFLICT', 'معرف سند القبض مستخدم لزبون آخر', false);
+      }
+      return {
+        success: true,
+        receipt_id: existingReceipt.receipt_id || existingReceipt.payment_id,
+        duplicate: true,
+      };
+    }
+    const customer = _all('Customers').find(row =>
+      String(row.customer_id) === customerId &&
+      !['inactive', 'deleted'].includes(String(row.status || '').toLowerCase())
+    );
+    if (!customer || customerId === 'CUS-SHOP') {
+      throw _apiError(
+        'CUSTOMER_REQUIRED',
+        'سند القبض المستقل يتطلب سجل زبون محددًا، ولا يسجل على «زبائن محل»',
+        false
+      );
+    }
+    _requireColumns_('Payments', ['receipt_id', 'invoice_equivalent']);
+    _requireColumns_('Sales_Invoice_Allocations', [
+      'receipt_id', 'invoice_id', 'customer_id', 'amount_usd',
+    ]);
+    let allocationTotal = 0;
+    const seenInvoices = {};
+    const validAllocations = allocations.map(row => {
+      const invoiceId = String(row.invoice_id || '').trim();
+      const amountUsd = _roundSalesAmount_(
+        _salesPositiveNumber_(row.amount_usd, 'مبلغ التخصيص بالدولار'),
+        'USD'
+      );
+      if (!invoiceId || seenInvoices[invoiceId]) {
+        throw _apiError('INVALID_ALLOCATION', 'الفاتورة مفقودة أو مكررة في التخصيص', false);
+      }
+      seenInvoices[invoiceId] = true;
+      const invoice = _all('Sales_Invoices').find(entry =>
+        String(entry.invoice_id) === invoiceId &&
+        String(entry.customer_id) === customerId &&
+        String(entry.status) === 'posted' &&
+        String(entry.currency || '').toUpperCase() === 'USD'
+      );
+      if (!invoice) {
+        throw _apiError('INVALID_ALLOCATION', 'الفاتورة المحددة لا تخص هذا الزبون أو ليست قابلة للتخصيص', false);
+      }
+      const summary = _salesInvoicePaymentSummary_(invoice);
+      if (summary.needs_financial_review ||
+          amountUsd - summary.balance_due_usd > 0.005) {
+        throw _apiError('ALLOCATION_EXCEEDS_BALANCE', 'التخصيص يتجاوز الرصيد المستحق على الفاتورة', false);
+      }
+      allocationTotal += amountUsd;
+      return { invoice_id: invoiceId, amount_usd: amountUsd };
+    });
+    if (allocationTotal - totalUsd > 0.005) {
+      throw _apiError('ALLOCATION_EXCEEDS_RECEIPT', 'مجموع التخصيص يتجاوز قيمة سند القبض', false);
+    }
+    const unapplied = _roundSalesAmount_(totalUsd - allocationTotal, 'USD');
+    if (unapplied > 0.005 && body.confirm_customer_credit !== true) {
+      throw _apiError(
+        'CUSTOMER_CREDIT_CONFIRMATION_REQUIRED',
+        'يوجد مبلغ غير مخصص؛ أكد تسجيله رصيدًا دائنًا للزبون',
+        false
+      );
+    }
+    const now = _now();
+    const paymentRecords = [];
+    lines.forEach((line, index) => {
+      const key = line.box + ':' + line.currency;
+      if (!Object.prototype.hasOwnProperty.call(boxSnapshots, key)) {
+        boxSnapshots[key] = _cashBoxSnapshot_(line.box, line.currency);
+      }
+      changedBoxes.push(key);
+      const payment = _writeSalesPayment_(line, {
+        customer_id: customerId,
+        invoice_id: '',
+        receipt_id: receiptId,
+        payment_date: String(body.payment_date || now),
+        created_at: now,
+        user_id: user.user_id,
+        action_type: 'receive',
+        note: String(body.note || '').trim(),
+        client_request_id: requestId + ':' + index,
+      });
+      paymentIds.push(payment.payment_id);
+      paymentRecords.push(payment);
+    });
+    let lineIndex = 0;
+    let remainingOnLine = Number(paymentRecords[0]?.invoice_equivalent || 0);
+    validAllocations.forEach(allocation => {
+      let allocationRemaining = allocation.amount_usd;
+      while (allocationRemaining > 0.005) {
+        const payment = paymentRecords[lineIndex];
+        if (!payment) {
+          throw _apiError('ALLOCATION_EXCEEDS_RECEIPT', 'تعذر ربط التخصيص بحركات السند', false);
+        }
+        const part = Math.min(allocationRemaining, remainingOnLine);
+        _add('Sales_Invoice_Allocations', {
+          allocation_id: 'AL-' + Utilities.getUuid().replace(/-/g, '').slice(0, 16),
+          receipt_id: receiptId,
+          invoice_id: allocation.invoice_id,
+          customer_id: customerId,
+          amount_usd: _roundSalesAmount_(part, 'USD'),
+          created_by: user.user_id,
+          created_at: now,
+          client_request_id: requestId,
+        });
+        allocationRowsAdded = true;
+        allocationRemaining = _roundSalesAmount_(allocationRemaining - part, 'USD');
+        remainingOnLine = _roundSalesAmount_(remainingOnLine - part, 'USD');
+        if (remainingOnLine <= 0.005) {
+          lineIndex++;
+          remainingOnLine = lineIndex < paymentRecords.length
+            ? Number(paymentRecords[lineIndex].invoice_equivalent || 0) : 0;
+        }
+      }
+    });
+    _add('Audit_Log', {
+      log_id: Utilities.getUuid(),
+      user_id: user.user_id,
+      action: 'CREATE_CUSTOMER_RECEIPT',
+      entity: 'Payments',
+      entity_id: receiptId,
+      details: JSON.stringify({
+        customer_id: customerId,
+        total_usd: totalUsd,
+        unapplied_credit_usd: unapplied,
+        request_id: requestId,
+      }),
+      created_at: now,
+    });
+    auditAdded = true;
+    return {
+      success: true,
+      receipt_id: receiptId,
+      payment_ids: paymentIds,
+      total_usd: totalUsd,
+      unapplied_credit_usd: unapplied,
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    Array.from(new Set(changedBoxes)).reverse().forEach(key => {
+      const parts = key.split(':');
+      try { _restoreBoxBalance_(parts[0], parts[1], boxSnapshots[key]); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    });
+    paymentIds.forEach(paymentId => {
+      try { _deleteRowsByField_('Payments', 'payment_id', paymentId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    });
+    if (allocationRowsAdded) {
+      try { _deleteRowsByField_('Sales_Invoice_Allocations', 'receipt_id', receiptId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (auditAdded) {
+      try { _deleteRowsByField_('Audit_Log', 'entity_id', receiptId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (rollbackErrors.length) {
+      Logger.log('Customer receipt rollback failed for ' + receiptId + ': ' + rollbackErrors.join('; '));
+      throw _apiError('RECEIPT_ROLLBACK_FAILED', 'تعذر التراجع الكامل عن سند القبض؛ رقم السند: ' + receiptId, false);
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _handleCollectSalesInvoice(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant', 'salesperson']);
+  const invoiceId = String(body.invoice_id || '').trim();
+  const requestId = String(body.client_request_id || '').trim();
+  if (!invoiceId || requestId.length < 12 || requestId.length > 100) {
+    throw _apiError(
+      'INVALID_INVOICE_COLLECTION',
+      'رقم الفاتورة ومعرف عملية التحصيل مطلوبان',
+      false
+    );
+  }
+  const lines = _normalizeSalesPaymentLines_(body.received_lines, {
+    label: 'التحصيل',
+  });
+  if (!lines.length) {
+    throw _apiError('INVALID_INVOICE_COLLECTION', 'أضف مبلغًا واحدًا على الأقل', false);
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'جارٍ ترحيل عملية أخرى، حاول مجددًا', true);
+  }
+  const paymentIds = [];
+  const boxSnapshots = {};
+  const changedBoxes = [];
+  let invoiceBefore = null;
+  let invoiceUpdated = false;
+  let auditAdded = false;
+  let auditId = '';
+  try {
+    const duplicate = _all('Payments').find(payment =>
+      String(payment.client_request_id || '').startsWith(requestId + ':collect:')
+    );
+    if (duplicate) {
+      if (String(duplicate.order_id || '') !== invoiceId) {
+        throw _apiError(
+          'IDEMPOTENCY_KEY_CONFLICT',
+          'معرف العملية مستخدم لتحصيل فاتورة أخرى',
+          false
+        );
+      }
+      const current = _all('Sales_Invoices').find(row =>
+        String(row.invoice_id) === invoiceId
+      );
+      return {
+        success: true,
+        invoice_id: invoiceId,
+        duplicate: true,
+        ...(current ? _salesInvoicePaymentSummary_(current) : {}),
+      };
+    }
+
+    const invoice = _all('Sales_Invoices').find(row =>
+      String(row.invoice_id) === invoiceId
+    );
+    if (!invoice || String(invoice.status) !== 'posted' ||
+        String(invoice.currency || '').toUpperCase() !== 'USD') {
+      throw _apiError(
+        'INVOICE_NOT_COLLECTIBLE',
+        'الفاتورة غير موجودة أو غير مرحلة أو عملتها تحتاج مراجعة',
+        false
+      );
+    }
+    if (_normalizeRole(user.role) === 'salesperson' &&
+        String(invoice.seller_id) !== String(user.user_id)) {
+      throw _apiError(
+        'ROLE_NOT_ALLOWED',
+        'يمكن للمندوب تسجيل التحصيل على فواتيره فقط',
+        false
+      );
+    }
+    const customer = _all('Customers').find(row =>
+      String(row.customer_id) === String(invoice.customer_id) &&
+      !['inactive', 'deleted'].includes(String(row.status || '').toLowerCase())
+    );
+    if (!customer) {
+      throw _apiError('CUSTOMER_NOT_FOUND', 'سجل زبون الفاتورة غير موجود أو غير فعال', false);
+    }
+    const beforeSummary = _salesInvoicePaymentSummary_(invoice);
+    if (beforeSummary.needs_financial_review) {
+      throw _apiError(
+        'FINANCIAL_REVIEW_REQUIRED',
+        'تحتوي الفاتورة على حركات تاريخية تحتاج مراجعة قبل تسجيل تحصيل جديد',
+        false
+      );
+    }
+    const collectedUsd = _roundSalesAmount_(
+      lines.reduce((sum, line) => sum + line.equivalent_usd, 0),
+      'USD'
+    );
+    const newBalance = _roundSalesAmount_(
+      beforeSummary.balance_due_usd - collectedUsd,
+      'USD'
+    );
+    if (newBalance < -0.005 &&
+        (String(invoice.customer_id) === 'CUS-SHOP' ||
+         body.confirm_customer_credit !== true)) {
+      throw _apiError(
+        'CUSTOMER_CREDIT_CONFIRMATION_REQUIRED',
+        'يتجاوز التحصيل المتبقي؛ أكد رصيدًا دائنًا لزبون محدد أو عدل المبلغ',
+        false
+      );
+    }
+    _requireColumns_('Payments', ['receipt_id', 'invoice_equivalent']);
+    _requireColumns_('Sales_Invoices', [
+      'financial_status', 'balance_due_usd', 'total_received_usd',
+      'total_refunded_usd', 'net_paid_usd',
+    ]);
+
+    const now = _now();
+    lines.forEach((line, index) => {
+      const key = line.box + ':' + line.currency;
+      if (!Object.prototype.hasOwnProperty.call(boxSnapshots, key)) {
+        boxSnapshots[key] = _cashBoxSnapshot_(line.box, line.currency);
+      }
+      changedBoxes.push(key);
+      const payment = _writeSalesPayment_(line, {
+        customer_id: invoice.customer_id,
+        invoice_id: invoiceId,
+        receipt_id: '',
+        payment_date: String(body.payment_date || now),
+        created_at: now,
+        user_id: user.user_id,
+        action_type: 'receive',
+        note: String(body.note || '').trim(),
+        client_request_id: requestId + ':collect:' + index,
+      });
+      paymentIds.push(payment.payment_id);
+    });
+
+    const afterSummary = _salesInvoicePaymentSummary_(invoice);
+    invoiceBefore = Object.assign({}, invoice);
+    invoiceUpdated = _updateByField('Sales_Invoices', 'invoice_id', invoiceId, {
+      total_received_usd: Number(invoice.total_received_usd || 0) + collectedUsd,
+      net_paid_usd: afterSummary.total_paid_usd,
+      balance_due_usd: afterSummary.balance_due_usd,
+      financial_status: afterSummary.financial_status,
+      updated_at: now,
+      modified_by: user.user_id,
+      revision: Number(invoice.revision || 0) + 1,
+    });
+    if (!invoiceUpdated) throw new Error('تعذر تحديث حالة السداد');
+    auditId = Utilities.getUuid();
+    _add('Sales_Invoice_Audit', {
+      audit_id: auditId,
+      invoice_id: invoiceId,
+      user_id: user.user_id,
+      created_at: now,
+      action: 'COLLECT_SALES_INVOICE',
+      reason: String(body.note || '').trim(),
+      before_json: JSON.stringify(beforeSummary),
+      after_json: JSON.stringify({
+        summary: afterSummary,
+        payment_ids: paymentIds,
+      }),
+    });
+    auditAdded = true;
+    return {
+      success: true,
+      invoice_id: invoiceId,
+      payment_ids: paymentIds,
+      total_collected_usd: collectedUsd,
+      ...afterSummary,
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    Array.from(new Set(changedBoxes)).reverse().forEach(key => {
+      const parts = key.split(':');
+      try {
+        _restoreBoxBalance_(parts[0], parts[1], boxSnapshots[key]);
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
+    });
+    paymentIds.forEach(paymentId => {
+      try { _deleteRowsByField_('Payments', 'payment_id', paymentId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    });
+    if (invoiceUpdated && invoiceBefore) {
+      try {
+        _updateByField('Sales_Invoices', 'invoice_id', invoiceId, invoiceBefore);
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
+    }
+    if (auditAdded) {
+      try {
+        _deleteRowsByField_('Sales_Invoice_Audit', 'audit_id', auditId);
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
+    }
+    if (rollbackErrors.length) {
+      Logger.log(
+        'Invoice collection rollback failed for ' + invoiceId + ': ' +
+          rollbackErrors.join('; ')
+      );
+      throw _apiError(
+        'COLLECTION_ROLLBACK_FAILED',
+        'تعذر التراجع الكامل عن التحصيل؛ رقم الفاتورة: ' + invoiceId,
+        false
+      );
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _handleAllocateCustomerReceipt(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  const receiptId = String(body.receipt_id || '').trim();
+  const invoiceId = String(body.invoice_id || '').trim();
+  const requestId = String(body.client_request_id || '').trim();
+  const amountUsd = _roundSalesAmount_(
+    _salesPositiveNumber_(body.amount_usd, 'مبلغ التخصيص بالدولار'),
+    'USD'
+  );
+  if (!receiptId || !invoiceId || requestId.length < 12) {
+    throw _apiError('INVALID_ALLOCATION', 'رقم السند والفاتورة ومعرف العملية مطلوبة', false);
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'جارٍ ترحيل عملية أخرى، حاول مجددًا', true);
+  }
+  try {
+    const duplicate = _all('Sales_Invoice_Allocations').find(row =>
+      String(row.client_request_id) === requestId
+    );
+    if (duplicate) {
+      return { success: true, allocation_id: duplicate.allocation_id, duplicate: true };
+    }
+    const payments = _all('Payments').filter(row =>
+      String(row.receipt_id || '') === receiptId &&
+      String(row.action_type || '') === 'receive'
+    );
+    if (!payments.length) {
+      throw _apiError('RECEIPT_NOT_FOUND', 'سند القبض غير موجود أو غير قابل للتخصيص', false);
+    }
+    const customerId = String(payments[0].customer_id || '');
+    if (!customerId || payments.some(row =>
+      String(row.customer_id) !== customerId
+    )) {
+      throw _apiError('INVALID_RECEIPT', 'حركات السند لا تتبع زبونًا واحدًا', false);
+    }
+    const invoice = _all('Sales_Invoices').find(row =>
+      String(row.invoice_id) === invoiceId &&
+      String(row.customer_id) === customerId &&
+      String(row.status) === 'posted' &&
+      String(row.currency || '').toUpperCase() === 'USD'
+    );
+    if (!invoice) {
+      throw _apiError('INVALID_ALLOCATION', 'الفاتورة لا تخص زبون سند القبض أو ليست بالدولار', false);
+    }
+    const alreadyAllocated = _all('Sales_Invoice_Allocations')
+      .filter(row => String(row.receipt_id) === receiptId)
+      .reduce((sum, row) => sum + Number(row.amount_usd || 0), 0);
+    const receiptTotal = payments.reduce((sum, row) =>
+      sum + Number(_paymentEquivalentUsd_(row) || 0), 0);
+    const summary = _salesInvoicePaymentSummary_(invoice);
+    if (summary.needs_financial_review ||
+        amountUsd - summary.balance_due_usd > 0.005 ||
+        amountUsd + alreadyAllocated - receiptTotal > 0.005) {
+      throw _apiError('ALLOCATION_EXCEEDS_BALANCE', 'التخصيص يتجاوز رصيد الفاتورة أو المتبقي من السند', false);
+    }
+    const allocation = {
+      allocation_id: 'AL-' + Utilities.getUuid().replace(/-/g, '').slice(0, 16),
+      receipt_id: receiptId,
+      invoice_id: invoiceId,
+      customer_id: customerId,
+      amount_usd: amountUsd,
+      created_by: user.user_id,
+      created_at: _now(),
+      client_request_id: requestId,
+    };
+    _add('Sales_Invoice_Allocations', allocation);
+    _add('Audit_Log', {
+      log_id: Utilities.getUuid(),
+      user_id: user.user_id,
+      action: 'ALLOCATE_EXISTING_CUSTOMER_RECEIPT',
+      entity: 'Sales_Invoice_Allocations',
+      entity_id: allocation.allocation_id,
+      details: JSON.stringify(allocation),
+      created_at: allocation.created_at,
+    });
+    return { success: true, allocation_id: allocation.allocation_id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _handleCashBoxStatement(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  const boxName = String(body.box_name || '').trim();
+  const currency = String(body.currency || '').trim().toUpperCase();
+  if (!['cash_box', 'sham_cash'].includes(boxName) ||
+      !['USD', 'SYP'].includes(currency)) {
+    throw _apiError('INVALID_CASH_BOX', 'حدد صندوقًا وعملة صالحين', false);
+  }
+  const box = _cashBoxSnapshot_(boxName, currency);
+  const rows = _all('Payments').filter(payment =>
+    String(payment.box_type) === boxName &&
+    String(payment.currency).toUpperCase() === currency
+  ).map(payment => ({
+    payment_id: payment.payment_id,
+    customer_id: payment.customer_id || '',
+    invoice_id: payment.order_id || '',
+    receipt_id: payment.receipt_id || '',
+    date: payment.payment_date || payment.created_at,
+    action_type: payment.action_type || 'receive',
+    method: payment.payment_method || payment.method || '',
+    amount: Number(payment.amount || 0),
+    currency: currency,
+    equivalent_usd: _paymentEquivalentUsd_(payment),
+    exchange_rate: payment.exchange_rate || '',
+    reference: payment.reference || '',
+    note: payment.note || '',
+  })).sort((a, b) => Date.parse(a.date || 0) - Date.parse(b.date || 0));
+  return {
+    box_name: boxName,
+    currency: currency,
+    balance: Number(box ? box.balance || 0 : 0),
+    movements: rows,
+    needs_manual_review: rows.some(row =>
+      row.currency === 'SYP' && row.equivalent_usd === null
+    ),
+  };
+}
+
+function _handleCashBoxOpeningBalance(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  const boxName = String(body.box_name || '').trim();
+  const currency = String(body.currency || '').trim().toUpperCase();
+  const amount = Number(body.amount);
+  const reason = String(body.reason || '').trim();
+  const requestId = String(body.client_request_id || '').trim();
+  const rate = body.exchange_rate === '' || body.exchange_rate === undefined ||
+    body.exchange_rate === null ? null : Number(body.exchange_rate);
+  if (!['cash_box', 'sham_cash'].includes(boxName) ||
+      !['USD', 'SYP'].includes(currency) ||
+      !Number.isFinite(amount) || amount < 0 ||
+      reason.length < 3 || requestId.length < 12 ||
+      (currency === 'SYP' && amount > 0 &&
+        rate !== null && (!Number.isFinite(rate) || rate <= 0))) {
+    throw _apiError(
+      'INVALID_OPENING_BALANCE',
+      'الصندوق والعملة والرصيد الافتتاحي والسبب ومعرف العملية مطلوبة',
+      false
+    );
+  }
+  const rounded = _roundSalesAmount_(amount, currency);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) {
+    throw _apiError('BUSY', 'جارٍ تحديث الصناديق، حاول مجددًا', true);
+  }
+  let boxAdded = false;
+  let paymentId = '';
+  let auditId = '';
+  try {
+    const priorPayment = _all('Payments').find(payment =>
+      String(payment.client_request_id || '') === requestId
+    );
+    if (priorPayment) {
+      return { success: true, duplicate: true, payment_id: priorPayment.payment_id };
+    }
+    const auditExists = _all('Audit_Log').some(row =>
+      String(row.action) === 'OPEN_CASH_BOX' &&
+      String(row.entity_id) === boxName + ':' + currency &&
+      String(row.details || '').includes(requestId)
+    );
+    if (auditExists) return { success: true, duplicate: true };
+    if (_cashBoxSnapshot_(boxName, currency)) {
+      throw _apiError(
+        'CASH_BOX_ALREADY_INITIALIZED',
+        'للصندوق رصيد أو سجل سابق؛ لا يجوز استبداله برصيد افتتاحي. استخدم حركة تسوية موثقة.',
+        false
+      );
+    }
+    _requireColumns_('Boxes_Balance', [
+      'box_id', 'box_name', 'currency', 'balance', 'last_updated',
+    ]);
+    _requireColumns_('Payments', [
+      'payment_id', 'amount', 'currency', 'box_type', 'action_type',
+      'invoice_equivalent', 'exchange_rate', 'client_request_id',
+    ]);
+    const boxId = 'box_' + boxName + '_' + currency.toLowerCase();
+    paymentId = 'OB-' + Utilities.getUuid().replace(/-/g, '').toUpperCase();
+    const equivalentUsd = currency === 'USD'
+      ? rounded
+      : rate === null ? '' : _roundSalesAmount_(rounded / rate, 'USD');
+    _add('Boxes_Balance', {
+      box_id: boxId,
+      box_name: boxName,
+      currency: currency,
+      balance: 0,
+      last_updated: _now(),
+    });
+    boxAdded = true;
+    if (rounded > 0) {
+      _add('Payments', {
+        payment_id: paymentId,
+        customer_id: '',
+        order_id: '',
+        receipt_id: paymentId,
+        amount: rounded,
+        currency: currency,
+        box_type: boxName,
+        method: 'opening_balance',
+        payment_method: 'opening_balance',
+        payment_date: _now(),
+        note: reason,
+        created_by: user.user_id,
+        created_at: _now(),
+        action_type: 'receive',
+        invoice_currency: 'USD',
+        invoice_equivalent: equivalentUsd,
+        exchange_rate: currency === 'SYP' ? rate || '' : '',
+        reference: '',
+        client_request_id: requestId,
+      });
+      _updateBoxBalance(boxName, currency, rounded, 'receive');
+    }
+    auditId = Utilities.getUuid();
+    _add('Audit_Log', {
+      log_id: auditId,
+      user_id: user.user_id,
+      action: 'OPEN_CASH_BOX',
+      entity: 'Boxes_Balance',
+      entity_id: boxName + ':' + currency,
+      details: JSON.stringify({
+        amount: rounded,
+        currency: currency,
+        reason: reason,
+        exchange_rate: rate,
+        client_request_id: requestId,
+      }),
+      created_at: _now(),
+    });
+    return {
+      success: true,
+      box_id: boxId,
+      payment_id: paymentId,
+      balance: rounded,
+      manual_review_required: currency === 'SYP' && rounded > 0 && rate === null,
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    if (paymentId) {
+      try { _deleteRowsByField_('Payments', 'payment_id', paymentId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (auditId) {
+      try { _deleteRowsByField_('Audit_Log', 'log_id', auditId); }
+      catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (boxAdded) {
+      try {
+        const snapshot = _cashBoxSnapshot_(boxName, currency);
+        if (snapshot) _deleteRowsByField_('Boxes_Balance', 'box_id', snapshot.box_id);
+      } catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (rollbackErrors.length) {
+      Logger.log('Cash opening balance rollback failed: ' + rollbackErrors.join('; '));
+      throw _apiError(
+        'CASH_OPENING_ROLLBACK_FAILED',
+        'تعذر التراجع الكامل عن الرصيد الافتتاحي؛ راجع سجل النظام',
+        false
+      );
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ============================================================
@@ -6131,25 +8215,30 @@ function _handleDashboardStats(body, user) {
 // ============================================================
 function _handleGetCustomerStatement(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant', 'customer']);
-  const userRole = String(user.role || '').toLowerCase();
+  const userRole = _normalizeRole(user.role);
 
-  // الهوية تأتي من الجلسة للعميل، أو من الطلب للإدارة
-  const customerId = (userRole === 'customer') ? user.customer_id : body.customer_id;
+  const customerId = userRole === 'customer' ? user.customer_id : body.customer_id;
 
   if (!customerId) throw new Error('رقم العميل مطلوب');
 
   const customer = _all('Customers').find(c => String(c.customer_id) === String(customerId));
   if (!customer) throw new Error('العميل غير موجود');
 
-  const payments = _all('Payments').filter(p => p.customer_id === customerId);
+  const payments = _all('Payments').filter(p =>
+    String(p.customer_id) === String(customerId)
+  );
   const orders = _all('Orders').filter(o =>
-    o.customer_id === customerId &&
+    String(o.customer_id) === String(customerId) &&
     ['approved', 'prepared', 'shipping', 'delivered'].includes(o.status)
   );
   const orderItems = _all('Order_Items');
+  const salesInvoices = _all('Sales_Invoices').filter(invoice =>
+    String(invoice.customer_id) === String(customerId)
+  );
 
   let statement = [];
   const openingUsd = Number(customer.opening_usd || 0);
+  let needsManualReview = false;
 
   if (openingUsd !== 0) {
     statement.push({
@@ -6165,9 +8254,28 @@ function _handleGetCustomerStatement(body, user) {
   orders.forEach(o => {
     const items = orderItems.filter(oi => oi.order_id === o.order_id);
     let total = 0;
+    const currency = String(o.currency || 'USD').toUpperCase();
+    const rate = Number(o.exchange_rate || o.rate_syp_per_usd || 0);
     items.forEach(item => {
-      total += Number(item.final_price || item.display_price_snapshot || 0) * Number(item.quantity_approved || item.quantity_requested || 0);
+      total += Number(item.final_price || item.display_price_snapshot || 0) *
+        Number(item.quantity_approved || item.quantity_requested || 0);
     });
+    if (currency === 'SYP') {
+      if (Number.isFinite(rate) && rate > 0) total /= rate;
+      else {
+        needsManualReview = true;
+        statement.push({
+          date: o.created_at,
+          type: 'طلب بعملة تاريخية تحتاج مراجعة',
+          ref: o.order_id,
+          debit: 0,
+          credit: 0,
+          note: 'لا يوجد سعر صرف تاريخي محفوظ؛ لم يُعد تقييم الطلب.',
+          needs_manual_review: true,
+        });
+        return;
+      }
+    }
     statement.push({
       date: o.created_at,
       type: 'طلب بضاعة',
@@ -6178,22 +8286,98 @@ function _handleGetCustomerStatement(body, user) {
     });
   });
 
+  salesInvoices.forEach(invoice => {
+    if (String(invoice.currency || 'USD').toUpperCase() !== 'USD') {
+      needsManualReview = true;
+      statement.push({
+        date: invoice.invoice_date || invoice.created_at,
+        type: 'فاتورة بعملة تحتاج مراجعة',
+        ref: invoice.invoice_id,
+        debit: 0,
+        credit: 0,
+        note: 'عملة الفاتورة غير مدعومة في كشف الدولار؛ لم يُعد تقييمها.',
+        needs_manual_review: true,
+      });
+      return;
+    }
+    if (String(invoice.status) === 'posted') {
+      statement.push({
+        date: invoice.invoice_date || invoice.created_at,
+        type: 'فاتورة مبيع',
+        ref: invoice.invoice_id,
+        debit: Number(invoice.net_total || 0),
+        credit: 0,
+        note: 'المجموع بعد الحسم؛ حالة السداد: ' +
+          String(invoice.financial_status || 'تُحسب من الحركات'),
+        invoice_id: invoice.invoice_id,
+      });
+    } else if (String(invoice.status) === 'voided') {
+      statement.push({
+        date: invoice.invoice_date || invoice.created_at,
+        type: 'فاتورة مبيع ملغاة',
+        ref: invoice.invoice_id,
+        debit: Number(invoice.net_total || 0),
+        credit: 0,
+        note: 'أصل الفاتورة قبل الإلغاء.',
+        invoice_id: invoice.invoice_id,
+      });
+      statement.push({
+        date: invoice.updated_at || invoice.invoice_date || invoice.created_at,
+        type: 'إلغاء فاتورة مبيع',
+        ref: invoice.invoice_id,
+        debit: 0,
+        credit: Number(invoice.net_total || 0),
+        note: 'إلغاء المديونية. أي قبض باقٍ يظهر كرصيد دائن حتى ردّه فعليًا.',
+        invoice_id: invoice.invoice_id,
+      });
+    }
+  });
+
   payments.forEach(p => {
+    const equivalent = _paymentEquivalentUsd_(p);
+    if (equivalent === null) {
+      needsManualReview = true;
+      statement.push({
+        date: p.payment_date || p.created_at,
+        type: String(p.action_type) === 'pay'
+          ? 'صرف بعملة تاريخية غير مصنفة'
+          : 'قبض بعملة تاريخية غير مصنفة',
+        ref: p.payment_id,
+        debit: 0,
+        credit: 0,
+        note: 'لم تُسجل قيمة دولارية أو سعر صرف تاريخي؛ لا يعاد التخمين.',
+        needs_manual_review: true,
+      });
+      return;
+    }
+    const isPayout = String(p.action_type || '') === 'pay';
     statement.push({
       date: p.payment_date || p.created_at,
-      type: p.action_type === 'pay' ? 'صرف' : 'دفعة نقدية',
+      type: isPayout ? 'مبلغ معاد للزبون' : 'دفعة زبون',
       ref: p.payment_id,
-      debit: 0,
-      credit: Number(p.amount),
-      note: p.note || p.method || ''
+      debit: isPayout ? equivalent : 0,
+      credit: isPayout ? 0 : equivalent,
+      note: (p.note || p.method || '') +
+        ' · ' + Number(p.amount || 0) + ' ' + String(p.currency || '') +
+        (String(p.currency).toUpperCase() === 'SYP' && p.exchange_rate
+          ? ' · سعر ' + p.exchange_rate + ' ل.س/USD'
+          : ''),
+      source_currency: p.currency || '',
+      source_amount: Number(p.amount || 0),
+      equivalent_usd: equivalent,
+      invoice_id: p.order_id || '',
+      receipt_id: p.receipt_id || '',
     });
   });
 
-  statement.sort((a, b) => new Date(a.date) - new Date(b.date));
+  statement.sort((a, b) =>
+    Date.parse(a.date || 0) - Date.parse(b.date || 0) ||
+    String(a.ref || '').localeCompare(String(b.ref || ''))
+  );
 
   let runningBalance = 0;
   statement = statement.map(s => {
-    runningBalance += (s.debit - s.credit);
+    runningBalance += Number(s.debit || 0) - Number(s.credit || 0);
     return { ...s, balance: Number(runningBalance.toFixed(2)) };
   });
 
@@ -6204,7 +8388,9 @@ function _handleGetCustomerStatement(body, user) {
       customer_id: customer.customer_id
     },
     statement: statement.reverse(),
-    finalBalance: Number(runningBalance.toFixed(2))
+    finalBalance: Number(runningBalance.toFixed(2)),
+    currency: 'USD',
+    needs_manual_review: needsManualReview,
   };
 }
 

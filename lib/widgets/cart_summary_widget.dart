@@ -1,3 +1,4 @@
+import 'dart:math' show min;
 import 'package:flutter/material.dart';
 import '../models/order_item.dart';
 import '../models/product.dart';
@@ -106,59 +107,188 @@ class CartSummaryWidget extends StatelessWidget {
   static void showReviewDialog({
     required BuildContext context,
     required List<OrderItem> cartItems,
-    required VoidCallback onSubmit,
+    required Future<void> Function() onSubmit,
     required ValueChanged<OrderItem> onRemoveItem,
+    required void Function(OrderItem item, double quantity, String unit)
+        onUpdateItem,
     bool isSubmitting = false,
   }) {
+    var submitting = isSubmitting;
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('مراجعة الطلب قبل الإرسال'),
           content: SizedBox(
-            width: double.maxFinite,
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: cartItems.length,
-              itemBuilder: (context, index) {
-                final item = cartItems[index];
-                return ListTile(
-                  leading: _buildProductImage(item.product),
-                  title: Text(item.product?.name ?? 'بدون اسم'),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                          'الكمية: ${item.quantity} ${item.selectedUnit ?? item.product?.unit ?? ""}'),
-                      if (item.note != null && item.note!.isNotEmpty)
-                        Text('ملاحظة: ${item.note}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            )),
-                    ],
+            width: min(560.0, MediaQuery.sizeOf(context).width - 48).toDouble(),
+            height:
+                min(560.0, MediaQuery.sizeOf(context).height * 0.65).toDouble(),
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: cartItems.length,
+                    itemBuilder: (context, index) {
+                      final item = cartItems[index];
+                      final units = item.product?.availableUnits ?? [item.unit];
+                      final unit = item.selectedUnit ?? item.unit;
+                      final quantity = item.quantity ?? 0;
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildProductImage(item.product),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      item.product?.name ?? item.name,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'حذف الصنف',
+                                    icon: Icon(Icons.delete_outline,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .error),
+                                    onPressed: submitting
+                                        ? null
+                                        : () {
+                                            onRemoveItem(item);
+                                            setDialogState(() {});
+                                          },
+                                  ),
+                                ],
+                              ),
+                              if (item.code.isNotEmpty)
+                                Text('رمز المنتج: ${item.code}',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  IconButton.filledTonal(
+                                    tooltip: 'إنقاص الكمية',
+                                    onPressed: submitting || quantity <= 1
+                                        ? null
+                                        : () => onUpdateItem(
+                                            item, quantity - 1, unit),
+                                    icon: const Icon(Icons.remove, size: 18),
+                                  ),
+                                  Text('$quantity'),
+                                  IconButton.filledTonal(
+                                    tooltip: 'زيادة الكمية',
+                                    onPressed: submitting
+                                        ? null
+                                        : () => onUpdateItem(
+                                            item, quantity + 1, unit),
+                                    icon: const Icon(Icons.add, size: 18),
+                                  ),
+                                  if (units.length > 1)
+                                    DropdownButton<String>(
+                                      value: units.contains(unit)
+                                          ? unit
+                                          : units.first,
+                                      items: units
+                                          .map((value) => DropdownMenuItem(
+                                                value: value,
+                                                child: Text(value),
+                                              ))
+                                          .toList(),
+                                      onChanged: submitting
+                                          ? null
+                                          : (value) {
+                                              if (value != null) {
+                                                onUpdateItem(
+                                                    item, quantity, value);
+                                                setDialogState(() {});
+                                              }
+                                            },
+                                    )
+                                  else
+                                    Text('الوحدة: $unit'),
+                                ],
+                              ),
+                              if (item.note?.trim().isNotEmpty == true)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Text('ملاحظة: ${item.note}',
+                                      softWrap: true),
+                                ),
+                              if (!item.hasConfiguredUnitPrice ||
+                                  !item.hasConfiguredUnitConversion)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Text(
+                                    !item.hasConfiguredUnitPrice
+                                        ? 'سعر هذه الوحدة غير مضبوط'
+                                        : 'معامل تحويل الوحدة غير مضبوط',
+                                    style: TextStyle(
+                                      color:
+                                          Theme.of(context).colorScheme.error,
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(height: 6),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                      item.hasConfiguredUnitPrice
+                                          ? 'سعر الوحدة: ${formatMoneyShort(item.displayPrice, currency: item.currency)}'
+                                          : 'سعر هذه الوحدة غير مضبوط',
+                                      style: TextStyle(
+                                        color: item.hasConfiguredUnitPrice
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .error,
+                                      )),
+                                  Text(
+                                    formatMoneyShort(item.total,
+                                        currency: item.currency),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color:
+                                          Theme.of(context).colorScheme.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('\$${formatMoneyShort(item.total)}'),
-                      IconButton(
-                        tooltip: 'حذف الصنف',
-                        icon:
-                            const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: isSubmitting
-                            ? null
-                            : () {
-                                onRemoveItem(item);
-                                setDialogState(() {});
-                              },
-                      ),
-                    ],
+                ),
+                const Divider(),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Text(
+                    'الإجمالي: ${formatMoneyShort(cartItems.fold<double>(0, (sum, item) => sum + item.total), currency: cartItems.isEmpty ? 'USD' : cartItems.first.currency)}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
-                );
-              },
+                ),
+              ],
             ),
           ),
           actions: [
@@ -167,8 +297,20 @@ class CartSummaryWidget extends StatelessWidget {
               child: const Text('إغلاق'),
             ),
             FilledButton(
-              onPressed: isSubmitting || cartItems.isEmpty ? null : onSubmit,
-              child: isSubmitting
+              onPressed: submitting ||
+                      cartItems.isEmpty ||
+                      cartItems.any((item) =>
+                          !item.hasConfiguredUnitPrice ||
+                          !item.hasConfiguredUnitConversion)
+                  ? null
+                  : () async {
+                      setDialogState(() => submitting = true);
+                      await onSubmit();
+                      if (context.mounted) {
+                        setDialogState(() => submitting = false);
+                      }
+                    },
+              child: submitting
                   ? const SizedBox(
                       width: 20,
                       height: 20,

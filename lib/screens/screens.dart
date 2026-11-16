@@ -4,6 +4,8 @@ export 'login_page.dart';
 export 'force_password_change_screen.dart';
 export 'sales_invoice_screen.dart';
 export 'sales_invoices_screen.dart';
+export 'customer_receipt_screen.dart';
+export 'cash_boxes_screen.dart';
 export 'sales_stock_transfer_screen.dart';
 export 'sales_settings_screen.dart';
 export 'homepage_screen.dart';

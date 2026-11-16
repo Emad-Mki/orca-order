@@ -73,6 +73,7 @@ class DraftsProvider with ChangeNotifier {
   }
 
   Future<void> deleteDraft(int id) async {
+    _debounceTimer?.cancel();
     try {
       await _localRepository.deleteDraft(id);
       await loadDrafts();

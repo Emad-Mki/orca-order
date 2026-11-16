@@ -5,12 +5,16 @@ import 'package:orca_order/providers/products_provider.dart';
 import 'package:orca_order/repositories/local_repository.dart';
 import 'package:orca_order/repositories/product_repository.dart';
 import 'package:orca_order/services/database_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late AppDatabase database;
   late ProductsProvider provider;
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     database = AppDatabase(NativeDatabase.memory());
     await LocalRepository(database).saveProducts([
       _product('ENG-1', ' Engines ', subGroup: 'Pistons', oem: 'OEM-101'),
@@ -34,37 +38,50 @@ void main() {
   });
 
   test('selecting a parent group includes every child group only', () {
-    provider.setCategory('Engines');
+    provider.selectCategory('Engines');
 
     expect(
         provider.products.map((product) => product.code), ['ENG-1', 'ENG-2']);
     expect(provider.subGroups, ['Filters', 'Pistons']);
 
-    provider.setCategory(null);
+    provider.selectCategory(null);
     expect(provider.products, hasLength(4));
     expect(provider.subGroups, isEmpty);
   });
 
   test('selecting a child group filters within the selected parent', () {
-    provider.setCategory('Engines');
-    provider.setSubGroup('Pistons');
+    provider.selectCategory('Engines');
+    provider.selectSubGroup('Pistons');
 
     expect(provider.products.map((product) => product.code), ['ENG-1']);
 
-    provider.setCategory('Body');
+    provider.selectCategory('Body');
     expect(provider.selectedSubGroup, isNull);
     expect(provider.products.map((product) => product.code), ['BODY-1']);
   });
 
   test('search combines with group selection and matches OEM numbers', () {
-    provider.setCategory('Engines');
+    provider.selectCategory('Engines');
     provider.setSearchQuery('OEM-101');
 
     expect(provider.products.map((product) => product.code), ['ENG-1']);
   });
 
+  test('view mode is saved locally without changing the product results',
+      () async {
+    final visibleCodes =
+        provider.products.map((product) => product.code).toList();
+
+    await provider.setViewMode(ProductViewMode.list);
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(provider.viewMode, ProductViewMode.list);
+    expect(preferences.getString('product_view_mode'), 'list');
+    expect(provider.products.map((product) => product.code), visibleCodes);
+  });
+
   test('refresh clears a selected group that no longer exists', () async {
-    provider.setCategory('Removed');
+    provider.selectCategory('Removed');
     await provider.fetchProducts();
 
     expect(provider.selectedCategory, isNull);

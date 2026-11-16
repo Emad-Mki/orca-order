@@ -25,6 +25,16 @@ class OrderItem {
   final String? imageFileId;
   final String? imageName;
 
+  // New fields for multi-unit and historical tracking
+  final double?
+      unitFactor; // The conversion factor for the selected unit at time of order
+  final double? basePriceSnapshot; // The base price (Unit 1) at time of order
+  final String? unit1;
+  final double? factor2;
+  final String? unit2;
+  final double? factor3;
+  final String? unit3;
+
   // Additional fields for local cart handling
   final Product? product;
   double? quantity;
@@ -54,6 +64,13 @@ class OrderItem {
     this.imageUrl,
     this.imageFileId,
     this.imageName,
+    this.unitFactor,
+    this.basePriceSnapshot,
+    this.unit1,
+    this.factor2,
+    this.unit2,
+    this.factor3,
+    this.unit3,
     this.product,
     this.quantity,
     this.note,
@@ -61,6 +78,15 @@ class OrderItem {
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
+    String textValue(dynamic value, {String fallback = ''}) =>
+        value is String ? value : fallback;
+
+    String identifierValue(dynamic value) {
+      if (value is String) return value;
+      if (value is num) return value.toString();
+      return '';
+    }
+
     int parseInt(dynamic value) {
       if (value is num) return value.toInt();
       return int.tryParse(value?.toString() ?? '') ?? 0;
@@ -84,10 +110,10 @@ class OrderItem {
     }
 
     return OrderItem(
-      itemId: json['item_id']?.toString() ?? '',
-      code: json['code']?.toString() ?? '',
-      name: json['name'] ?? 'منتج غير معروف',
-      unit: json['unit'] ?? '',
+      itemId: identifierValue(json['item_id']),
+      code: identifierValue(json['code']),
+      name: textValue(json['name'], fallback: 'منتج غير معروف'),
+      unit: textValue(json['unit']),
       quantityRequested: parseNullableDouble(json['quantity_requested']),
       quantityApproved: parseNullableDouble(json['quantity_approved']),
       quantityPrepared: parseNullableDouble(json['quantity_prepared']),
@@ -95,21 +121,32 @@ class OrderItem {
           json['price_offer'] ?? json['display_price_snapshot']),
       defaultPrice: parseNullableDouble(json['default_price']),
       finalPrice: parseNullableDouble(json['final_price']),
-      currency: json['currency'] ?? 'USD',
-      status: json['status'] ?? '',
-      customerNote: json['customer_note'],
-      accountantNote: json['accountant_note'],
-      warehouseNote: json['warehouse_note'],
-      warehousePackageNumbers: json['warehouse_package_numbers']?.toString(),
-      warehousePackageType: json['warehouse_package_type']?.toString(),
-      warehouseCustomPackageType:
-          json['warehouse_custom_package_type']?.toString(),
+      currency: textValue(json['currency'], fallback: 'USD'),
+      status: textValue(json['status']),
+      customerNote: _nullableText(json['customer_note']),
+      accountantNote: _nullableText(json['accountant_note']),
+      warehouseNote: _nullableText(json['warehouse_note']),
+      warehousePackageNumbers: _nullableText(json['warehouse_package_numbers']),
+      warehousePackageType: _nullableText(json['warehouse_package_type']),
+      warehouseCustomPackageType: _nullableText(
+        json['warehouse_custom_package_type'],
+      ),
       stockAvailable: parseInt(json['stock_available']),
-      imageUrl: json['image_url'],
-      imageFileId: json['image_file_id'],
-      imageName: json['image_name'],
+      imageUrl: _nullableText(json['image_url']),
+      imageFileId: _nullableText(json['image_file_id']),
+      imageName: _nullableText(json['image_name']),
+      unitFactor: parseNullableDouble(json['unit_factor']),
+      basePriceSnapshot: parseNullableDouble(json['base_price_snapshot']),
+      unit1: _nullableText(json['unit_1']),
+      factor2: parseNullableDouble(json['factor_2']),
+      unit2: _nullableText(json['unit_2']),
+      factor3: parseNullableDouble(json['factor_3']),
+      unit3: _nullableText(json['unit_3']),
     );
   }
+
+  static String? _nullableText(dynamic value) =>
+      value is String && value.isNotEmpty ? value : null;
 
   /// للحالات التي ننشئ فيها صنف من منتج (السلة)
   factory OrderItem.fromProduct(Product product,
@@ -117,37 +154,52 @@ class OrderItem {
       String? note,
       String? selectedUnit,
       double? overridePrice}) {
+    final unit = selectedUnit?.trim().isNotEmpty == true
+        ? selectedUnit!.trim()
+        : product.unit;
+    final factor = product.factorForUnit(unit);
+    final unitPrice = product.priceForUnit(unit);
+
     return OrderItem(
       itemId: '',
       code: product.code,
       name: product.name,
-      unit: product.unit,
+      unit: unit,
       quantityRequested: quantity,
       quantityApproved: 0,
       quantityPrepared: 0,
-      priceOffer: overridePrice ?? product.price,
-      defaultPrice: product.price,
-      finalPrice: 0,
-      currency: 'USD',
+      priceOffer: overridePrice ?? unitPrice,
+      defaultPrice: unitPrice,
+      finalPrice: null,
+      currency: product.currency,
       status: 'pending',
       stockAvailable: product.stock,
       imageUrl: product.imageUrl,
+      unitFactor: factor,
+      basePriceSnapshot: product.price,
+      unit1: product.unit,
+      factor2: product.factor2,
+      unit2: product.unit2,
+      factor3: product.factor3,
+      unit3: product.unit3,
       product: product,
       quantity: quantity,
       note: note,
-      selectedUnit: selectedUnit ?? product.unit,
+      selectedUnit: unit,
     );
   }
 
   /// الحصول على السعر الفعلي للعرض
   /// الأولوية: final_price > price_offer > default_price
   double get displayPrice {
-    if (finalPrice != null && finalPrice! > 0) return finalPrice!;
-    if (priceOffer != null && priceOffer! > 0) return priceOffer!;
-    return defaultPrice ?? 0.0;
+    return finalPrice ?? priceOffer ?? defaultPrice ?? 0.0;
   }
 
   double get pricedUnitPrice => finalPrice ?? displayPrice;
+  bool get hasConfiguredUnitPrice =>
+      finalPrice != null || priceOffer != null || defaultPrice != null;
+  bool get hasConfiguredUnitConversion =>
+      unitFactor != null && unitFactor!.isFinite && unitFactor! > 0;
 
   double get pricedQuantity => quantityApproved ?? quantityRequested ?? 0.0;
 
@@ -157,17 +209,14 @@ class OrderItem {
   /// حساب الإجمالي بناءً على الكمية المعتمدة أو المطلوبة
   double get total {
     if (isUnavailable) return 0.0;
-    if (finalPrice != null &&
-        (finalPrice! > 0 || status.toLowerCase() == 'available')) {
-      return pricedLineTotal;
-    }
-    if (product != null && quantity != null) {
-      return product!.price * quantity!;
-    }
-    double qty = (quantityApproved != null && quantityApproved! > 0)
-        ? quantityApproved!
-        : (quantityRequested ?? 0.0);
-    return displayPrice * qty;
+    final qty = quantity ??
+        ((quantityApproved != null && quantityApproved! > 0)
+            ? quantityApproved!
+            : (quantityRequested ?? 0.0));
+    if (finalPrice != null) return finalPrice! * qty;
+    if (priceOffer != null) return priceOffer! * qty;
+    if (defaultPrice != null) return defaultPrice! * qty;
+    return 0;
   }
 
   /// التحقق مما إذا كان الصنف غير متوفر
@@ -199,6 +248,13 @@ class OrderItem {
     String? imageUrl,
     String? imageFileId,
     String? imageName,
+    double? unitFactor,
+    double? basePriceSnapshot,
+    String? unit1,
+    double? factor2,
+    String? unit2,
+    double? factor3,
+    String? unit3,
   }) {
     return OrderItem(
       itemId: itemId ?? this.itemId,
@@ -225,6 +281,13 @@ class OrderItem {
       imageUrl: imageUrl ?? this.imageUrl,
       imageFileId: imageFileId ?? this.imageFileId,
       imageName: imageName ?? this.imageName,
+      unitFactor: unitFactor ?? this.unitFactor,
+      basePriceSnapshot: basePriceSnapshot ?? this.basePriceSnapshot,
+      unit1: unit1 ?? this.unit1,
+      factor2: factor2 ?? this.factor2,
+      unit2: unit2 ?? this.unit2,
+      factor3: factor3 ?? this.factor3,
+      unit3: unit3 ?? this.unit3,
     );
   }
 
@@ -251,5 +314,12 @@ class OrderItem {
         'image_url': imageUrl,
         'image_file_id': imageFileId,
         'image_name': imageName,
+        'unit_factor': unitFactor,
+        'base_price_snapshot': basePriceSnapshot,
+        'unit_1': unit1,
+        'factor_2': factor2,
+        'unit_2': unit2,
+        'factor_3': factor3,
+        'unit_3': unit3,
       };
 }

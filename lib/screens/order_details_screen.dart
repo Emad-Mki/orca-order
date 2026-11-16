@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:printing/printing.dart';
@@ -11,11 +12,11 @@ import '../services/database_service.dart';
 import '../utils/number_utils.dart';
 import '../utils/permissions.dart';
 import '../utils/order_edit_policy.dart';
-import 'widgets/order_header_widget.dart';
 import 'widgets/order_items_list_view.dart';
 import 'widgets/order_actions_widget.dart';
 import 'widgets/order_shipping_widget.dart';
 import 'widgets/order_empty_state_widget.dart';
+import '../widgets/order_skeleton.dart';
 import 'order_pricing_screen.dart';
 import 'order_edit_screen.dart';
 
@@ -33,6 +34,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   OrderDetailProvider? _provider;
   String? _role;
   bool _isInitialized = false;
+  bool _isCancelling = false;
 
   @override
   void initState() {
@@ -368,23 +370,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       value: _provider!,
       child: Consumer<OrderDetailProvider>(
         builder: (context, provider, child) {
-          if (!_isInitialized || provider.isLoading) {
+          if (!_isInitialized ||
+              (provider.isLoading && provider.currentOrder == null)) {
             return Scaffold(
               appBar: AppBar(title: Text('طلب #${widget.orderId}')),
-              body: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text('جاري جلب تفاصيل الطلبية...'),
-                  ],
-                ),
-              ),
+              body: OrderDetailsSkeleton(),
             );
           }
 
-          if (provider.errorMessage != null) {
+          if (provider.errorMessage != null && provider.currentOrder == null) {
             return Scaffold(
               appBar: AppBar(title: const Text('خطأ')),
               body: Center(
@@ -447,6 +441,18 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               title: Text('طلب #${order.orderNumber}'),
               actions: [
                 IconButton(
+                  tooltip: 'نسخ رقم الطلب',
+                  icon: const Icon(Icons.copy),
+                  onPressed: () async {
+                    await Clipboard.setData(
+                        ClipboardData(text: order.orderNumber));
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('تم نسخ رقم الطلب')),
+                    );
+                  },
+                ),
+                IconButton(
                   icon: const Icon(Icons.picture_as_pdf),
                   onPressed: () => _exportOrderPdf(provider),
                   tooltip: 'تصدير PDF',
@@ -476,50 +482,110 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             ),
             body: Column(
               children: [
+                if (provider.isLoading)
+                  const LinearProgressIndicator(minHeight: 2),
+                if (provider.errorMessage != null)
+                  MaterialBanner(
+                    content:
+                        Text('تعذر تحديث التفاصيل: ${provider.errorMessage}'),
+                    actions: [
+                      TextButton(
+                        onPressed: _fetchDetails,
+                        child: const Text('إعادة المحاولة'),
+                      ),
+                    ],
+                  ),
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
                   color: Theme.of(context)
                       .colorScheme
-                      .primaryContainer
-                      .withAlpha(50),
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.3),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('الحالة: ${_getStatusText(order.status)}',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 16)),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: _getStatusColor(order.status),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              order.status,
-                              style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onPrimary,
-                                  fontSize: 12),
-                            ),
+                          Text(
+                            order.customerName,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 18),
+                          ),
+                          _buildStatusBadge(order.status),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.calendar_today,
+                              size: 14,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant),
+                          const SizedBox(width: 4),
+                          Text(
+                            'تاريخ الطلب: ${order.createdAt?.toString().split(' ')[0] ?? ''}',
+                            style: TextStyle(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                                fontSize: 13),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                          'تاريخ الطلب: ${order.createdAt?.toString().split(' ')[0] ?? ''}'),
-                      if (order.createdByRole?.isNotEmpty == true)
-                        Text(
-                          'أدخل الطلب: ${order.createdBy ?? ''} (${PermissionHelper.getRoleNameAr(PermissionHelper.fromString(order.createdByRole!))})',
-                        ),
-                      if (order.note?.isNotEmpty == true) ...[
+                      if (order.createdByRole?.isNotEmpty == true) ...[
                         const SizedBox(height: 4),
-                        Text('ملاحظة: ${order.note}',
-                            style:
-                                const TextStyle(fontStyle: FontStyle.italic)),
+                        Row(
+                          children: [
+                            Icon(Icons.person_outline,
+                                size: 14,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant),
+                            const SizedBox(width: 4),
+                            Text(
+                              'أدخل الطلب: ${order.createdBy ?? ''} (${PermissionHelper.getRoleNameAr(PermissionHelper.fromString(order.createdByRole!))})',
+                              style: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                  fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (order.note?.isNotEmpty == true) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surface,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .outlineVariant),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.note,
+                                  size: 16,
+                                  color: Theme.of(context).colorScheme.primary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  order.note!,
+                                  style: const TextStyle(
+                                      fontStyle: FontStyle.italic,
+                                      fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ]
                     ],
                   ),
@@ -530,12 +596,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       : ListView(
                           padding: const EdgeInsets.all(8),
                           children: [
-                            OrderHeaderWidget(
-                              order: order,
-                              statusText: _getStatusText(order.status),
-                              statusColor: _getStatusColor(order.status),
-                            ),
-                            const Divider(),
                             OrderItemsListView(role: _role ?? 'user'),
                             if (provider.shipmentData != null)
                               OrderShippingWidget(
@@ -552,6 +612,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               child: OrderActionsWidget(
                 status: status,
                 userRole: userRole,
+                isBusy: provider.isLoading || _isCancelling,
                 onPrice: () => _navigateToPricing(provider),
                 onApprove: () => _updateStatus(
                   userRole == AppRole.customer
@@ -589,6 +650,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final discount = provider.discount ?? 0.0;
     final shipping = provider.shippingCost ?? 0.0;
     final finalAmount = order.totalAmount ?? provider.total;
+    final hasHistoricalPrices = provider.items.every(
+      (item) => item.hasConfiguredUnitPrice || item.isUnavailable,
+    );
 
     return Card(
       margin: const EdgeInsets.only(top: 16, bottom: 80),
@@ -601,27 +665,35 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             const Text('الملخص المالي',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             const Divider(),
-            if (!hasPricing)
+            if (!hasPricing && hasHistoricalPrices)
               _summaryRow('إجمالي الكميات المطلوبة:',
-                  '\$${initialTotal.toStringAsFixed(2)}'),
-            if (hasPricing)
+                  '${initialTotal.toStringAsFixed(2)} ${order.currency}'),
+            if (!hasHistoricalPrices && provider.items.isNotEmpty)
+              Text(
+                'لا تتوفر أسعار محفوظة لبعض البنود.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            if (hasPricing && hasHistoricalPrices)
               _summaryRow('إجمالي الفاتورة المسعرة:',
-                  '\$${approvedTotal.toStringAsFixed(2)}',
+                  '${approvedTotal.toStringAsFixed(2)} ${order.currency}',
                   color: Theme.of(context).colorScheme.primary),
             if (discount > 0)
-              _summaryRow('الخصم:', '-\$${discount.toStringAsFixed(2)}',
+              _summaryRow(
+                  'الخصم:', '-${discount.toStringAsFixed(2)} ${order.currency}',
                   color: Theme.of(context).colorScheme.error),
             if (shipping > 0)
-              _summaryRow('تكلفة الشحن:', '+\$${shipping.toStringAsFixed(2)}'),
+              _summaryRow('تكلفة الشحن:',
+                  '+${shipping.toStringAsFixed(2)} ${order.currency}'),
             const Divider(),
-            _summaryRow('صافي الفاتورة:', '\$${finalAmount.toStringAsFixed(2)}',
+            _summaryRow('صافي الفاتورة:',
+                '${finalAmount.toStringAsFixed(2)} ${order.currency}',
                 isBold: true, color: Theme.of(context).primaryColor),
             if (order.previousBalance != null) ...[
               const SizedBox(height: 8),
               _summaryRow('رصيد الحساب السابق:',
-                  '\$${order.previousBalance!.toStringAsFixed(2)}'),
+                  '${order.previousBalance!.toStringAsFixed(2)} ${order.currency}'),
               _summaryRow('الرصيد النهائي المتوقع:',
-                  '\$${(order.previousBalance! + finalAmount).toStringAsFixed(2)}',
+                  '${(order.previousBalance! + finalAmount).toStringAsFixed(2)} ${order.currency}',
                   isBold: true, color: Theme.of(context).colorScheme.primary),
             ],
           ],
@@ -649,84 +721,89 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
+  Widget _buildStatusBadge(String status) {
+    final color = _getStatusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        _getStatusText(status),
+        style:
+            TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 11),
+      ),
+    );
+  }
+
   Color _getStatusColor(String status) {
-    final colors = Theme.of(context).colorScheme;
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return colors.tertiary;
-      case 'submitted':
-        return colors.primary;
-      case 'processing':
-      case 'preparing':
-        return colors.secondary;
-      case 'priced':
-        return colors.primary;
-      case 'customer_confirmed':
-      case 'approved':
-        return colors.primary;
-      case 'rejected':
-      case 'cancelled':
-        return colors.error;
-      default:
-        return colors.onSurfaceVariant;
-    }
+    return Color(OrderStatusMapper.getStatusColorHex(status));
   }
 
   String _getStatusText(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return 'بانتظار التسعير';
-      case 'submitted':
-        return 'مُرسَل';
-      case 'processing':
-        return 'قيد المعالجة';
-      case 'priced':
-        return 'بانتظار تأكيد السعر';
-      case 'customer_confirmed':
-        return 'مؤكدة من الزبون';
-      case 'approved':
-        return 'مُعتمَد';
-      case 'rejected':
-        return 'مرفوض';
-      case 'cancelled':
-        return 'مُلغى';
-      case 'preparing':
-        return 'قيد التجهيز';
-      case 'prepared':
-      case 'ready_for_shipping':
-        return 'جاهز للشحن';
-      case 'shipping':
-        return 'تم الشحن';
-      default:
-        return status;
-    }
+    return OrderStatusMapper.getArabicStatus(status);
   }
 
-  void _showCancelConfirmation(OrderDetailProvider provider) {
-    showDialog(
+  Future<void> _showCancelConfirmation(OrderDetailProvider provider) async {
+    if (_isCancelling) return;
+    final reasonController = TextEditingController();
+    final reason = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('تأكيد الإلغاء'),
-        content: const Text(
-            'هل أنت متأكد من رغبتك في إلغاء هذه الطلبية؟ لا يمكن التراجع عن هذا الإجراء.'),
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تأكيد إلغاء الطلب'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('سيُحفظ سبب الإلغاء وسجل العملية.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'سبب الإلغاء (اختياري)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('تراجع'),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('رجوع'),
           ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _updateStatus('cancelled');
-            },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-                foregroundColor: Theme.of(context).colorScheme.onError),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () =>
+                Navigator.pop(dialogContext, reasonController.text.trim()),
             child: const Text('تأكيد الإلغاء'),
           ),
         ],
       ),
     );
+    reasonController.dispose();
+    if (reason == null || !mounted) return;
+
+    setState(() => _isCancelling = true);
+    final success = await provider.cancelOrder(
+      reason: reason.isEmpty ? null : reason,
+    );
+    if (!mounted) return;
+    setState(() => _isCancelling = false);
+    if (success) {
+      Navigator.pop(context, true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تعذر إلغاء الطلب: ${provider.errorMessage}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
   }
 
   void _showShippingDialog(OrderDetailProvider provider) {
@@ -856,24 +933,34 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     'السعر',
                     'الإجمالي'
                   ],
-                  data: provider.items
-                      .map((item) => [
-                            item.name,
-                            item.isUnavailable && hasPricing
-                                ? 'غير متوفر'
-                                : '${hasPricing ? item.pricedQuantity : item.quantityRequested} ${item.unit}',
-                            item.isUnavailable && hasPricing
-                                ? '-'
-                                : formatMoneyShort(
-                                    hasPricing
-                                        ? item.pricedUnitPrice
-                                        : item.displayPrice,
-                                  ),
-                            formatMoneyShort(
-                              hasPricing ? item.pricedLineTotal : item.total,
+                  data: provider.items.map((item) {
+                    final qty = hasPricing
+                        ? item.pricedQuantity
+                        : (item.quantityRequested ?? 0);
+                    String qtyStr = '$qty ${item.unit}';
+                    if (item.unitFactor != null && item.unitFactor! != 1.0) {
+                      final baseQty =
+                          (qty * item.unitFactor!).toStringAsFixed(2);
+                      qtyStr += ' ($baseQty ${item.unit1 ?? ''})';
+                    }
+
+                    return [
+                      item.name,
+                      item.isUnavailable && hasPricing ? 'غير متوفر' : qtyStr,
+                      item.isUnavailable && hasPricing
+                          ? '-'
+                          : formatMoneyShort(
+                              hasPricing
+                                  ? item.pricedUnitPrice
+                                  : item.displayPrice,
+                              currency: item.currency,
                             ),
-                          ])
-                      .toList(),
+                      formatMoneyShort(
+                        hasPricing ? item.pricedLineTotal : item.total,
+                        currency: item.currency,
+                      ),
+                    ];
+                  }).toList(),
                   headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   cellAlignment: pw.Alignment.centerRight,
                 ),
@@ -882,7 +969,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 pw.Align(
                   alignment: pw.Alignment.centerLeft,
                   child: pw.Text(
-                    'الإجمالي: ${(order?.totalAmount ?? provider.total).toStringAsFixed(2)} USD',
+                    'الإجمالي: ${formatMoneyShort(order?.totalAmount ?? provider.total, currency: order?.currency ?? 'USD')}',
                     style: pw.TextStyle(
                         fontSize: 16, fontWeight: pw.FontWeight.bold),
                   ),

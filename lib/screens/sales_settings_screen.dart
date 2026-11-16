@@ -43,7 +43,10 @@ class _SalesSettingsScreenState extends State<SalesSettingsScreen> {
       final settings = _extractSettings(response);
       if (!mounted) return;
       setState(() {
-        _invoiceCurrency = _validCurrency(settings['invoice_currency']);
+        _invoiceCurrency =
+            settings['invoice_currency']?.toString().toUpperCase() == 'USD'
+                ? 'USD'
+                : null;
         _shamCurrency = _validCurrency(settings['sham_cash_currency']);
         _productCurrency = _validCurrency(settings['default_product_currency']);
         _rate.text = settings['rate_syp_per_usd']?.toString() ?? '';
@@ -139,13 +142,15 @@ class _SalesSettingsScreenState extends State<SalesSettingsScreen> {
     required String label,
     required String? value,
     required ValueChanged<String?> onChanged,
+    bool usdOnly = false,
   }) {
     return DropdownButtonFormField<String>(
-      initialValue: value,
+      initialValue: usdOnly && value != 'USD' ? null : value,
       decoration: InputDecoration(labelText: label),
-      items: const [
-        DropdownMenuItem(value: 'USD', child: Text('دولار أمريكي (USD)')),
-        DropdownMenuItem(value: 'SYP', child: Text('ليرة سورية (SYP)')),
+      items: [
+        const DropdownMenuItem(value: 'USD', child: Text('دولار أمريكي (USD)')),
+        if (!usdOnly)
+          const DropdownMenuItem(value: 'SYP', child: Text('ليرة سورية (SYP)')),
       ],
       onChanged: _saving ? null : onChanged,
     );
@@ -171,6 +176,7 @@ class _SalesSettingsScreenState extends State<SalesSettingsScreen> {
                   value: _invoiceCurrency,
                   onChanged: (value) =>
                       setState(() => _invoiceCurrency = value),
+                  usdOnly: true,
                 ),
                 const SizedBox(height: 12),
                 _currencyField(

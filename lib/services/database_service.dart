@@ -148,24 +148,64 @@ class AppDatabase extends _$AppDatabase {
       );
 
   // Helper methods for transactions
-  Future<int> saveOrderDraft(
-      OrderDraftsCompanion draft, List<OrderDraftItemsCompanion> items) async {
-    return await transaction(() async {
-      final draftId = await into(orderDrafts)
-          .insert(draft, mode: InsertMode.insertOrReplace);
+  Future<int> saveOrderDraft({
+    required OrderDraftsCompanion draft,
+    required List<OrderDraftItemsCompanion> items,
+    required String environment,
+    required String accountId,
+  }) {
+    return transaction(() async {
+      final draftId = draft.id.present
+          ? draft.id.value
+          : await into(orderDrafts).insert(draft);
 
-      // Delete old items if updating
       if (draft.id.present) {
-        await (delete(orderDraftItems)
-              ..where((t) => t.draftId.equals(draft.id.value)))
-            .go();
+        final updated = await (update(orderDrafts)
+              ..where((row) =>
+                  row.id.equals(draftId) &
+                  row.environment.equals(environment) &
+                  row.accountId.equals(accountId)))
+            .write(draft);
+        if (updated != 1) {
+          throw StateError('المسودة غير موجودة أو لا تخص الحساب الحالي');
+        }
       }
+
+      await (delete(orderDraftItems)
+            ..where((row) => row.draftId.equals(draftId)))
+          .go();
 
       for (var item in items) {
         await into(orderDraftItems)
             .insert(item.copyWith(draftId: Value(draftId)));
       }
       return draftId;
+    });
+  }
+
+  Future<void> deleteOrderDraft({
+    required int draftId,
+    required String environment,
+    required String accountId,
+  }) {
+    return transaction(() async {
+      final ownedDraft = await (select(orderDrafts)
+            ..where((row) =>
+                row.id.equals(draftId) &
+                row.environment.equals(environment) &
+                row.accountId.equals(accountId)))
+          .getSingleOrNull();
+      if (ownedDraft == null) return;
+
+      await (delete(orderDraftItems)
+            ..where((row) => row.draftId.equals(draftId)))
+          .go();
+      await (delete(orderDrafts)
+            ..where((row) =>
+                row.id.equals(draftId) &
+                row.environment.equals(environment) &
+                row.accountId.equals(accountId)))
+          .go();
     });
   }
 

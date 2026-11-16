@@ -35,6 +35,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   String? _customerId;
   List<Customer> _customers = [];
   int? _draftId;
+  String? _clientRequestId;
 
   bool get _isStaffOrder {
     final role = PermissionHelper.fromString(
@@ -73,7 +74,12 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   }
 
   void _onNoteChanged() {
+    if (!_isSubmitting) _clientRequestId = null;
     if (_draftId != null) _saveToDraft(immediate: false);
+  }
+
+  void _resetClientRequestId() {
+    _clientRequestId = null;
   }
 
   void _loadCustomerName() {
@@ -382,6 +388,9 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                     .firstWhere((p) => p?.code == i.code, orElse: () => null),
               ))
           .toList(),
+      currency: _cart.isNotEmpty
+          ? _cart.first.currency
+          : widget.draft?.currency ?? 'USD',
       customTitle: widget.draft?.customTitle,
     );
 
@@ -521,14 +530,32 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   }
 
   void _showAddItemDialog(Product product) {
+    if (_cart.any((item) =>
+        item.currency.toUpperCase() != product.currency.toUpperCase())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يمكن جمع عملات مختلفة في الطلب نفسه'),
+        ),
+      );
+      return;
+    }
     final qtyCtrl = TextEditingController(text: '1');
     final noteCtrl = TextEditingController();
-    String selectedUnit = product.unit;
-    final List<String> units = ['قطعة', 'كرتونة', 'درزن', 'كيس', 'متر', 'كجم'];
-
-    if (!units.contains(selectedUnit)) {
-      units.insert(0, selectedUnit);
+    final units = product.availableUnits;
+    if (units.isEmpty || product.hasConflictingUnits) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(units.isEmpty
+              ? 'لا توجد وحدة معرفة لهذا المنتج'
+              : 'تعريف وحدات المنتج متعارض؛ يرجى مراجعة بياناته'),
+        ),
+      );
+      qtyCtrl.dispose();
+      noteCtrl.dispose();
+      return;
     }
+    String selectedUnit =
+        units.contains(product.unit) ? product.unit : units.first;
 
     showModalBottomSheet(
       context: context,
@@ -564,10 +591,17 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                         Text(product.name,
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 18)),
-                        Text('\$${product.price}',
-                            style: const TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold)),
+                        Text(
+                          product.priceForUnit(selectedUnit) == null
+                              ? 'سعر هذه الوحدة غير مضبوط'
+                              : '${product.currency} ${product.priceForUnit(selectedUnit)}',
+                          style: TextStyle(
+                            color: product.priceForUnit(selectedUnit) == null
+                                ? Theme.of(context).colorScheme.error
+                                : Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -620,22 +654,45 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                   const SizedBox(width: 12),
                   Expanded(
                     flex: 2,
-                    child: DropdownButtonFormField<String>(
-                      initialValue: selectedUnit,
-                      decoration: const InputDecoration(
-                        labelText: 'الوحدة',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: units
-                          .map(
-                              (u) => DropdownMenuItem(value: u, child: Text(u)))
-                          .toList(),
-                      onChanged: (val) => setSheetState(
-                          () => selectedUnit = val ?? selectedUnit),
-                    ),
+                    child: units.length == 1
+                        ? InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'الوحدة',
+                              border: OutlineInputBorder(),
+                            ),
+                            child: Text(units.first),
+                          )
+                        : DropdownButtonFormField<String>(
+                            initialValue: selectedUnit,
+                            decoration: const InputDecoration(
+                              labelText: 'الوحدة',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: units
+                                .map((u) =>
+                                    DropdownMenuItem(value: u, child: Text(u)))
+                                .toList(),
+                            onChanged: (val) => setSheetState(
+                              () => selectedUnit = val ?? selectedUnit,
+                            ),
+                          ),
                   ),
                 ],
               ),
+              if (units.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    product.priceForUnit(selectedUnit) == null
+                        ? 'لا يمكن إرسال الطلب قبل ضبط سعر هذه الوحدة'
+                        : 'السعر للوحدة المختارة: ${product.priceForUnit(selectedUnit)} ${product.currency}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: product.priceForUnit(selectedUnit) == null
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
               const SizedBox(height: 12),
               TextField(
                 controller: noteCtrl,
@@ -649,26 +706,32 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: () {
-                    final qty = double.tryParse(qtyCtrl.text);
-                    if (qty == null || qty <= 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                            content: Text('أدخل كمية صحيحة أكبر من صفر')),
-                      );
-                      return;
-                    }
-                    setState(() {
-                      _cart.add(OrderItem.fromProduct(
-                        product,
-                        quantity: qty,
-                        selectedUnit: selectedUnit,
-                        note: noteCtrl.text,
-                      ));
-                    });
-                    _saveToDraft(immediate: true);
-                    Navigator.pop(context);
-                  },
+                  onPressed: product.priceForUnit(selectedUnit) == null ||
+                          product.factorForUnit(selectedUnit) == null ||
+                          !product.factorForUnit(selectedUnit)!.isFinite ||
+                          product.factorForUnit(selectedUnit)! <= 0
+                      ? null
+                      : () {
+                          final qty = double.tryParse(qtyCtrl.text);
+                          if (qty == null || !qty.isFinite || qty <= 0) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text('أدخل كمية صحيحة أكبر من صفر')),
+                            );
+                            return;
+                          }
+                          _resetClientRequestId();
+                          setState(() {
+                            _cart.add(OrderItem.fromProduct(
+                              product,
+                              quantity: qty,
+                              selectedUnit: selectedUnit,
+                              note: noteCtrl.text,
+                            ));
+                          });
+                          _saveToDraft(immediate: true);
+                          Navigator.pop(context);
+                        },
                   child: const Text('إضافة للطلب'),
                 ),
               ),
@@ -683,7 +746,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     });
   }
 
-  void _submitOrder({bool fromReviewDialog = false}) async {
+  Future<void> _submitOrder({bool fromReviewDialog = false}) async {
     if (_cart.isEmpty || _isSubmitting) return;
     if ((_customerId ?? '').isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -699,10 +762,26 @@ class _NewOrderScreenState extends State<NewOrderScreen>
 
     // التحقق المسبق من صحة البيانات
     for (final item in _cart) {
-      if ((item.quantity ?? 0) <= 0) {
+      final quantity = item.quantity;
+      if (quantity == null || !quantity.isFinite || quantity <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('الكمية للصنف ${item.name} يجب أن تكون أكبر من صفر'),
             backgroundColor: Colors.orange));
+        return;
+      }
+      if (!item.hasConfiguredUnitPrice) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'سعر الوحدة ${item.selectedUnit ?? item.unit} غير مضبوط للصنف ${item.name}'),
+          backgroundColor: Colors.orange,
+        ));
+        return;
+      }
+      if (!item.hasConfiguredUnitConversion) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('معامل تحويل الوحدة غير مضبوط للصنف ${item.name}'),
+          backgroundColor: Colors.orange,
+        ));
         return;
       }
     }
@@ -712,7 +791,9 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     final navigator = Navigator.of(context);
 
     try {
-      final clientRequestId = 'REQ-${DateTime.now().millisecondsSinceEpoch}';
+      _clientRequestId ??=
+          'REQ-${DateTime.now().microsecondsSinceEpoch}-${_draftId ?? 0}';
+      final clientRequestId = _clientRequestId!;
 
       final order = Order(
         orderId: '',
@@ -726,7 +807,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
             ?.toString(),
         createdByRole: widget.session['role']?.toString(),
         status: 'pending',
-        currency: 'USD',
+        currency: _cart.first.currency,
         note: _orderNoteCtrl.text,
         clientRequestId: clientRequestId,
         items: _cart
@@ -740,8 +821,8 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                   quantityPrepared: 0,
                   priceOffer: i.priceOffer,
                   defaultPrice: i.defaultPrice,
-                  finalPrice: 0,
-                  currency: 'USD',
+                  finalPrice: null,
+                  currency: i.currency,
                   status: 'pending',
                   stockAvailable: i.stockAvailable,
                   customerNote: i.note,
@@ -765,8 +846,12 @@ class _NewOrderScreenState extends State<NewOrderScreen>
         }
         if (mounted) {
           setState(() => _cart.clear());
-          navigator.pop();
-          if (fromReviewDialog) navigator.pop();
+          if (fromReviewDialog) {
+            navigator.pop();
+            navigator.pop(true);
+          } else {
+            navigator.pop(true);
+          }
         }
       } else {
         throw Exception('فشل الحصول على رقم الطلب');
@@ -874,7 +959,24 @@ class _NewOrderScreenState extends State<NewOrderScreen>
               cartItems: _cart,
               onSubmit: () => _submitOrder(fromReviewDialog: true),
               onRemoveItem: (item) {
+                _resetClientRequestId();
                 setState(() => _cart.remove(item));
+                _saveToDraft(immediate: true);
+              },
+              onUpdateItem: (item, quantity, unit) {
+                final product = item.product;
+                if (product == null) return;
+                final index = _cart.indexOf(item);
+                if (index < 0) return;
+                _resetClientRequestId();
+                setState(() {
+                  _cart[index] = OrderItem.fromProduct(
+                    product,
+                    quantity: quantity,
+                    selectedUnit: unit,
+                    note: item.note,
+                  );
+                });
                 _saveToDraft(immediate: true);
               },
               isSubmitting: _isSubmitting,
@@ -962,6 +1064,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                     ].join(' • ')),
                     onTap: () {
                       setState(() {
+                        _resetClientRequestId();
                         _customerId = customer.id;
                         _customerName = customer.name;
                         _customerSearchCtrl.text = customer.name;

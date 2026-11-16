@@ -83,6 +83,7 @@ class PermissionHelper {
       AppPermission.managePayments,
       AppPermission.viewInventory,
       AppPermission.viewSettings,
+      AppPermission.createCashSale,
     },
     AppRole.accountant: {
       AppPermission.viewOrders,
@@ -90,6 +91,7 @@ class PermissionHelper {
       AppPermission.editOrder,
       AppPermission.approveOrder,
       AppPermission.priceOrder,
+      AppPermission.cancelOrder,
       AppPermission.viewAllOrders,
       AppPermission.editInvoiceItems,
       AppPermission.markUnavailable,
@@ -104,6 +106,7 @@ class PermissionHelper {
       AppPermission.viewInventory,
       AppPermission.viewSettings,
       AppPermission.manageUsers,
+      AppPermission.createCashSale,
     },
     AppRole.warehouse: {
       AppPermission.viewOrders,
@@ -127,6 +130,7 @@ class PermissionHelper {
       AppPermission.viewOrders,
       AppPermission.createOrder,
       AppPermission.editOrder,
+      AppPermission.cancelOrder,
       AppPermission.viewOwnStatement,
       AppPermission.viewProducts,
       AppPermission.viewSellingPriceOnly,

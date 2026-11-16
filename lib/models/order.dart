@@ -55,6 +55,15 @@ class Order {
   factory Order.fromMap(Map<String, dynamic> map) => Order.fromJson(map);
 
   factory Order.fromJson(Map<String, dynamic> json) {
+    String textValue(dynamic value, {String fallback = ''}) =>
+        value is String ? value : fallback;
+
+    String identifierValue(dynamic value) {
+      if (value is String) return value;
+      if (value is num) return value.toString();
+      return '';
+    }
+
     // دالة مساعدة لتحليل التاريخ
     DateTime? parseDate(dynamic value) {
       if (value == null) return null;
@@ -84,30 +93,37 @@ class Order {
     // تحليل العناصر إذا كانت موجودة
     List<OrderItem>? parseItems(dynamic itemsData) {
       if (itemsData == null) return null;
-      if (itemsData is! List) return null;
-      return itemsData.map((item) => OrderItem.fromJson(item)).toList();
+      if (itemsData is! List) {
+        throw const FormatException('قائمة بنود الطلب ليست مصفوفة صالحة');
+      }
+      return itemsData.map((item) {
+        if (item is! Map) {
+          throw const FormatException('بند الطلب ليس كائن بيانات صالحًا');
+        }
+        return OrderItem.fromJson(Map<String, dynamic>.from(item));
+      }).toList();
     }
 
     return Order(
-      orderId: json['order_id']?.toString() ?? json['id']?.toString() ?? '',
-      orderNumber: json['order_number']?.toString() ??
-          json['order_no']?.toString() ??
-          json['order_id']?.toString() ??
-          '',
-      customerId: json['customer_id']?.toString() ?? '',
-      customerName: json['customer_name'] ??
-          json['full_name'] ??
-          json['username'] ??
-          'غير معروف',
-      status: json['status'] ?? '',
-      currency: json['currency'] ?? 'USD',
-      note: json['note'],
-      accountantNotes: json['accountant_notes'],
-      accountingInvoiceNo: json['accounting_invoice_no'],
+      orderId: identifierValue(json['order_id'] ?? json['id']),
+      orderNumber: textValue(
+        json['order_number'] ?? json['order_no'],
+        fallback: identifierValue(json['order_id'] ?? json['id']),
+      ),
+      customerId: identifierValue(json['customer_id']),
+      customerName: textValue(
+        json['customer_name'] ?? json['full_name'] ?? json['username'],
+        fallback: 'غير معروف',
+      ),
+      status: textValue(json['status']),
+      currency: textValue(json['currency'], fallback: 'USD'),
+      note: _nullableText(json['note']),
+      accountantNotes: _nullableText(json['accountant_notes']),
+      accountingInvoiceNo: _nullableText(json['accounting_invoice_no']),
       createdAt: parseDate(json['created_at'] ?? json['date']),
       updatedAt: parseDate(json['updated_at']),
-      createdBy: json['created_by'],
-      createdByRole: json['created_by_role']?.toString(),
+      createdBy: _nullableText(json['created_by']),
+      createdByRole: _nullableText(json['created_by_role']),
       isNew: _parseBool(json['is_new']) || _parseBool(json['is_read']) == false,
       isRead: _parseBool(json['is_read']),
       totalAmount: parseNullablePrice(
@@ -184,6 +200,9 @@ class Order {
     String str = value.toString().toLowerCase();
     return str == 'true' || str == '1';
   }
+
+  static String? _nullableText(dynamic value) =>
+      value is String && value.isNotEmpty ? value : null;
 
   Map<String, dynamic> toJson() => {
         'order_id': orderId,

@@ -81,6 +81,65 @@ void main() {
       'stock_available': 12.5,
     });
 
+    test('product exposes only configured units and keeps independent prices',
+        () {
+      final product = Product.fromJson({
+        'code': 'MULTI',
+        'name': 'Multi unit',
+        'unit_1': 'piece',
+        'price': 3,
+        'unit_2': ' box ',
+        'factor_2': 12,
+        'price_2': 25,
+        'unit_3': ' ',
+        'factor_3': '',
+        'price_3': '',
+      });
+
+      expect(product.availableUnits, ['piece', 'box']);
+      final boxItem = OrderItem.fromProduct(
+        product,
+        quantity: 2,
+        selectedUnit: 'box',
+      );
+      expect(boxItem.unitFactor, 12);
+      expect(boxItem.priceOffer, 25);
+      expect(boxItem.total, 50);
+    });
+
+    test('missing unit price is distinct from a configured zero price', () {
+      final product = Product.fromJson({
+        'code': 'PRICE',
+        'unit_1': 'piece',
+        'price': 0,
+        'unit_2': 'case',
+        'factor_2': 6,
+        'price_2': '',
+      });
+      expect(product.priceForUnit('piece'), 0);
+      expect(product.priceForUnit('case'), isNull);
+      expect(product.availableUnits, ['piece', 'case']);
+
+      final cachedMissingPrice = Product.fromJson({
+        ...product.toJson(),
+        'price_configured': false,
+      });
+      expect(cachedMissingPrice.priceForUnit('piece'), isNull);
+    });
+
+    test('conflicting duplicate unit definitions are surfaced', () {
+      final product = Product.fromJson({
+        'code': 'DUP',
+        'unit_1': 'piece',
+        'price': 3,
+        'unit_2': 'piece',
+        'factor_2': 12,
+        'price_2': 25,
+      });
+      expect(product.availableUnits, ['piece']);
+      expect(product.hasConflictingUnits, isTrue);
+    });
+
     expect(item.stockAvailable, 12);
   });
 

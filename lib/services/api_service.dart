@@ -435,7 +435,8 @@ class AuthApiService {
       final sessionTimer = Stopwatch()..start();
       await _apiService.setSession(session['token'] as String, session);
       if (kDebugMode) {
-        debugPrint('login_session_persist_ms=${sessionTimer.elapsedMilliseconds}');
+        debugPrint(
+            'login_session_persist_ms=${sessionTimer.elapsedMilliseconds}');
       }
       data['session'] = session;
       data['user'] = data['user'] ?? session;
@@ -509,6 +510,36 @@ class SalesApiService {
   Future<Map<String, dynamic>> getConfiguration() =>
       _apiService.post({'action': 'sales_configuration'});
 
+  Future<List<Map<String, dynamic>>> getCustomers({String query = ''}) async {
+    final response = await _apiService.post({
+      'action': 'sales_customer_list',
+      if (query.trim().isNotEmpty) 'query': query.trim(),
+    });
+    final rows = response['customers'];
+    if (rows is! List) {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'استجابة قائمة زبائن المبيعات غير صالحة',
+      );
+    }
+    return rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> createCustomer({
+    required String fullName,
+    String phone = '',
+    required String clientRequestId,
+  }) =>
+      _apiService.post({
+        'action': 'sales_customer_create',
+        'full_name': fullName,
+        'phone': phone,
+        'client_request_id': clientRequestId,
+      });
+
   Future<Map<String, dynamic>> getSettings() =>
       _apiService.post({'action': 'sales_settings_get'});
 
@@ -521,6 +552,76 @@ class SalesApiService {
     Map<String, dynamic> invoice,
   ) =>
       _apiService.post({'action': 'sales_invoice_create', ...invoice});
+
+  Future<Map<String, dynamic>> createCustomerReceipt(
+    Map<String, dynamic> receipt,
+  ) =>
+      _apiService.post({'action': 'customer_receipt_create', ...receipt});
+
+  Future<Map<String, dynamic>> collectInvoicePayment(
+    Map<String, dynamic> collection,
+  ) =>
+      _apiService.post({'action': 'sales_invoice_collect', ...collection});
+
+  Future<Map<String, dynamic>> allocateReceipt({
+    required String receiptId,
+    required String invoiceId,
+    required double amountUsd,
+    required String clientRequestId,
+  }) =>
+      _apiService.post({
+        'action': 'sales_invoice_allocate',
+        'receipt_id': receiptId,
+        'invoice_id': invoiceId,
+        'amount_usd': amountUsd,
+        'client_request_id': clientRequestId,
+      });
+
+  Future<Map<String, dynamic>> getCashBoxStatement({
+    required String boxName,
+    required String currency,
+  }) =>
+      _apiService.post({
+        'action': 'cash_box_statement',
+        'box_name': boxName,
+        'currency': currency,
+      });
+
+  Future<Map<String, dynamic>> getCashBoxBalances() =>
+      _apiService.post({'action': 'box_balances'});
+
+  Future<Map<String, dynamic>> setCashBoxOpeningBalance({
+    required String boxName,
+    required String currency,
+    required double amount,
+    required String reason,
+    double? exchangeRate,
+    required String clientRequestId,
+  }) =>
+      _apiService.post({
+        'action': 'cash_box_opening_balance',
+        'box_name': boxName,
+        'currency': currency,
+        'amount': amount,
+        'reason': reason,
+        if (exchangeRate != null) 'exchange_rate': exchangeRate,
+        'client_request_id': clientRequestId,
+      });
+
+  Future<List<Map<String, dynamic>>> getSalespeople() async {
+    final response = await _apiService.post({'action': 'salespeople_list'});
+    final rows = response['salespeople'];
+    if (rows is! List) {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'استجابة قائمة المندوبين غير صالحة',
+      );
+    }
+    return rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+  }
 
   Future<Map<String, dynamic>> voidInvoice({
     required String invoiceId,
@@ -538,6 +639,9 @@ class SalesApiService {
     String? toDate,
     String? paymentMethod,
     String? status,
+    String? financialStatus,
+    String? customerId,
+    String? sellerId,
   }) =>
       _apiService.post({
         'action': 'sales_invoice_list',
@@ -546,16 +650,23 @@ class SalesApiService {
         if (toDate != null) 'to_date': toDate,
         if (paymentMethod != null) 'payment_method': paymentMethod,
         if (status != null) 'status': status,
+        if (financialStatus != null) 'financial_status': financialStatus,
+        if (customerId != null) 'customer_id': customerId,
+        if (sellerId != null) 'seller_id': sellerId,
       });
 
   Future<Map<String, dynamic>> getSummary({
     String? fromDate,
     String? toDate,
+    String? sellerId,
+    String? customerId,
   }) =>
       _apiService.post({
         'action': 'sales_summary',
         if (fromDate != null) 'from_date': fromDate,
         if (toDate != null) 'to_date': toDate,
+        if (sellerId != null) 'seller_id': sellerId,
+        if (customerId != null) 'customer_id': customerId,
       });
 }
 
@@ -788,6 +899,8 @@ class ApiService {
     }
 
     http.Client? client;
+    final requestTimer = Stopwatch()..start();
+    var responseBytes = 0;
     try {
       client = http.Client();
       final uri = Uri.parse(cleanUrl);
@@ -811,6 +924,7 @@ class ApiService {
             body: jsonEncode(requestBody),
           )
           .timeout(requestTimeout);
+      responseBytes = utf8.encode(response.body).length;
 
       // التعامل مع إعادة التوجيه في Apps Script (302)
       if (response.statusCode == 302) {
@@ -823,19 +937,38 @@ class ApiService {
           }
           final redirectedResponse =
               await client.get(Uri.parse(location)).timeout(remaining);
-          return await _handleResponse(
-              redirectedResponse, requestBody, useCache);
+          responseBytes = utf8.encode(redirectedResponse.body).length;
+          final result =
+              await _handleResponse(redirectedResponse, requestBody, useCache);
+          if (kDebugMode) {
+            debugPrint(
+                'api_request_ms action=$action elapsed=${requestTimer.elapsedMilliseconds} response_bytes=$responseBytes');
+          }
+          return result;
         }
       }
 
-      return await _handleResponse(response, requestBody, useCache);
+      final result = await _handleResponse(response, requestBody, useCache);
+      if (kDebugMode) {
+        debugPrint(
+            'api_request_ms action=$action elapsed=${requestTimer.elapsedMilliseconds} response_bytes=$responseBytes');
+      }
+      return result;
     } on TimeoutException {
+      if (kDebugMode) {
+        debugPrint(
+            'api_request_timeout action=$action elapsed=${requestTimer.elapsedMilliseconds}');
+      }
       throw const ApiException(
         code: 'TIMEOUT',
         message: 'انتهت مهلة الاتصال بالخادم',
         retryable: true,
       );
     } on SocketException {
+      if (kDebugMode) {
+        debugPrint(
+            'api_request_network_error action=$action elapsed=${requestTimer.elapsedMilliseconds}');
+      }
       final cached = await _offlineProductsResponse(
         action,
         useCache: useCache,
@@ -849,6 +982,10 @@ class ApiService {
         retryable: true,
       );
     } on http.ClientException {
+      if (kDebugMode) {
+        debugPrint(
+            'api_request_client_error action=$action elapsed=${requestTimer.elapsedMilliseconds}');
+      }
       final cached = await _offlineProductsResponse(
         action,
         useCache: useCache,

@@ -9,6 +9,7 @@ import 'local_repository.dart';
 class OrderRepository {
   final ApiService _apiService = ApiService();
   final AppDatabase? _db;
+  String? lastFetchError;
 
   OrderRepository({AppDatabase? db}) : _db = db;
 
@@ -25,15 +26,27 @@ class OrderRepository {
     }
 
     try {
+      lastFetchError = null;
       final response = await _apiService.orders.getOrders(
         customerId: customerId,
         status: status,
       );
 
       final items = response['orders'] ?? response['data'] ?? [];
-      if (items is! List) return [];
+      if (items is! List) {
+        throw const FormatException(
+          'استجابة الطلبات لا تحتوي على قائمة صالحة',
+        );
+      }
 
-      final orders = items.map((item) => Order.fromJson(item)).toList();
+      final orders = items.map((item) {
+        if (item is! Map) {
+          throw const FormatException(
+            'عنصر قائمة الطلبات ليس كائن بيانات صالحًا',
+          );
+        }
+        return Order.fromJson(Map<String, dynamic>.from(item));
+      }).toList();
 
       // حفظ في التخزين المحلي
       if (_db != null) {
@@ -43,7 +56,9 @@ class OrderRepository {
 
       return orders;
     } catch (e) {
+      lastFetchError = e.toString();
       print('Error fetching orders: $e');
+      if (e is FormatException) rethrow;
 
       // محاولة العودة للبيانات المحلية في حال فشل الاتصال
       if (_db != null) {
@@ -126,6 +141,17 @@ class OrderRepository {
     } catch (e) {
       print('Error updating order status: $e');
       rethrow;
+    }
+  }
+
+  Future<void> cancelOrder(String orderId, {String? reason}) async {
+    final response = await _apiService.orders.cancelOrder(orderId, reason);
+    if (response['ok'] != true && response['success'] != true) {
+      final error = response['error'];
+      final message = error is Map
+          ? error['message']?.toString()
+          : response['message']?.toString();
+      throw Exception(message ?? 'تعذر إلغاء الطلب');
     }
   }
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -12,10 +14,12 @@ import 'providers/providers.dart';
 import 'models/models.dart';
 import 'theme/theme.dart';
 import 'services/api_service.dart';
+import 'services/app_update_service.dart';
 import 'services/database_service.dart';
 import 'services/deep_link_service.dart';
 import 'services/fcm_service.dart';
 import 'services/notification_service.dart';
+import 'screens/app_update_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,11 +68,13 @@ class OrcaApp extends StatefulWidget {
   State<OrcaApp> createState() => OrcaAppState();
 }
 
-class OrcaAppState extends State<OrcaApp> {
+class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
   Map<String, dynamic>? _session;
   bool _isLoading = true;
   late ThemeMode _themeMode;
   late final AppDatabase _database;
+  late final AppUpdateService _appUpdateService;
+  Timer? _autoUpdateCheckTimer;
 
   // Repositories (will be injected into providers)
   late OrderRepository _orderRepository;
@@ -101,10 +107,48 @@ class OrcaAppState extends State<OrcaApp> {
   void initState() {
     super.initState();
     _database = AppDatabase();
+    _appUpdateService = AppUpdateService();
     _themeMode = widget.initialThemeMode;
+    WidgetsBinding.instance.addObserver(this);
     _initRepositories();
     ApiService().onSessionExpired = _handleSessionExpired;
     _loadSession();
+    _autoUpdateCheckTimer = Timer(
+      const Duration(seconds: 2),
+      () => unawaited(_startAutomaticUpdateCheck()),
+    );
+  }
+
+  Future<void> _startAutomaticUpdateCheck() async {
+    if (!mounted) return;
+    await _appUpdateService.initialize();
+    if (!mounted) return;
+    await _appUpdateService.checkForUpdates();
+    if (!mounted || !_appUpdateService.consumeAutomaticPrompt()) return;
+    final context = DeepLinkService.navigatorKey.currentContext;
+    if (context == null || !context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AppUpdateDialog(
+        requiredUpdate: _appUpdateService.isRequired,
+      ),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_appUpdateService.onAppResumed());
+    }
+  }
+
+  @override
+  void dispose() {
+    _autoUpdateCheckTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _appUpdateService.dispose();
+    super.dispose();
   }
 
   void _handleSessionExpired() {
@@ -178,6 +222,9 @@ class OrcaAppState extends State<OrcaApp> {
             create: (_) => CustomerProvider(_customerRepository)),
         ChangeNotifierProvider(
           create: (_) => NotificationProvider(NotificationService()),
+        ),
+        ChangeNotifierProvider<AppUpdateService>.value(
+          value: _appUpdateService,
         ),
         ChangeNotifierProxyProvider<LocalRepository, DraftsProvider>(
           create: (context) => DraftsProvider(context.read<LocalRepository>()),

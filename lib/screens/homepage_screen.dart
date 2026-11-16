@@ -194,12 +194,16 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             () => _navigate(const InventoryMovementsScreen())),
         _buildMenuOption(Icons.receipt_long, 'الفواتير',
             () => _navigate(const NewOrdersListScreen())),
+        _buildMenuOption(Icons.point_of_sale, 'فواتير المبيعات',
+            () => _navigate(SalesInvoicesScreen(session: widget.session))),
+        _buildMenuOption(Icons.account_balance_wallet, 'الصناديق والحركات',
+            () => _navigate(const CashBoxesScreen())),
+        _buildMenuOption(Icons.add_card, 'سند قبض من زبون',
+            () => _navigate(const CustomerReceiptScreen())),
         _buildMenuOption(Icons.assessment, 'التقارير',
             () => _navigate(ReportsScreen(session: widget.session))),
         _buildMenuOption(Icons.manage_accounts, 'إدارة المستخدمين',
             () => _navigate(UserManagementScreen(session: widget.session))),
-        _buildMenuOption(Icons.swap_horiz, 'تخصيص مخزون للمندوب',
-            () => _navigate(const SalesStockTransferScreen())),
         _buildMenuOption(Icons.history, 'سجل العمليات',
             () => _navigate(AuditLogScreen(session: widget.session))),
         _buildMenuOption(Icons.backup, 'النسخ الاحتياطي',
@@ -221,8 +225,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             () => _navigate(const NewOrdersListScreen())),
         _buildMenuOption(Icons.assessment, 'التقارير',
             () => _navigate(ReportsScreen(session: widget.session))),
-        _buildMenuOption(Icons.swap_horiz, 'تخصيص مخزون للمندوب',
-            () => _navigate(const SalesStockTransferScreen())),
+        _buildMenuOption(Icons.point_of_sale, 'فواتير المبيعات',
+            () => _navigate(SalesInvoicesScreen(session: widget.session))),
+        _buildMenuOption(Icons.payments, 'الدفعات',
+            () => _navigate(PaymentsScreen(session: widget.session))),
+        _buildMenuOption(Icons.account_balance_wallet, 'الصناديق والحركات',
+            () => _navigate(const CashBoxesScreen())),
+        _buildMenuOption(Icons.add_card, 'سند قبض من زبون',
+            () => _navigate(const CustomerReceiptScreen())),
       ]);
     } else if (userRole == AppRole.accountant) {
       options.addAll([
@@ -230,8 +240,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             () => _navigate(CustomersScreen(session: widget.session))),
         _buildMenuOption(Icons.receipt_long, 'الفواتير',
             () => _navigate(const NewOrdersListScreen())),
-        _buildMenuOption(
-            Icons.payments, 'الدفعات', () => _navigate(const PaymentsScreen())),
+        _buildMenuOption(Icons.payments, 'الدفعات',
+            () => _navigate(PaymentsScreen(session: widget.session))),
+        _buildMenuOption(Icons.point_of_sale, 'فواتير المبيعات',
+            () => _navigate(SalesInvoicesScreen(session: widget.session))),
+        _buildMenuOption(Icons.account_balance_wallet, 'الصناديق والحركات',
+            () => _navigate(const CashBoxesScreen())),
+        _buildMenuOption(Icons.add_card, 'سند قبض من زبون',
+            () => _navigate(const CustomerReceiptScreen())),
         _buildMenuOption(Icons.assessment, 'التقارير المسموحة',
             () => _navigate(ReportsScreen(session: widget.session))),
         _buildMenuOption(Icons.manage_accounts, 'إدارة الحسابات',
@@ -249,8 +265,6 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             () => _navigate(const InventoryMovementsScreen())),
         _buildMenuOption(Icons.local_shipping, 'الشحن',
             () => _navigate(const ShippingScreen())),
-        _buildMenuOption(Icons.swap_horiz, 'تخصيص مخزون للمندوب',
-            () => _navigate(const SalesStockTransferScreen())),
       ]);
     } else if (userRole == AppRole.customer) {
       options.addAll([
@@ -265,7 +279,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ]);
     } else if (userRole == AppRole.salesperson) {
       options.addAll([
-        _buildMenuOption(Icons.add_shopping_cart, 'فاتورة نقدية جديدة',
+        _buildMenuOption(Icons.add_shopping_cart, 'فاتورة مبيع جديدة',
             () => _navigate(const SalesInvoiceScreen())),
         _buildMenuOption(Icons.receipt_long, 'فواتيري ومقبوضاتي',
             () => _navigate(SalesInvoicesScreen(session: widget.session))),

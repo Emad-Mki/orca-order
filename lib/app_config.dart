@@ -6,6 +6,12 @@ class AppConfig {
   static const String _testingApiUrl = String.fromEnvironment(
     'ORCA_TEST_API_URL',
   );
+  static const String updateManifestUrl = String.fromEnvironment(
+    'ORCA_UPDATE_MANIFEST_URL',
+    defaultValue:
+        'https://github.com/Emad-Mki/orca-order-updates/releases/latest/download/update.json',
+  );
+  static const String androidPackageName = 'com.example.orca_order';
 
   static String get apiUrl {
     switch (_environment) {

@@ -165,7 +165,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       decoration: const InputDecoration(
                         labelText: 'معرف صندوق التحصيل',
                         helperText:
-                            'لا يسجل المندوب مبيعات حتى يخصص له صندوق ومخزون بيع.',
+                            'تُخصم مبيعات المندوب من المخزون العام الموحد.',
                       ),
                     ),
                   TextField(

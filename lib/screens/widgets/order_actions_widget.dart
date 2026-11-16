@@ -14,6 +14,7 @@ class OrderActionsWidget extends StatelessWidget {
   final VoidCallback? onCancel;
   final VoidCallback? onEdit;
   final VoidCallback? onPrint;
+  final bool isBusy;
 
   const OrderActionsWidget({
     super.key,
@@ -27,6 +28,7 @@ class OrderActionsWidget extends StatelessWidget {
     this.onCancel,
     this.onEdit,
     this.onPrint,
+    this.isBusy = false,
   });
 
   @override
@@ -66,11 +68,11 @@ class OrderActionsWidget extends StatelessWidget {
           // أزرار الإدارة (تسعير، اعتماد، إلخ)
           if (canPrice && _isPricableStatus(status))
             _buildActionButton(context, 'تسعير الفاتورة', Icons.attach_money,
-                Colors.blue, onPrice),
+                Colors.blue, isBusy ? null : onPrice),
 
           if (canApprove && _isApprovableStatus(status))
             _buildActionButton(context, 'اعتماد الطلب', Icons.check_circle,
-                Colors.green, onApprove),
+                Colors.green, isBusy ? null : onApprove),
 
           if (canPrepare && _isPreparableStatus(status))
             _buildActionButton(
@@ -78,22 +80,26 @@ class OrderActionsWidget extends StatelessWidget {
               status == 'approved' ? 'بدء التجهيز' : 'متابعة التعبئة',
               Icons.inventory_2,
               Colors.orange,
-              onPrepare,
+              isBusy ? null : onPrepare,
             ),
 
           if (canShip && _isShippableStatus(status))
-            _buildActionButton(
-                context, 'شحن', Icons.local_shipping, Colors.indigo, onShip),
+            _buildActionButton(context, 'شحن', Icons.local_shipping,
+                Colors.indigo, isBusy ? null : onShip),
 
           if (canApprove &&
               _isDeliverableStatus(
                   status)) // Using canApprove as proxy for delivery/manage permissions for now
             _buildActionButton(context, 'تسليم', Icons.delivery_dining,
-                Colors.teal, onDeliver),
+                Colors.teal, isBusy ? null : onDeliver),
 
-          if (canCancel && _isCancellableStatus(status))
+          if (canCancel && _isCancellableStatus(status, userRole))
             _buildActionButton(
-                context, 'إلغاء', Icons.cancel, Colors.red, onCancel),
+                context,
+                isBusy ? 'جارٍ التنفيذ...' : 'إلغاء',
+                isBusy ? Icons.hourglass_top : Icons.cancel,
+                theme.colorScheme.error,
+                isBusy ? null : onCancel),
 
           // أزرار الزبون / التعديل
           if (canEdit)
@@ -102,17 +108,17 @@ class OrderActionsWidget extends StatelessWidget {
                 userRole == AppRole.warehouse ? 'تعديل التجهيز' : 'تعديل الطلب',
                 Icons.edit,
                 Colors.blue,
-                onEdit),
+                isBusy ? null : onEdit),
 
           // تأكيد السعر للزبون (إذا كان له صلاحية معينة أو نستخدم canApprove للتبسيط)
           if (userRole == AppRole.customer && _isConfirmableStatus(status))
             _buildActionButton(context, 'موافق على السعر', Icons.check,
-                Colors.green, onApprove),
+                Colors.green, isBusy ? null : onApprove),
 
           // زر الطباعة دائماً متاح إذا تم توفيره
           if (onPrint != null)
             _buildActionButton(context, 'طباعة / PDF', Icons.print,
-                theme.colorScheme.onSurfaceVariant, onPrint),
+                theme.colorScheme.onSurfaceVariant, isBusy ? null : onPrint),
         ],
       ),
     );
@@ -158,8 +164,25 @@ class OrderActionsWidget extends StatelessWidget {
     return ['shipping'].contains(status);
   }
 
-  bool _isCancellableStatus(String status) {
-    return !['delivered', 'cancelled'].contains(status);
+  bool _isCancellableStatus(String status, AppRole role) {
+    final normalized = status.trim().toLowerCase();
+    if (role == AppRole.customer) {
+      return const {
+        'pending',
+        'submitted',
+        'processing',
+        'customer_changed',
+        'priced',
+      }.contains(normalized);
+    }
+    if (const {
+      AppRole.admin,
+      AppRole.manager,
+      AppRole.accountant,
+    }.contains(role)) {
+      return !const {'cancelled', 'canceled', 'deleted'}.contains(normalized);
+    }
+    return false;
   }
 
   bool _isConfirmableStatus(String status) {

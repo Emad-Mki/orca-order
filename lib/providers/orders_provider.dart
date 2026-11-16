@@ -1,16 +1,27 @@
 import 'package:flutter/foundation.dart';
-import '../repositories/order_repository.dart';
 import '../models/order.dart';
+import '../order_status_mapper.dart';
+import '../repositories/order_repository.dart';
 
-/// Provider لإدارة قائمة الطلبات والفلترة
+enum OrderSortOption { newest, oldest, valueHighToLow, valueLowToHigh }
+
+/// Provider for the full, permission-scoped order list and local view filters.
 class OrdersProvider extends ChangeNotifier {
-  final OrderRepository _orderRepository;
+  static const Duration minimumManualRefreshInterval = Duration(seconds: 15);
 
+  final OrderRepository _orderRepository;
   List<Order> _orders = [];
   bool _isLoading = false;
   String? _errorMessage;
   String _currentFilter = 'all';
   String _searchQuery = '';
+  OrderSortOption _sortOption = OrderSortOption.newest;
+  DateTime? _lastFetchTime;
+  DateTime? _fromDate;
+  DateTime? _toDate;
+  Future<void>? _fetchRequest;
+  int _mutationVersion = 0;
+  bool _lastRefreshThrottled = false;
 
   OrdersProvider(this._orderRepository);
 
@@ -19,97 +30,232 @@ class OrdersProvider extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String get currentFilter => _currentFilter;
   String get searchQuery => _searchQuery;
+  OrderSortOption get sortOption => _sortOption;
+  DateTime? get fromDate => _fromDate;
+  DateTime? get toDate => _toDate;
+  bool get lastRefreshThrottled => _lastRefreshThrottled;
+  bool get canRefresh =>
+      _lastFetchTime == null ||
+      DateTime.now().difference(_lastFetchTime!) >=
+          minimumManualRefreshInterval;
 
-  /// الحصول على القائمة بعد تطبيق الفلتر والبحث
   List<Order> get _filteredOrders {
     var filtered = _orders;
-
-    // تطبيق الفلتر حسب الحالة
     if (_currentFilter != 'all') {
-      filtered =
-          filtered.where((order) => order.status == _currentFilter).toList();
+      filtered = filtered
+          .where((order) =>
+              OrderStatusMapper.normalizeStatus(order.status) == _currentFilter)
+          .toList();
     }
-
-    // تطبيق البحث
-    if (_searchQuery.isNotEmpty) {
+    if (_fromDate != null) {
+      final start = DateTime(_fromDate!.year, _fromDate!.month, _fromDate!.day);
       filtered = filtered.where((order) {
-        final orderId = order.orderNumber.toLowerCase();
-        final customerName = order.customerName.toLowerCase();
-        final query = _searchQuery.toLowerCase();
-        return orderId.contains(query) || customerName.contains(query);
+        final date = order.createdAt;
+        return date != null && !date.isBefore(start);
+      }).toList();
+    }
+    if (_toDate != null) {
+      final end = DateTime(
+        _toDate!.year,
+        _toDate!.month,
+        _toDate!.day,
+        23,
+        59,
+        59,
+        999,
+      );
+      filtered = filtered.where((order) {
+        final date = order.createdAt;
+        return date != null && !date.isAfter(end);
       }).toList();
     }
 
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isNotEmpty) {
+      filtered = filtered.where((order) {
+        return order.orderNumber.toLowerCase().contains(query) ||
+            order.orderId.toLowerCase().contains(query) ||
+            order.customerName.toLowerCase().contains(query);
+      }).toList();
+    }
+
+    filtered.sort((a, b) {
+      int result;
+      switch (_sortOption) {
+        case OrderSortOption.oldest:
+          result = (a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+              .compareTo(b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0));
+          break;
+        case OrderSortOption.valueHighToLow:
+          result = (b.totalAmount ?? 0).compareTo(a.totalAmount ?? 0);
+          break;
+        case OrderSortOption.valueLowToHigh:
+          result = (a.totalAmount ?? 0).compareTo(b.totalAmount ?? 0);
+          break;
+        case OrderSortOption.newest:
+          result = (b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+              .compareTo(a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0));
+          break;
+      }
+      return result == 0 ? a.orderId.compareTo(b.orderId) : result;
+    });
     return filtered;
   }
 
-  /// جلب جميع الطلبات
-  Future<void> fetchOrders({String? status, bool forceRefresh = false}) async {
+  /// Same-resource refreshes share one request. The cooldown begins only when
+  /// a manual refresh is accepted, not when it is rejected.
+  Future<void> fetchOrders({
+    String? status,
+    bool forceRefresh = false,
+    bool bypassMinimumInterval = false,
+  }) {
+    final activeRequest = _fetchRequest;
+    if (activeRequest != null) return activeRequest;
+
+    if (forceRefresh && !bypassMinimumInterval && !canRefresh) {
+      _lastRefreshThrottled = true;
+      notifyListeners();
+      return Future<void>.value();
+    }
+
+    if (forceRefresh && !bypassMinimumInterval) {
+      _lastFetchTime = DateTime.now();
+    }
+    if (forceRefresh) {
+      _lastRefreshThrottled = false;
+    }
+    final mutationVersionAtStart = _mutationVersion;
+    final request = _performFetch(
+      status: status,
+      forceRefresh: forceRefresh,
+      mutationVersionAtStart: mutationVersionAtStart,
+    );
+    _fetchRequest = request;
+    return request.whenComplete(() {
+      if (identical(_fetchRequest, request)) _fetchRequest = null;
+    });
+  }
+
+  Future<void> _performFetch({
+    required String? status,
+    required bool forceRefresh,
+    required int mutationVersionAtStart,
+  }) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
-
     try {
-      _orders = await _orderRepository.getOrders(
-          status: status, forceRefresh: forceRefresh);
+      final fetched = await _orderRepository.getOrders(
+        status: status,
+        forceRefresh: forceRefresh,
+      );
+      if (mutationVersionAtStart == _mutationVersion) {
+        _orders = fetched;
+        _errorMessage = _orderRepository.lastFetchError;
+      }
+    } catch (error) {
+      _errorMessage = error.toString();
+    } finally {
       _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _isLoading = false;
-      _errorMessage = e.toString();
       notifyListeners();
     }
   }
 
-  /// تحديث فلتر الحالات
   void setFilter(String filter) {
     _currentFilter = filter;
     notifyListeners();
   }
 
-  /// تحديث نص البحث
   void setSearchQuery(String query) {
     _searchQuery = query;
     notifyListeners();
   }
 
-  /// إعادة تعيين الفلاتر
+  void setSortOption(OrderSortOption option) {
+    _sortOption = option;
+    notifyListeners();
+  }
+
+  void setDateRange({DateTime? from, DateTime? to}) {
+    _fromDate = from;
+    _toDate = to;
+    notifyListeners();
+  }
+
   void resetFilters() {
     _currentFilter = 'all';
     _searchQuery = '';
+    _sortOption = OrderSortOption.newest;
+    _fromDate = null;
+    _toDate = null;
     notifyListeners();
   }
 
-  /// إضافة طلب جديد للقائمة
   void addOrder(Order order) {
     _orders.insert(0, order);
+    _mutationVersion++;
     notifyListeners();
   }
 
-  /// تحديث طلب موجود
   void updateOrder(Order updatedOrder) {
-    final index = _orders.indexWhere((o) => o.orderId == updatedOrder.orderId);
+    final index = _orders.indexWhere((order) =>
+        order.orderId == updatedOrder.orderId ||
+        order.orderNumber == updatedOrder.orderNumber);
     if (index != -1) {
       _orders[index] = updatedOrder;
+      _mutationVersion++;
       notifyListeners();
     }
   }
 
-  /// حذف طلب
   void removeOrder(String orderId) {
-    _orders.removeWhere((o) => o.orderId == orderId);
+    _orders.removeWhere((order) => order.orderId == orderId);
+    _mutationVersion++;
     notifyListeners();
   }
 
-  /// إنشاء طلب جديد
-  Future<String> createOrder(Order order, {String? customerId}) async {
-    final orderId =
-        await _orderRepository.createOrder(order, customerId: customerId);
-    if (orderId.isNotEmpty) {
-      // إضافة الطلب الجديد للقائمة المحلية
-      final newOrder = order.copyWith(orderId: orderId, orderNumber: orderId);
-      addOrder(newOrder);
+  Future<bool> cancelOrder(String orderId, {String? reason}) async {
+    await _orderRepository.cancelOrder(orderId, reason: reason);
+    final index = _orders.indexWhere((order) => order.orderId == orderId);
+    if (index != -1) {
+      _orders[index] = _orders[index].copyWith(
+        status: 'cancelled',
+        updatedAt: DateTime.now(),
+      );
+      _mutationVersion++;
+      notifyListeners();
     }
-    return orderId;
+    return true;
   }
+
+  Future<void> syncAfterMutation({
+    String? orderId,
+    String? status,
+  }) async {
+    if (orderId != null && status != null) {
+      updateOrderStatusLocally(orderId, status);
+    } else {
+      _mutationVersion++;
+    }
+    final activeRequest = _fetchRequest;
+    if (activeRequest != null) await activeRequest;
+    await fetchOrders(
+      forceRefresh: true,
+      bypassMinimumInterval: true,
+    );
+  }
+
+  void updateOrderStatusLocally(String orderId, String status) {
+    _mutationVersion++;
+    final index = _orders.indexWhere((order) => order.orderId == orderId);
+    if (index == -1) return;
+    _orders[index] = _orders[index].copyWith(
+      status: status,
+      updatedAt: DateTime.now(),
+    );
+    notifyListeners();
+  }
+
+  Future<String> createOrder(Order order, {String? customerId}) =>
+      _orderRepository.createOrder(order, customerId: customerId);
 }

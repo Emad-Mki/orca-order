@@ -130,7 +130,11 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                           ),
                           fontSize: 14,
                         )),
-                    Text('\$${formatMoneyShort(balance)}',
+                    Text(
+                        formatMoneyShort(
+                          balance,
+                          currency: _data?['currency']?.toString() ?? 'USD',
+                        ),
                         style: TextStyle(
                             color: theme.colorScheme.onPrimary,
                             fontSize: 24,
@@ -170,7 +174,10 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                             style:
                                 const TextStyle(fontWeight: FontWeight.bold)),
                         Text(
-                            '\$${formatMoneyShort(isDebit ? s['debit'] : s['credit'])}',
+                            formatMoneyShort(
+                              isDebit ? s['debit'] : s['credit'],
+                              currency: 'USD',
+                            ),
                             style: TextStyle(
                                 color: isDebit
                                     ? theme.colorScheme.error
@@ -187,7 +194,8 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                           Text('ملاحظة: ${s['note']}',
                               style: const TextStyle(
                                   fontStyle: FontStyle.italic, fontSize: 12)),
-                        Text('الرصيد بعد الحركة: \$${s['balance']}',
+                        Text(
+                            'الرصيد بعد الحركة: ${formatMoneyShort(s['balance'], currency: 'USD')}',
                             style: TextStyle(fontSize: 11, color: muted)),
                       ],
                     ),

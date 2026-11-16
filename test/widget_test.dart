@@ -7,11 +7,13 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:orca_order/app_config.dart';
 import 'package:orca_order/main.dart';
 import 'package:orca_order/screens/settings_screen.dart';
+import 'package:orca_order/services/app_update_service.dart';
 
 void main() {
   test('test environment does not fall back to production', () {
@@ -35,13 +37,16 @@ void main() {
   testWidgets('settings displays the active account and hides admin actions',
       (WidgetTester tester) async {
     await tester.pumpWidget(
-      const MaterialApp(
-        home: SettingsScreen(
-          session: {
-            'full_name': 'عميل حالي',
-            'username': 'current-customer',
-            'role': 'customer',
-          },
+      ChangeNotifierProvider(
+        create: (_) => AppUpdateService(),
+        child: const MaterialApp(
+          home: SettingsScreen(
+            session: {
+              'full_name': 'عميل حالي',
+              'username': 'current-customer',
+              'role': 'customer',
+            },
+          ),
         ),
       ),
     );

@@ -164,6 +164,14 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
         'quantity': quantity,
         'note': item.noteController.text.trim(),
         if (_canEditPrice && price != null) 'price': price,
+        // Include tracking metadata if available
+        'unit_factor': item.unitFactor,
+        'base_price_snapshot': item.basePriceSnapshot,
+        'unit_1': item.unit1,
+        'unit_2': item.unit2,
+        'factor_2': item.factor2,
+        'unit_3': item.unit3,
+        'factor_3': item.factor3,
       });
     }
 
@@ -323,6 +331,15 @@ class _EditableOrderItem {
   final TextEditingController priceController;
   final TextEditingController noteController;
 
+  // Metadata for tracking
+  double? unitFactor;
+  double? basePriceSnapshot;
+  String? unit1;
+  String? unit2;
+  double? factor2;
+  String? unit3;
+  double? factor3;
+
   _EditableOrderItem({
     required this.itemId,
     required this.code,
@@ -331,6 +348,13 @@ class _EditableOrderItem {
     required String unit,
     required String price,
     required String note,
+    this.unitFactor,
+    this.basePriceSnapshot,
+    this.unit1,
+    this.unit2,
+    this.factor2,
+    this.unit3,
+    this.factor3,
   })  : quantityController = TextEditingController(text: quantity),
         unitController = TextEditingController(text: unit),
         priceController = TextEditingController(text: price),
@@ -353,6 +377,13 @@ class _EditableOrderItem {
       unit: item.unit,
       price: canEditPrice ? price?.toString() ?? '' : '',
       note: isCustomer ? item.customerNote ?? '' : item.accountantNote ?? '',
+      unitFactor: item.unitFactor,
+      basePriceSnapshot: item.basePriceSnapshot,
+      unit1: item.unit1,
+      unit2: item.unit2,
+      factor2: item.factor2,
+      unit3: item.unit3,
+      factor3: item.factor3,
     );
   }
 
@@ -368,6 +399,13 @@ class _EditableOrderItem {
       unit: product.unit,
       price: canEditPrice ? product.price.toString() : '',
       note: '',
+      unitFactor: 1.0,
+      basePriceSnapshot: product.price,
+      unit1: product.unit,
+      unit2: product.unit2,
+      factor2: product.factor2,
+      unit3: product.unit3,
+      factor3: product.factor3,
     );
   }
 

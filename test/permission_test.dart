@@ -15,6 +15,26 @@ void main() {
     );
   });
 
+  test('manager, accountant, and salesperson can create sales invoices', () {
+    for (final role in [
+      AppRole.manager,
+      AppRole.accountant,
+      AppRole.salesperson,
+    ]) {
+      expect(
+        PermissionHelper.hasPermission(role, AppPermission.createCashSale),
+        isTrue,
+      );
+    }
+    expect(
+      PermissionHelper.hasPermission(
+        AppRole.warehouse,
+        AppPermission.createCashSale,
+      ),
+      isFalse,
+    );
+  });
+
   test('warehouse and customer cannot view available product quantities', () {
     expect(
       PermissionHelper.hasPermission(

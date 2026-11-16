@@ -29,7 +29,7 @@ class PricingItem {
   // Multi-unit support
   List<String> availableUnits;
   Map<String, double> unitFactors;
-  double basePrice;
+  double basePriceSnapshot;
 
   late TextEditingController quantityController;
   late TextEditingController priceController;
@@ -50,7 +50,7 @@ class PricingItem {
     this.isNewlyAdded = false,
     this.availableUnits = const [],
     this.unitFactors = const {},
-    this.basePrice = 0.0,
+    this.basePriceSnapshot = 0.0,
   }) {
     quantityController = TextEditingController(text: _formatNum(quantity));
     priceController = TextEditingController(
@@ -79,9 +79,23 @@ class PricingItem {
   factory PricingItem.fromModel(OrderItem item, {Product? product}) {
     List<String> units = [];
     Map<String, double> factors = {};
-    double bPrice = 0.0;
+    double bPrice = item.basePriceSnapshot ?? 0.0;
 
-    if (product != null) {
+    // Preference 1: Use snapshots from the item itself (historical consistency)
+    if (item.unit1 != null && item.unit1!.isNotEmpty) {
+      units.add(item.unit1!);
+      factors[item.unit1!] = 1.0;
+      if (item.unit2 != null && item.unit2!.isNotEmpty) {
+        units.add(item.unit2!);
+        factors[item.unit2!] = item.factor2 ?? 1.0;
+      }
+      if (item.unit3 != null && item.unit3!.isNotEmpty) {
+        units.add(item.unit3!);
+        factors[item.unit3!] = item.factor3 ?? 1.0;
+      }
+    }
+    // Preference 2: Fallback to current product data if snapshots are missing
+    else if (product != null) {
       units = product.units ?? [];
       if (units.isEmpty) {
         units.add(product.unit);
@@ -95,11 +109,14 @@ class PricingItem {
         factors[product.unit3!] = product.factor3 ?? 1.0;
         if (!units.contains(product.unit3)) units.add(product.unit3!);
       }
-      bPrice = product.price;
-    } else {
+      if (bPrice == 0) bPrice = product.price;
+    }
+    // Preference 3: Minimal fallback
+    else {
       units = [item.unit];
       factors = {item.unit: 1.0};
-      bPrice = item.finalPrice ?? item.priceOffer ?? item.defaultPrice ?? 0.0;
+      if (bPrice == 0)
+        bPrice = item.finalPrice ?? item.priceOffer ?? item.defaultPrice ?? 0.0;
     }
 
     return PricingItem(
@@ -117,7 +134,7 @@ class PricingItem {
       note: item.accountantNote ?? '',
       availableUnits: units,
       unitFactors: factors,
-      basePrice: bPrice,
+      basePriceSnapshot: bPrice,
     );
   }
 
@@ -269,7 +286,7 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                                     if (p.unit3 != null && p.unit3!.isNotEmpty)
                                       p.unit3!: p.factor3 ?? 1.0,
                                   },
-                                  basePrice: p.price,
+                                  basePriceSnapshot: p.price,
                                   isNewlyAdded: true,
                                 ));
                               });
@@ -309,6 +326,23 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
             quantityApproved: pItem.quantity,
             unit: pItem.unit,
             finalPrice: pItem.unitPrice,
+            unitFactor: pItem.unitFactors[pItem.unit],
+            basePriceSnapshot: pItem.basePriceSnapshot,
+            unit1: pItem.availableUnits.isNotEmpty
+                ? pItem.availableUnits[0]
+                : null,
+            unit2: pItem.availableUnits.length > 1
+                ? pItem.availableUnits[1]
+                : null,
+            factor2: pItem.availableUnits.length > 1
+                ? pItem.unitFactors[pItem.availableUnits[1]]
+                : null,
+            unit3: pItem.availableUnits.length > 2
+                ? pItem.availableUnits[2]
+                : null,
+            factor3: pItem.availableUnits.length > 2
+                ? pItem.unitFactors[pItem.availableUnits[2]]
+                : null,
             status: pItem.available ? 'available' : 'unavailable',
             accountantNote: pItem.note,
           );
@@ -325,6 +359,23 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
             priceOffer: pItem.effectivePrice,
             defaultPrice: pItem.effectivePrice,
             finalPrice: pItem.unitPrice,
+            unitFactor: pItem.unitFactors[pItem.unit],
+            basePriceSnapshot: pItem.basePriceSnapshot,
+            unit1: pItem.availableUnits.isNotEmpty
+                ? pItem.availableUnits[0]
+                : null,
+            unit2: pItem.availableUnits.length > 1
+                ? pItem.availableUnits[1]
+                : null,
+            factor2: pItem.availableUnits.length > 1
+                ? pItem.unitFactors[pItem.availableUnits[1]]
+                : null,
+            unit3: pItem.availableUnits.length > 2
+                ? pItem.availableUnits[2]
+                : null,
+            factor3: pItem.availableUnits.length > 2
+                ? pItem.unitFactors[pItem.availableUnits[2]]
+                : null,
             currency: widget.order.currency,
             status: pItem.available ? 'available' : 'unavailable',
             stockAvailable: 0,
@@ -379,8 +430,8 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
     setState(() {
       item.unit = newUnit;
       // Suggest new price based on base price and new factor
-      if (item.basePrice > 0) {
-        item.unitPrice = item.basePrice * newFactor;
+      if (item.basePriceSnapshot > 0) {
+        item.unitPrice = item.basePriceSnapshot * newFactor;
         item.priceController.text = PricingItem._formatNum(item.unitPrice!);
       }
     });

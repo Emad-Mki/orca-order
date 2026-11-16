@@ -39,41 +39,65 @@ class OrderItemsListView extends StatelessWidget {
         final item = items[index];
 
         return Card(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          child: ListTile(
-            leading: ProductImageWidget(
-              imageUrl: item.imageUrl,
-              width: 50,
-              height: 50,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            title: Text(item.name,
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Column(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (item.code.isNotEmpty)
-                  Text('كود: ${item.code}',
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        fontSize: 12,
-                      )),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ProductImageWidget(
+                      imageUrl: item.imageUrl,
+                      width: 56,
+                      height: 56,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.name,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
+                          if (item.code.isNotEmpty)
+                            Text(
+                              'رمز المنتج: ${item.code}',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant,
+                                fontSize: 12,
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'الوحدة: ${item.unit.isEmpty ? 'غير محددة' : item.unit}',
+                            style: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 if (hasPricing)
-                  Text(
-                      'الكمية في الفاتورة: ${item.pricedQuantity} ${item.unit}')
+                  _buildQuantityRow(
+                      context, 'الكمية في الفاتورة', item.pricedQuantity, item)
                 else
-                  Text('المطلوب: ${item.quantityRequested} ${item.unit}'),
+                  _buildQuantityRow(
+                      context, 'المطلوب', item.quantityRequested ?? 0, item),
                 if (!hasPricing &&
                     item.quantityApproved != null &&
                     item.quantityApproved! > 0)
-                  Text('المعتمد: ${item.quantityApproved} ${item.unit}',
-                      style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontWeight: FontWeight.bold)),
+                  _buildQuantityRow(
+                      context, 'المعتمد', item.quantityApproved!, item,
+                      color: theme.colorScheme.primary, isBold: true),
                 if (item.quantityPrepared != null && item.quantityPrepared! > 0)
-                  Text('المجهز: ${item.quantityPrepared} ${item.unit}',
-                      style: const TextStyle(
-                          color: Colors.orange, fontWeight: FontWeight.bold)),
+                  _buildQuantityRow(
+                      context, 'المجهز', item.quantityPrepared!, item,
+                      color: Colors.orange, isBold: true),
                 if (item.customerNote?.toString().isNotEmpty == true)
                   Text('ملاحظة الزبون: ${item.customerNote}',
                       style: const TextStyle(
@@ -91,30 +115,68 @@ class OrderItemsListView extends StatelessWidget {
                     'الطرد: ${item.warehousePackageNumbers} - ${_packageTypeLabel(item)}',
                     style: const TextStyle(fontSize: 12, color: Colors.indigo),
                   ),
-              ],
-            ),
-            trailing: showPrices
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                if (showPrices && item.hasConfiguredUnitPrice) ...[
+                  const Divider(height: 20),
+                  Row(
                     children: [
-                      Text(
+                      Expanded(
+                        child: Text(
                           hasPricing && item.isUnavailable
                               ? 'غير متوفر'
-                              : '\$${formatMoneyShort(hasPricing ? item.pricedUnitPrice : item.displayPrice)}',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16)),
-                      Text(
-                          'الإجمالي: \$${formatMoneyShort(hasPricing ? item.pricedLineTotal : item.total)}',
+                              : 'سعر الوحدة: ${formatMoneyShort(hasPricing ? item.pricedUnitPrice : item.displayPrice, currency: item.currency)}',
                           style: TextStyle(
-                              fontSize: 10,
-                              color: theme.colorScheme.onSurfaceVariant)),
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        'الإجمالي: ${formatMoneyShort(hasPricing ? item.pricedLineTotal : item.total, currency: item.currency)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
                     ],
-                  )
-                : null,
+                  ),
+                ],
+                if (showPrices &&
+                    !item.hasConfiguredUnitPrice &&
+                    hasPricing &&
+                    !item.isUnavailable) ...[
+                  const Divider(height: 20),
+                  Text(
+                    'لا يوجد سعر محفوظ لهذا البند',
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
+                ],
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildQuantityRow(
+      BuildContext context, String label, double quantity, OrderItem item,
+      {Color? color, bool isBold = false}) {
+    final theme = Theme.of(context);
+    String unitInfo = item.unit;
+
+    // Show conversion info if using secondary units
+    if (item.unitFactor != null && item.unitFactor! != 1.0) {
+      final baseQty = (quantity * item.unitFactor!).toStringAsFixed(2);
+      unitInfo += ' ($baseQty ${item.unit1 ?? ''})';
+    }
+
+    return Text(
+      '$label: $quantity $unitInfo',
+      style: TextStyle(
+        color: color ?? theme.colorScheme.onSurface,
+        fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+        fontSize: 13,
+      ),
     );
   }
 

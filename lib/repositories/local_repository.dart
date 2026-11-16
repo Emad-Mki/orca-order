@@ -72,17 +72,6 @@ class LocalRepository {
   // Drafts
   Future<int> saveDraft(OrderDraft draft) async {
     try {
-      if (draft.id != null) {
-        final existingDraft = await (_db.select(_db.orderDrafts)
-              ..where((t) => t.id.equals(draft.id!)))
-            .getSingleOrNull();
-        if (existingDraft == null ||
-            existingDraft.environment != _env ||
-            existingDraft.accountId != _accountId) {
-          throw StateError('المسودة غير موجودة أو لا تخص الحساب الحالي');
-        }
-      }
-
       final companion = OrderDraftsCompanion(
         id: draft.id != null ? Value(draft.id!) : const Value.absent(),
         environment: Value(_env),
@@ -109,7 +98,12 @@ class LocalRepository {
               ))
           .toList();
 
-      return await _db.saveOrderDraft(companion, itemCompanions);
+      return await _db.saveOrderDraft(
+        draft: companion,
+        items: itemCompanions,
+        environment: _env,
+        accountId: _accountId,
+      );
     } catch (e) {
       if (e.toString().contains('112')) {
         throw Exception('DISK_FULL');
@@ -162,12 +156,11 @@ class LocalRepository {
   }
 
   Future<void> deleteDraft(int id) async {
-    await (_db.delete(_db.orderDrafts)
-          ..where((t) =>
-              t.id.equals(id) &
-              t.environment.equals(_env) &
-              t.accountId.equals(_accountId)))
-        .go();
+    await _db.deleteOrderDraft(
+      draftId: id,
+      environment: _env,
+      accountId: _accountId,
+    );
   }
 
   Future<void> updateDraftNote(int id, String note) async {

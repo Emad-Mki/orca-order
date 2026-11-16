@@ -17,6 +17,9 @@ class OrderDetailProvider extends ChangeNotifier {
   Map<String, dynamic>? _balanceInfo;
   double? _discount;
   double? _shippingCost;
+  Future<void>? _fetchRequest;
+  String? _fetchingOrderId;
+  int _fetchGeneration = 0;
 
   OrderDetailProvider(this._orderRepository);
 
@@ -38,14 +41,30 @@ class OrderDetailProvider extends ChangeNotifier {
   }
 
   /// جلب تفاصيل طلب معين
-  Future<void> fetchOrderDetails(String orderId) async {
+  Future<void> fetchOrderDetails(String orderId) {
+    if (_fetchRequest != null && _fetchingOrderId == orderId) {
+      return _fetchRequest!;
+    }
+
+    final generation = ++_fetchGeneration;
+    _fetchingOrderId = orderId;
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
+    final request = _performFetchOrderDetails(orderId, generation);
+    _fetchRequest = request;
+    return request.whenComplete(() {
+      if (identical(_fetchRequest, request)) {
+        _fetchRequest = null;
+        _fetchingOrderId = null;
+      }
+    });
+  }
 
+  Future<void> _performFetchOrderDetails(String orderId, int generation) async {
     try {
       final order = await _orderRepository.getOrderDetails(orderId);
-      // Verify that this is still the request we want (race condition safety)
+      if (generation != _fetchGeneration) return;
       if (order != null) {
         _currentOrder = order;
         _items = order.items ?? [];
@@ -53,12 +72,37 @@ class OrderDetailProvider extends ChangeNotifier {
         _shippingCost = order.shippingCost;
         _shipmentData = order.shipmentData;
       }
+    } catch (e) {
+      if (generation == _fetchGeneration) _errorMessage = e.toString();
+    } finally {
+      if (generation == _fetchGeneration) {
+        _isLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<bool> cancelOrder({String? reason}) async {
+    final order = _currentOrder;
+    if (order == null || _isLoading) return false;
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await _orderRepository.cancelOrder(order.orderId, reason: reason);
+      ++_fetchGeneration;
+      _currentOrder = order.copyWith(
+        status: 'cancelled',
+        updatedAt: DateTime.now(),
+      );
       _isLoading = false;
       notifyListeners();
+      return true;
     } catch (e) {
       _isLoading = false;
       _errorMessage = e.toString();
       notifyListeners();
+      return false;
     }
   }
 
@@ -160,6 +204,13 @@ class OrderDetailProvider extends ChangeNotifier {
                     item.status == 'unavailable' ? 'unavailable' : 'available',
                 'accountant_note': item.accountantNote ?? '',
                 'unit': item.unit,
+                'unit_factor': item.unitFactor,
+                'base_price_snapshot': item.basePriceSnapshot,
+                'unit_1': item.unit1,
+                'unit_2': item.unit2,
+                'factor_2': item.factor2,
+                'unit_3': item.unit3,
+                'factor_3': item.factor3,
               })
           .toList();
 
@@ -195,25 +246,9 @@ class OrderDetailProvider extends ChangeNotifier {
           _currentOrder!.orderId, newStatus);
 
       if (success) {
-        _currentOrder = Order(
-          orderId: _currentOrder!.orderId,
-          orderNumber: _currentOrder!.orderNumber,
-          customerId: _currentOrder!.customerId,
-          customerName: _currentOrder!.customerName,
+        _currentOrder = _currentOrder!.copyWith(
           status: newStatus,
-          currency: _currentOrder!.currency,
-          note: _currentOrder!.note,
-          accountingInvoiceNo: _currentOrder!.accountingInvoiceNo,
-          createdAt: _currentOrder!.createdAt,
           updatedAt: DateTime.now(),
-          createdBy: _currentOrder!.createdBy,
-          shipmentData: _currentOrder!.shipmentData,
-          isNew: _currentOrder!.isNew,
-          isRead: _currentOrder!.isRead,
-          totalAmount: _currentOrder!.totalAmount,
-          previousBalance: _currentOrder!.previousBalance,
-          currentBalance: _currentOrder!.currentBalance,
-          accountantNotes: _currentOrder!.accountantNotes,
           items: _items,
         );
       }

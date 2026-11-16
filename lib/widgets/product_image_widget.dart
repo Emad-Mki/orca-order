@@ -8,6 +8,7 @@ class ProductImageWidget extends StatelessWidget {
   final BoxFit fit;
   final BorderRadius? borderRadius;
   final IconData placeholderIcon;
+  final String? heroTag;
 
   const ProductImageWidget({
     super.key,
@@ -17,41 +18,72 @@ class ProductImageWidget extends StatelessWidget {
     this.fit = BoxFit.contain,
     this.borderRadius,
     this.placeholderIcon = Icons.inventory_2_outlined,
+    this.heroTag,
   });
 
   @override
   Widget build(BuildContext context) {
     final url = imageUrl?.trim() ?? '';
-    final image = url.isEmpty
-        ? _placeholder(context)
-        : CachedNetworkImage(
-            imageUrl: url,
-            width: width,
-            height: height,
-            fit: fit,
-            alignment: Alignment.center,
-            placeholder: (context, url) => _placeholder(context, loading: true),
-            errorWidget: (context, url, error) => _placeholder(context),
-          );
+    Widget image;
 
-    if (borderRadius == null) return image;
-    return ClipRRect(borderRadius: borderRadius!, child: image);
+    if (url.isEmpty) {
+      image = _placeholder(context);
+    } else {
+      image = CachedNetworkImage(
+        imageUrl: url,
+        width: width,
+        height: height,
+        fit: fit,
+        alignment: Alignment.center,
+        placeholder: (context, url) => _placeholder(context, loading: true),
+        errorWidget: (context, url, error) =>
+            _placeholder(context, isError: true),
+      );
+    }
+
+    if (heroTag != null) {
+      image = Hero(tag: heroTag!, child: image);
+    }
+
+    if (borderRadius != null) {
+      image = ClipRRect(borderRadius: borderRadius!, child: image);
+    }
+
+    return image;
   }
 
-  Widget _placeholder(BuildContext context, {bool loading = false}) {
+  Widget _placeholder(
+    BuildContext context, {
+    bool loading = false,
+    bool isError = false,
+  }) {
     final colors = Theme.of(context).colorScheme;
     return Container(
       width: width,
       height: height,
       alignment: Alignment.center,
-      color: colors.surfaceContainerHighest,
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: borderRadius,
+      ),
       child: loading
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
+          ? Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    colors.primary.withValues(alpha: 0.5),
+                  ),
+                ),
+              ),
             )
-          : Icon(placeholderIcon, color: colors.onSurfaceVariant, size: 28),
+          : Icon(
+              isError ? Icons.broken_image_outlined : placeholderIcon,
+              color: colors.onSurfaceVariant.withValues(alpha: 0.5),
+              size: width != null && width! < 50 ? 20 : 32,
+            ),
     );
   }
 }
