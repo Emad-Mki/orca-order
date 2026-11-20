@@ -33,6 +33,19 @@ void main() {
     expect(products.single.price, 4);
   });
 
+  test('clearing product cache preserves account drafts', () async {
+    await repository.saveProducts([_product('cached', price: 2)]);
+    await repository.saveDraft(OrderDraft(
+      customerId: 'customer-1',
+      customerName: 'Customer',
+      updatedAt: DateTime(2026),
+      items: const [],
+    ));
+    await repository.clearProductCache();
+    expect(await repository.getProducts(), isEmpty);
+    expect(await repository.getAllDrafts(), hasLength(1));
+  });
+
   test('saving a draft persists product snapshots in the draft items table',
       () async {
     final product = _product('snapshot-item', price: 7);

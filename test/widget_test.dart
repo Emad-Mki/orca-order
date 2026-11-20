@@ -56,4 +56,38 @@ void main() {
     expect(find.text('إعدادات النظام'), findsNothing);
     expect(find.text('مزامنة البيانات'), findsNothing);
   });
+
+  testWidgets('settings supports a small RTL screen with larger dark text',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => AppUpdateService(),
+        child: MaterialApp(
+          theme: ThemeData.dark(),
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 640),
+              textScaler: TextScaler.linear(1.3),
+            ),
+            child: const Directionality(
+              textDirection: TextDirection.rtl,
+              child: SettingsScreen(session: {
+                'username': 'customer',
+                'role': 'customer',
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.drag(find.byType(ListView).first, const Offset(0, -350));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
 }

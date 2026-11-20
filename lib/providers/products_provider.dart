@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'async_session_notifier.dart';
+import '../settings/setting_definitions.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../repositories/product_repository.dart';
 import '../models/product.dart';
@@ -9,12 +11,12 @@ enum ProductViewMode { grid, list }
 enum ProductSortOption { name, priceLowHigh, priceHighLow, newest }
 
 /// Provider لإدارة كتالوج المنتجات والبحث والفرز ووضع العرض
-class ProductsProvider extends ChangeNotifier {
+class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
   static const Duration minimumManualRefreshInterval =
       ApiService.minimumManualRefreshInterval;
 
   final ProductRepository _productRepository;
-  static const String _viewModeKey = 'product_view_mode';
+  static final String _viewModeKey = SettingDefinitions.productView.key;
 
   List<Product> _products = [];
   List<Product> _filteredProducts = [];

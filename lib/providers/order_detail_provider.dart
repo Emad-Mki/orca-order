@@ -3,10 +3,11 @@ import '../repositories/order_repository.dart';
 import '../models/order.dart';
 import '../models/order_item.dart';
 import 'auth_provider.dart';
+import 'async_session_notifier.dart';
 import 'package:flutter/material.dart';
 
 /// Provider لإدارة تفاصيل طلب معين وعمليات التسعير
-class OrderDetailProvider extends ChangeNotifier {
+class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
   final OrderRepository _orderRepository;
 
   Order? _currentOrder;
@@ -235,7 +236,8 @@ class OrderDetailProvider extends ChangeNotifier {
   }
 
   /// تحديث حالة الطلب
-  Future<bool> updateStatus(String newStatus) async {
+  Future<bool> updateStatus(String newStatus,
+      {String? reason, bool proxyForCustomer = false}) async {
     if (_currentOrder == null) return false;
 
     _isLoading = true;
@@ -243,7 +245,11 @@ class OrderDetailProvider extends ChangeNotifier {
 
     try {
       final success = await _orderRepository.updateOrderStatus(
-          _currentOrder!.orderId, newStatus);
+        _currentOrder!.orderId,
+        newStatus,
+        reason: reason,
+        proxyForCustomer: proxyForCustomer,
+      );
 
       if (success) {
         _currentOrder = _currentOrder!.copyWith(

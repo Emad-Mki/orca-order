@@ -46,6 +46,13 @@ class AppUpdateSettingsTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text('الإصدار الحالي: ${updater.installedVersionName}'),
+                Text('رقم البناء: ${updater.installedBuildNumber}'),
+                Text(
+                  updater.lastSuccessfulCheckAt == null
+                      ? 'لم ينجح فحص تحديث بعد'
+                      : 'آخر فحص ناجح: '
+                          '${updater.lastSuccessfulCheckAt!.toLocal()}',
+                ),
                 if (updater.installationConfirmed) ...[
                   const SizedBox(height: 6),
                   Text(

@@ -3,6 +3,7 @@ import '../services/api_service.dart';
 import '../models/product.dart';
 import 'inventory_movements_screen.dart';
 import 'homepage_screen.dart';
+import '../utils/permissions.dart';
 
 class InventoryScreen extends StatefulWidget {
   final Map<String, dynamic> session;
@@ -15,6 +16,9 @@ class InventoryScreen extends StatefulWidget {
 class _InventoryScreenState extends State<InventoryScreen> {
   List<Product> _products = [];
   bool _isLoading = true;
+  String? _error;
+  final _search = TextEditingController();
+  String _stockFilter = 'all';
 
   @override
   void initState() {
@@ -23,7 +27,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _fetchInventory() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
     try {
       final data = await ApiService().post({
         'action': 'getProducts',
@@ -39,8 +46,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted)
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
     }
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
   }
 
   void _showAdjustDialog(Product p) {
@@ -199,79 +216,179 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
-    return RefreshIndicator(
-      onRefresh: _fetchInventory,
-      child: ListView.builder(
-        itemCount: _products.length,
-        itemBuilder: (context, index) {
-          final p = _products[index];
-          final isLow = p.quantity < 10;
-          return Card(
-            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: ListTile(
-              onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) =>
-                          InventoryMovementsScreen(productCode: p.code))),
-              title: Text(p.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text('الكود: ${p.code} | الوحدة: ${p.unit}'),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: (isLow
-                              ? theme.colorScheme.error
-                              : theme.colorScheme.primary)
-                          .withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(12),
+    final role = PermissionHelper.fromString(
+      widget.session['role']?.toString() ?? 'user',
+    );
+    final canAdjust = role == AppRole.admin;
+    final query = _search.text.trim().toLowerCase();
+    final filtered = _products.where((p) {
+      final matchesQuery = query.isEmpty ||
+          p.name.toLowerCase().contains(query) ||
+          p.code.toLowerCase().contains(query) ||
+          p.oem.toLowerCase().contains(query);
+      final quantity = p.stockQuantity ?? p.quantity;
+      final matchesStock = _stockFilter == 'all' ||
+          (_stockFilter == 'positive' && quantity > 0) ||
+          (_stockFilter == 'zero' && quantity == 0) ||
+          (_stockFilter == 'negative' && quantity < 0);
+      return matchesQuery && matchesStock;
+    }).toList();
+    return Scaffold(
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _search,
+                    decoration: const InputDecoration(
+                      hintText: 'بحث بالاسم أو رمز المادة',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
                     ),
-                    child: Text(
-                      '${p.quantity}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: isLow
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.primary,
-                      ),
-                    ),
+                    onChanged: (_) => setState(() {}),
                   ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    icon: Icon(
-                      Icons.history,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    tooltip: 'سجل الحركات',
-                    onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                InventoryMovementsScreen(productCode: p.code))),
+                ),
+                const SizedBox(width: 8),
+                DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _stockFilter,
+                    items: const [
+                      DropdownMenuItem(value: 'all', child: Text('الكل')),
+                      DropdownMenuItem(value: 'positive', child: Text('موجب')),
+                      DropdownMenuItem(value: 'zero', child: Text('صفر')),
+                      DropdownMenuItem(value: 'negative', child: Text('سالب')),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _stockFilter = value ?? 'all'),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.assignment_late_outlined,
-                        color: Colors.orange),
-                    tooltip: 'طلب نواقص',
-                    onPressed: () => _showLowStockRequestDialog(p),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.edit_note, color: Colors.blue),
-                    tooltip: 'تعديل مخزون',
-                    onPressed: () => _showAdjustDialog(p),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        },
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('تعذر تحميل المخزون:\n$_error',
+                                textAlign: TextAlign.center),
+                            const SizedBox(height: 8),
+                            FilledButton.icon(
+                              onPressed: _fetchInventory,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('إعادة المحاولة'),
+                            ),
+                          ],
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _fetchInventory,
+                        child: filtered.isEmpty
+                            ? const Center(child: Text('لا توجد مواد مطابقة'))
+                            : ListView.builder(
+                                itemCount: filtered.length,
+                                itemBuilder: (context, index) {
+                                  final p = filtered[index];
+                                  final quantity =
+                                      p.stockQuantity ?? p.quantity;
+                                  final isLow = quantity < 10;
+                                  return Card(
+                                    margin: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 6),
+                                    child: ListTile(
+                                      onTap: () => Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              InventoryMovementsScreen(
+                                                  productCode: p.code),
+                                        ),
+                                      ),
+                                      title: Text(
+                                        p.name,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                      subtitle: Text(
+                                          'الكود: ${p.code} | الوحدة: ${p.unit}'),
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: (isLow
+                                                      ? theme.colorScheme.error
+                                                      : theme
+                                                          .colorScheme.primary)
+                                                  .withValues(alpha: 0.14),
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              quantity.toString(),
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16,
+                                                color: isLow
+                                                    ? theme.colorScheme.error
+                                                    : theme.colorScheme.primary,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          IconButton(
+                                            tooltip: 'سجل الحركات',
+                                            icon: Icon(
+                                              Icons.history,
+                                              color: theme
+                                                  .colorScheme.onSurfaceVariant,
+                                            ),
+                                            onPressed: () => Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    InventoryMovementsScreen(
+                                                        productCode: p.code),
+                                              ),
+                                            ),
+                                          ),
+                                          if (role == AppRole.admin ||
+                                              role == AppRole.warehouse)
+                                            IconButton(
+                                              tooltip: 'طلب نواقص',
+                                              icon: const Icon(
+                                                  Icons
+                                                      .assignment_late_outlined,
+                                                  color: Colors.orange),
+                                              onPressed: () =>
+                                                  _showLowStockRequestDialog(p),
+                                            ),
+                                          if (canAdjust)
+                                            IconButton(
+                                              tooltip: 'تسوية مخزون موثقة',
+                                              icon: const Icon(Icons.edit_note,
+                                                  color: Colors.blue),
+                                              onPressed: () =>
+                                                  _showAdjustDialog(p),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+          ),
+        ],
       ),
     );
   }

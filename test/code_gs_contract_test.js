@@ -525,6 +525,38 @@ test('sales settings update Script Properties only after full validation', () =>
   );
 });
 
+test('sales settings reject stale changes and unauthorized roles', () => {
+  const backend = loadBackend({ scriptProperties: {
+    SALES_INVOICE_CURRENCY: 'USD',
+    SHAM_CASH_CURRENCY: 'USD',
+    DEFAULT_PRODUCT_CURRENCY: 'USD',
+    SALES_RATE_SYP_PER_USD: '14500',
+    SALES_USD_DECIMALS: '2',
+    SALES_SYP_DECIMALS: '0',
+  } });
+  backend._add = () => {};
+  const snapshot = backend._handleGetSalesSettings({}, { role: 'admin' }).settings;
+  const values = {
+    invoice_currency: 'USD',
+    sham_cash_currency: 'USD',
+    default_product_currency: 'USD',
+    rate_syp_per_usd: '15000',
+    usd_decimals: 2,
+    syp_decimals: 0,
+    expected_settings: snapshot,
+  };
+  backend._handleUpdateSalesSettings(values, { role: 'accountant', user_id: 'a' });
+  assert.throws(
+    () => backend._handleUpdateSalesSettings(values, { role: 'admin', user_id: 'b' }),
+    error => error.code === 'SALES_SETTINGS_CONFLICT',
+  );
+  assert.equal(backend._getSalesSettings_().rate_syp_per_usd, 15000);
+  assert.throws(
+    () => backend._handleUpdateSalesSettings(values, { role: 'customer' }),
+    error => error.message.includes('ليست لديك الصلاحية'),
+  );
+});
+
 test('legacy sales role names normalize to the salesperson permission role', () => {
   const backend = loadBackend();
   assert.equal(backend._normalizeRole('user'), 'salesperson');
@@ -1022,6 +1054,134 @@ test('notification channel mapping follows event category', () => {
   assert.equal(backend._notificationChannel_('shipping.shipped'), 'shipping');
   assert.equal(backend._notificationChannel_('alert.low_stock'), 'alerts');
   assert.equal(backend._notificationChannel_('general.notice'), 'general');
+});
+
+test('FCM HTTP v1 sends display text and keeps routing data separate', () => {
+  const backend = loadBackend({
+    scriptProperties: {
+      FCM_SERVICE_ACCOUNT_JSON: JSON.stringify({
+        project_id: 'orca-order',
+        client_email: 'sender@example.test',
+        private_key: 'not-used-by-this-test',
+      }),
+    },
+  });
+  backend._getFcmAccessToken_ = () => 'test-access-token';
+  let requestUrl;
+  let request;
+  backend.UrlFetchApp = {
+    fetch(url, options) {
+      requestUrl = url;
+      request = options;
+      return {
+        getResponseCode: () => 200,
+        getContentText: () => '{"name":"projects/orca-order/messages/1"}',
+      };
+    },
+  };
+
+  backend._sendFcmMessage_(
+    'test-installation-id',
+    {
+      title: 'طلب جديد',
+      body: 'تم استلام طلب جديد.',
+      notification_id: 'notification-1',
+      event_id: 'order.created:request-1',
+      type: 'order.created',
+      entity_type: 'order',
+      entity_id: 'order-1',
+      channel_id: 'orders',
+    },
+    true,
+    'fid',
+  );
+
+  assert.match(requestUrl, /projects\/orca-order\/messages:send$/);
+  const message = JSON.parse(request.payload).message;
+  assert.equal(message.fid, 'test-installation-id');
+  assert.equal('token' in message, false);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(message.notification)),
+    { title: 'طلب جديد', body: 'تم استلام طلب جديد.' },
+  );
+  assert.equal(message.data.notification_id, 'notification-1');
+  assert.equal(message.data.event_id, 'order.created:request-1');
+  assert.equal(message.data.entity_id, 'order-1');
+  assert.equal('title' in message.data, false);
+  assert.equal('body' in message.data, false);
+  assert.equal(message.android.notification.channel_id, 'orders');
+});
+
+test('FCM HTTP v1 preserves legacy registration-token targeting', () => {
+  const backend = loadBackend({
+    scriptProperties: {
+      FCM_SERVICE_ACCOUNT_JSON: JSON.stringify({
+        project_id: 'orca-order',
+        client_email: 'sender@example.test',
+        private_key: 'not-used-by-this-test',
+      }),
+    },
+  });
+  backend._getFcmAccessToken_ = () => 'test-access-token';
+  let request;
+  backend.UrlFetchApp = {
+    fetch(_url, options) {
+      request = options;
+      return {
+        getResponseCode: () => 200,
+        getContentText: () => '{"name":"projects/orca-order/messages/1"}',
+      };
+    },
+  };
+
+  backend._sendFcmMessage_('legacy-registration-token', {
+    title: 'Notice',
+    body: 'A new notice.',
+    notification_id: 'notification-legacy',
+    channel_id: 'general',
+  }, false);
+
+  const message = JSON.parse(request.payload).message;
+  assert.equal(message.token, 'legacy-registration-token');
+  assert.equal('fid' in message, false);
+});
+
+test('FCM errors are categorized without retaining response payloads', () => {
+  const backend = loadBackend({
+    scriptProperties: {
+      FCM_SERVICE_ACCOUNT_JSON: JSON.stringify({
+        project_id: 'orca-order',
+        client_email: 'sender@example.test',
+        private_key: 'not-used-by-this-test',
+      }),
+    },
+  });
+  backend._getFcmAccessToken_ = () => 'test-access-token';
+  backend.UrlFetchApp = {
+    fetch() {
+      return {
+        getResponseCode: () => 404,
+        getContentText: () => JSON.stringify({
+          error: {
+            status: 'NOT_FOUND',
+            details: [{
+              '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError',
+              errorCode: 'UNREGISTERED',
+            }],
+          },
+        }),
+      };
+    },
+  };
+
+  assert.throws(
+    () => backend._sendFcmMessage_(
+      'do-not-log-this-target',
+      { title: 'Test', body: 'Test' },
+      false,
+    ),
+    /FCM_UNREGISTERED_HTTP_404/,
+  );
 });
 
 test('response envelope carries canonical status, data, error, and version', () => {

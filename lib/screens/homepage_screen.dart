@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui';
 import '../utils/permissions.dart';
 import '../services/api_service.dart';
+import '../services/deep_link_service.dart';
 import '../services/fcm_service.dart';
 import '../providers/notification_provider.dart';
 import '../widgets/notification_badge.dart';
@@ -22,6 +25,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int selectedIndex = 2; // الافتراضي: الرئيسية
   late AppRole userRole;
   late List<_NavConfig> _navItems;
+  late final PageController _pageController;
+  bool _confirmingExit = false;
+  bool _routeOpen = false;
 
   @override
   void initState() {
@@ -30,7 +36,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final roleString = widget.session['role'] ?? 'user';
     userRole = PermissionHelper.fromString(roleString);
     _setupNavigation();
+    _pageController = PageController(initialPage: selectedIndex);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      DeepLinkService.navigationReady = true;
       _initializeNotifications();
     });
   }
@@ -74,12 +83,16 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     FcmService.instance.refreshRegistration().catchError((Object error) {
       debugPrint('Unable to refresh notification device: $error');
     });
+    unawaited(FcmService.instance.handlePendingTap());
+    unawaited(DeepLinkService.resumePendingNotification());
     if (mounted) context.read<NotificationProvider>().load();
   }
 
   @override
   void dispose() {
+    DeepLinkService.navigationReady = false;
     WidgetsBinding.instance.removeObserver(this);
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -122,7 +135,39 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _showMoreMenu();
     } else {
       setState(() => selectedIndex = index);
+      _pageController.jumpToPage(index);
     }
+  }
+
+  Future<void> _handleBack() async {
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+    if (selectedIndex != 2) {
+      _onItemTapped(2);
+      return;
+    }
+    if (_confirmingExit) return;
+    _confirmingExit = true;
+    final exit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('هل تريد إغلاق التطبيق؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('متابعة الاستخدام'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('إغلاق التطبيق'),
+          ),
+        ],
+      ),
+    );
+    _confirmingExit = false;
+    if (exit == true) await SystemNavigator.pop();
   }
 
   void _showMoreMenu() {
@@ -295,17 +340,33 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _buildMenuOption(IconData icon, String title, VoidCallback onTap,
       {Color? color}) {
-    return ListTile(
-      leading: Icon(icon, color: color),
-      title: Text(title, style: TextStyle(color: color)),
-      trailing: const Icon(Icons.arrow_forward_ios, size: 14),
-      onTap: onTap,
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        leading: Icon(icon, color: color),
+        title: Text(title, style: TextStyle(color: color)),
+        trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+        onTap: onTap,
+      ),
     );
   }
 
   void _navigate(Widget screen) {
     Navigator.pop(context);
-    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+    unawaited(_pushScreen(screen));
+  }
+
+  Future<void> _pushScreen(Widget screen) async {
+    if (_routeOpen) return;
+    _routeOpen = true;
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => screen),
+      );
+    } finally {
+      _routeOpen = false;
+    }
   }
 
   void _confirmLogout() {
@@ -323,6 +384,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ElevatedButton(
               onPressed: () async {
                 Navigator.pop(context);
+                final navigator = Navigator.of(context);
                 final notificationProvider =
                     context.read<NotificationProvider>();
                 final messenger = ScaffoldMessenger.of(context);
@@ -345,7 +407,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     SnackBar(content: Text(logoutError)),
                   );
                 }
-                widget.onLogout();
+                if (mounted) {
+                  navigator.popUntil((route) => route.isFirst);
+                  widget.onLogout();
+                }
               },
               child: const Text('خروج')),
         ],
@@ -356,61 +421,83 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final unreadCount = context.watch<NotificationProvider>().unreadCount;
-    return Scaffold(
-      appBar: AppBar(
-        centerTitle: true,
-        leading: IconButton(
-          onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => SettingsScreen(session: widget.session))),
-          icon: const Icon(Icons.settings),
-        ),
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset('assets/app_icon.png',
-                height: 30,
-                errorBuilder: (_, __, ___) =>
-                    const Icon(Icons.shopping_basket)),
-            const SizedBox(width: 8),
-            const Text('أوركا أوردر',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) unawaited(_handleBack());
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          centerTitle: true,
+          leading: IconButton(
+            onPressed: () =>
+                _pushScreen(SettingsScreen(session: widget.session)),
+            icon: const Icon(Icons.settings),
+          ),
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Image.asset('assets/app_icon.png',
+                  height: 30,
+                  errorBuilder: (_, __, ___) =>
+                      const Icon(Icons.shopping_basket)),
+              const SizedBox(width: 8),
+              const Text('أوركا أوردر',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          actions: [
+            NotificationBadge(
+              count: unreadCount,
+              onTap: () => _pushScreen(const NotificationsScreen()),
+            ),
           ],
         ),
-        actions: [
-          NotificationBadge(
-            count: unreadCount,
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const NotificationsScreen(),
-              ),
+        body: SafeArea(
+          bottom: false,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: _navItems.length - 1,
+            onPageChanged: (index) => setState(() => selectedIndex = index),
+            itemBuilder: (context, index) => _KeepAlivePage(
+              child: _navItems[index].builder!(widget.session),
             ),
           ),
-        ],
+        ),
+        floatingActionButton: selectedIndex == 2
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (const {AppRole.admin, AppRole.manager, AppRole.accountant}
+                      .contains(userRole)) ...[
+                    FloatingActionButton.extended(
+                      heroTag: 'new-sales-invoice',
+                      onPressed: () => _pushScreen(const SalesInvoiceScreen()),
+                      icon: const Icon(Icons.point_of_sale),
+                      label: const Text('فاتورة جديدة'),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  FloatingActionButton.extended(
+                    heroTag: 'new-order',
+                    onPressed: () => _pushScreen(
+                      userRole == AppRole.salesperson
+                          ? const SalesInvoiceScreen()
+                          : NewOrderScreen(session: widget.session),
+                    ),
+                    icon: const Icon(Icons.add_shopping_cart),
+                    label: Text(
+                      userRole == AppRole.salesperson
+                          ? 'فاتورة نقدية'
+                          : 'إضافة طلب',
+                    ),
+                  ),
+                ],
+              )
+            : null,
+        bottomNavigationBar: _buildBottomNav(),
       ),
-      body: SafeArea(
-        bottom: false,
-        child: _navItems[selectedIndex].builder!(widget.session),
-      ),
-      floatingActionButton: selectedIndex == 2
-          ? FloatingActionButton.extended(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => userRole == AppRole.salesperson
-                      ? const SalesInvoiceScreen()
-                      : NewOrderScreen(session: widget.session),
-                ),
-              ),
-              icon: const Icon(Icons.add_shopping_cart),
-              label: Text(
-                userRole == AppRole.salesperson ? 'فاتورة نقدية' : 'إضافة طلب',
-              ),
-            )
-          : null,
-      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
@@ -489,6 +576,26 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         child: Icon(item.icon, color: Colors.white),
       ),
     );
+  }
+}
+
+class _KeepAlivePage extends StatefulWidget {
+  const _KeepAlivePage({required this.child});
+  final Widget child;
+
+  @override
+  State<_KeepAlivePage> createState() => _KeepAlivePageState();
+}
+
+class _KeepAlivePageState extends State<_KeepAlivePage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 

@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'async_session_notifier.dart';
 import '../models/order_draft.dart';
 import '../repositories/local_repository.dart';
 
-class DraftsProvider with ChangeNotifier {
+class DraftsProvider with ChangeNotifier, AsyncSessionNotifier {
   final LocalRepository _localRepository;
 
   List<OrderDraft> _drafts = [];

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
+import '../utils/guarded_navigation.dart';
 
 class CustomerReceiptScreen extends StatefulWidget {
   const CustomerReceiptScreen({super.key});
@@ -19,9 +20,52 @@ class _CustomerReceiptScreenState extends State<CustomerReceiptScreen> {
   String? _customerId;
   bool _loading = true;
   bool _saving = false;
+  bool _allowPop = false;
   bool _confirmCredit = false;
   String? _error;
   String? _requestId;
+
+  Future<void> _back() async {
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+    if (_saving) return;
+    final dirty = _customerId != null ||
+        _allocations.values.any((value) => value.text.trim().isNotEmpty) ||
+        _lines.any((line) =>
+            line.amount.text.trim().isNotEmpty ||
+            line.equivalent.text.trim().isNotEmpty ||
+            line.rate.text.trim().isNotEmpty ||
+            line.reference.text.trim().isNotEmpty ||
+            line.note.text.trim().isNotEmpty);
+    if (!dirty && _requestId == null) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+      return;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('سند قبض غير محفوظ'),
+        content: Text(_requestId == null
+            ? 'مغادرة الصفحة ستفقد بيانات السند.'
+            : 'تعذر تأكيد نتيجة الحفظ. تحقق من السندات قبل إنشاء سند جديد لتجنب التكرار.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('متابعة التحرير'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('مغادرة الصفحة'),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+    }
+  }
 
   @override
   void initState() {
@@ -59,10 +103,11 @@ class _CustomerReceiptScreenState extends State<CustomerReceiptScreen> {
         _loading = false;
       });
     } catch (error) {
-      if (mounted) setState(() {
-        _error = _message(error);
-        _loading = false;
-      });
+      if (mounted)
+        setState(() {
+          _error = _message(error);
+          _loading = false;
+        });
     }
   }
 
@@ -88,7 +133,8 @@ class _CustomerReceiptScreenState extends State<CustomerReceiptScreen> {
         _invoices = rows
             .whereType<Map>()
             .map((row) => Map<String, dynamic>.from(row))
-            .where((row) => (double.tryParse(
+            .where((row) =>
+                (double.tryParse(
                           row['balance_due_usd']?.toString() ?? '0',
                         ) ??
                         0) >
@@ -102,10 +148,11 @@ class _CustomerReceiptScreenState extends State<CustomerReceiptScreen> {
         _loading = false;
       });
     } catch (error) {
-      if (mounted) setState(() {
-        _error = _message(error);
-        _loading = false;
-      });
+      if (mounted)
+        setState(() {
+          _error = _message(error);
+          _loading = false;
+        });
     }
   }
 
@@ -201,12 +248,14 @@ class _CustomerReceiptScreenState extends State<CustomerReceiptScreen> {
           ),
         ),
       );
-      Navigator.pop(context, true);
+      popAfterGuard(context,
+          allowPop: () => setState(() => _allowPop = true), result: true);
     } catch (error) {
-      if (mounted) setState(() {
-        _error = _message(error);
-        _saving = false;
-      });
+      if (mounted)
+        setState(() {
+          _error = _message(error);
+          _saving = false;
+        });
     }
   }
 
@@ -219,188 +268,229 @@ class _CustomerReceiptScreenState extends State<CustomerReceiptScreen> {
         body: Center(child: CircularProgressIndicator()),
       );
     }
-    return Scaffold(
-      appBar: const _ReceiptAppBar(),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          DropdownButtonFormField<String>(
-            value: _customerId,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'الزبون'),
-            items: _customers
-                .map((customer) => DropdownMenuItem(
-                      value: customer['customer_id'].toString(),
-                      child: Text(
-                        customer['full_name']?.toString() ?? '',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ))
-                .toList(),
-            onChanged: _saving
-                ? null
-                : (value) {
-                    if (value == null) return;
-                    setState(() => _customerId = value);
-                    _loadInvoices(value);
-                  },
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Text('وسائل الاستلام', style: theme.textTheme.titleMedium),
-              ),
-              IconButton(
-                onPressed: _saving ? null : () => setState(() => _lines.add(_ReceiptLine())),
-                icon: const Icon(Icons.add_circle_outline),
-                tooltip: 'إضافة وسيلة',
-              ),
-            ],
-          ),
-          ..._lines.asMap().entries.map((entry) {
-            final index = entry.key;
-            final line = entry.value;
-            return Card(
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 2,
-                          child: DropdownButtonFormField<String>(
-                            value: line.method,
-                            isExpanded: true,
-                            decoration: const InputDecoration(labelText: 'الصندوق'),
-                            items: const [
-                              DropdownMenuItem(value: 'cash_usd', child: Text('نقدي USD')),
-                              DropdownMenuItem(value: 'cash_syp', child: Text('نقدي SYP')),
-                              DropdownMenuItem(value: 'sham_cash_usd', child: Text('شام كاش USD')),
-                              DropdownMenuItem(value: 'sham_cash_syp', child: Text('شام كاش SYP')),
-                            ],
-                            onChanged: _saving
-                                ? null
-                                : (value) => setState(() => line.method = value ?? line.method),
-                          ),
+    return PopScope(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _back();
+      },
+      child: Scaffold(
+        appBar: const _ReceiptAppBar(),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            DropdownButtonFormField<String>(
+              value: _customerId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'الزبون'),
+              items: _customers
+                  .map((customer) => DropdownMenuItem(
+                        value: customer['customer_id'].toString(),
+                        child: Text(
+                          customer['full_name']?.toString() ?? '',
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: line.amount,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            decoration: InputDecoration(labelText: 'المبلغ ${line.currency}'),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: _saving || _lines.length == 1
-                              ? null
-                              : () => setState(() {
-                                    _lines.removeAt(index);
-                                    line.dispose();
-                                  }),
-                          icon: const Icon(Icons.remove_circle_outline),
-                        ),
-                      ],
-                    ),
-                    if (line.currency == 'SYP')
+                      ))
+                  .toList(),
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() => _customerId = value);
+                      _loadInvoices(value);
+                    },
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text('وسائل الاستلام',
+                      style: theme.textTheme.titleMedium),
+                ),
+                IconButton(
+                  onPressed: _saving
+                      ? null
+                      : () => setState(() => _lines.add(_ReceiptLine())),
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'إضافة وسيلة',
+                ),
+              ],
+            ),
+            ..._lines.asMap().entries.map((entry) {
+              final index = entry.key;
+              final line = entry.value;
+              return Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Column(
+                    children: [
                       Row(
                         children: [
                           Expanded(
-                            child: TextField(
-                              controller: line.equivalent,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              decoration: const InputDecoration(labelText: 'المقابل USD'),
-                              onChanged: (_) => setState(() {}),
+                            flex: 2,
+                            child: DropdownButtonFormField<String>(
+                              value: line.method,
+                              isExpanded: true,
+                              decoration:
+                                  const InputDecoration(labelText: 'الصندوق'),
+                              items: const [
+                                DropdownMenuItem(
+                                    value: 'cash_usd', child: Text('نقدي USD')),
+                                DropdownMenuItem(
+                                    value: 'cash_syp', child: Text('نقدي SYP')),
+                                DropdownMenuItem(
+                                    value: 'sham_cash_usd',
+                                    child: Text('شام كاش USD')),
+                                DropdownMenuItem(
+                                    value: 'sham_cash_syp',
+                                    child: Text('شام كاش SYP')),
+                              ],
+                              onChanged: _saving
+                                  ? null
+                                  : (value) => setState(
+                                      () => line.method = value ?? line.method),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: TextField(
-                              controller: line.rate,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              decoration: const InputDecoration(labelText: 'ل.س لكل USD'),
+                              controller: line.amount,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              decoration: InputDecoration(
+                                  labelText: 'المبلغ ${line.currency}'),
                               onChanged: (_) => setState(() {}),
                             ),
                           ),
+                          IconButton(
+                            onPressed: _saving || _lines.length == 1
+                                ? null
+                                : () => setState(() {
+                                      _lines.removeAt(index);
+                                      line.dispose();
+                                    }),
+                            icon: const Icon(Icons.remove_circle_outline),
+                          ),
                         ],
                       ),
-                    TextField(controller: line.reference, decoration: const InputDecoration(labelText: 'مرجع اختياري')),
-                    TextField(controller: line.note, decoration: const InputDecoration(labelText: 'ملاحظة اختياري')),
-                  ],
-                ),
-              ),
-            );
-          }),
-          if (_customerId != null) ...[
-            const SizedBox(height: 12),
-            Text('تخصيص لفواتير مستحقة (اختياري)', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
-            const Text('التخصيص لا ينشئ قبضًا جديدًا ولا يغير رصيد الصندوق.'),
-            if (_loading)
-              const LinearProgressIndicator()
-            else if (_invoices.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('لا توجد فواتير مستحقة قابلة للتخصيص.'),
-              ),
-            ..._invoices.map((invoice) {
-              final id = invoice['invoice_id'].toString();
-              return Card(
-                child: ListTile(
-                  title: Text(id),
-                  subtitle: Text(
-                    'المتبقي ${invoice['balance_due_usd']} USD · '
-                    '${invoice['invoice_date'] ?? ''}',
-                  ),
-                  trailing: SizedBox(
-                    width: 110,
-                    child: TextField(
-                      controller: _allocations[id],
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'تخصيص USD'),
-                      onChanged: (_) => setState(() {}),
-                    ),
+                      if (line.currency == 'SYP')
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: line.equivalent,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                decoration: const InputDecoration(
+                                    labelText: 'المقابل USD'),
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextField(
+                                controller: line.rate,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                decoration: const InputDecoration(
+                                    labelText: 'ل.س لكل USD'),
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                          ],
+                        ),
+                      TextField(
+                          controller: line.reference,
+                          decoration:
+                              const InputDecoration(labelText: 'مرجع اختياري')),
+                      TextField(
+                          controller: line.note,
+                          decoration: const InputDecoration(
+                              labelText: 'ملاحظة اختياري')),
+                    ],
                   ),
                 ),
               );
             }),
+            if (_customerId != null) ...[
+              const SizedBox(height: 12),
+              Text('تخصيص لفواتير مستحقة (اختياري)',
+                  style: theme.textTheme.titleMedium),
+              const SizedBox(height: 4),
+              const Text('التخصيص لا ينشئ قبضًا جديدًا ولا يغير رصيد الصندوق.'),
+              if (_loading)
+                const LinearProgressIndicator()
+              else if (_invoices.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('لا توجد فواتير مستحقة قابلة للتخصيص.'),
+                ),
+              ..._invoices.map((invoice) {
+                final id = invoice['invoice_id'].toString();
+                return Card(
+                  child: ListTile(
+                    title: Text(id),
+                    subtitle: Text(
+                      'المتبقي ${invoice['balance_due_usd']} USD · '
+                      '${invoice['invoice_date'] ?? ''}',
+                    ),
+                    trailing: SizedBox(
+                      width: 110,
+                      child: TextField(
+                        controller: _allocations[id],
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration:
+                            const InputDecoration(labelText: 'تخصيص USD'),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+            if (_totalUsd - _allocationTotal > 0.005)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _confirmCredit,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _confirmCredit = value),
+                title: const Text('اعتماد غير المخصص رصيدًا دائنًا'),
+                subtitle: Text(
+                  '${(_totalUsd - _allocationTotal).toStringAsFixed(2)} USD',
+                ),
+              ),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  'مكافئ السند: ${_totalUsd.toStringAsFixed(2)} USD\n'
+                  'المخصص للفواتير: ${_allocationTotal.toStringAsFixed(2)} USD\n'
+                  'رصيد دائن غير مخصص: ${max(0, _totalUsd - _allocationTotal).toStringAsFixed(2)} USD',
+                ),
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(_error!,
+                    style: TextStyle(color: theme.colorScheme.error)),
+              ),
+            FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.save_outlined),
+              label: Text(_saving ? 'جارٍ حفظ السند...' : 'حفظ سند القبض'),
+            ),
           ],
-          if (_totalUsd - _allocationTotal > 0.005)
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _confirmCredit,
-              onChanged: _saving ? null : (value) => setState(() => _confirmCredit = value),
-              title: const Text('اعتماد غير المخصص رصيدًا دائنًا'),
-              subtitle: Text(
-                '${(_totalUsd - _allocationTotal).toStringAsFixed(2)} USD',
-              ),
-            ),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                'مكافئ السند: ${_totalUsd.toStringAsFixed(2)} USD\n'
-                'المخصص للفواتير: ${_allocationTotal.toStringAsFixed(2)} USD\n'
-                'رصيد دائن غير مخصص: ${max(0, _totalUsd - _allocationTotal).toStringAsFixed(2)} USD',
-              ),
-            ),
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-            ),
-          FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.save_outlined),
-            label: Text(_saving ? 'جارٍ حفظ السند...' : 'حفظ سند القبض'),
-          ),
-        ],
+        ),
       ),
     );
   }

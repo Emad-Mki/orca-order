@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
+import 'async_session_notifier.dart';
 import '../repositories/auth_repository.dart';
 import '../models/user.dart';
 
 /// Provider لإدارة حالة المصادقة وتسجيل الدخول
-class AuthProvider extends ChangeNotifier {
+class AuthProvider extends ChangeNotifier with AsyncSessionNotifier {
   final AuthRepository _authRepository;
 
   User? _currentUser;

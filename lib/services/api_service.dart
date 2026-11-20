@@ -286,12 +286,14 @@ class OrderApiService {
   }
 
   /// تحديث حالة الطلب
-  Future<Map<String, dynamic>> updateOrderStatus(
-      String orderId, String status) async {
+  Future<Map<String, dynamic>> updateOrderStatus(String orderId, String status,
+      {String? reason, bool proxyForCustomer = false}) async {
     return _apiService.post({
       'action': 'update_order_status',
       'order_id': orderId,
       'status': status,
+      if (reason != null) 'reason': reason,
+      if (proxyForCustomer) 'proxy_for_customer': true,
     });
   }
 
@@ -670,6 +672,45 @@ class SalesApiService {
       });
 }
 
+class NotificationApiService {
+  final ApiService _apiService;
+
+  NotificationApiService(this._apiService);
+
+  Future<Map<String, dynamic>> getNotifications({String? sinceTime}) async {
+    return _apiService.post({
+      'action': 'notification_list',
+      if (sinceTime != null) 'since_time': sinceTime,
+    });
+  }
+
+  Future<Map<String, dynamic>> markRead(String notificationId) async {
+    return _apiService.post({
+      'action': 'notification_read',
+      'notification_id': notificationId,
+    });
+  }
+
+  Future<Map<String, dynamic>> markAllRead() async {
+    return _apiService.post({'action': 'notification_mark_all_read'});
+  }
+
+  Future<Map<String, dynamic>> retry(String notificationId) async {
+    return _apiService.post({
+      'action': 'notification_retry',
+      'notification_id': notificationId,
+    });
+  }
+
+  Future<Map<String, dynamic>> sendNotification(
+      Map<String, dynamic> data) async {
+    return _apiService.post({
+      'action': 'notification_send',
+      ...data,
+    });
+  }
+}
+
 /// خدمة الاتصال مع API
 class ApiService {
   static const Duration minimumManualRefreshInterval = Duration(seconds: 15);
@@ -686,6 +727,7 @@ class ApiService {
   late final AuthApiService auth;
   late final AdminApiService admin;
   late final SalesApiService sales;
+  late final NotificationApiService notifications;
 
   String? _sessionToken;
   Map<String, dynamic>? _currentUser;
@@ -713,6 +755,7 @@ class ApiService {
     auth = AuthApiService(this);
     admin = AdminApiService(this);
     sales = SalesApiService(this);
+    notifications = NotificationApiService(this);
   }
 
   /// تهيئة الجلسة من التخزين المحلي
@@ -1108,11 +1151,13 @@ class ApiService {
           (rawError is String ? rawError : data['message']?.toString()) ??
           'حدث خطأ أثناء معالجة الطلب';
       if (const {
-        'AUTH_REQUIRED',
-        'SESSION_EXPIRED',
-        'ACCOUNT_INACTIVE',
-        'ROLE_NOT_ALLOWED',
-      }.contains(code)) {
+            'AUTH_REQUIRED',
+            'SESSION_EXPIRED',
+            'ACCOUNT_INACTIVE',
+            'ROLE_NOT_ALLOWED',
+          }.contains(code) &&
+          body['token'] != null &&
+          body['token'] == _sessionToken) {
         await setSession(null);
         onSessionExpired?.call();
       }
@@ -1127,7 +1172,9 @@ class ApiService {
     data['ok'] = true;
     data['success'] = true;
     data.putIfAbsent('api_version', () => 'legacy');
-    if (data['session_revoked'] == true) {
+    if (data['session_revoked'] == true &&
+        body['token'] != null &&
+        body['token'] == _sessionToken) {
       await setSession(null);
       onSessionExpired?.call();
     }

@@ -114,6 +114,13 @@ class CartSummaryWidget extends StatelessWidget {
     bool isSubmitting = false,
   }) {
     var submitting = isSubmitting;
+    final quantityControllers = <String, TextEditingController>{};
+    for (final item in cartItems) {
+      final key =
+          '${item.code}|${item.selectedUnit ?? item.unit}|${item.priceOffer ?? item.displayPrice}';
+      quantityControllers[key] =
+          TextEditingController(text: '${item.quantity ?? 0}');
+    }
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -184,17 +191,55 @@ class CartSummaryWidget extends StatelessWidget {
                                     tooltip: 'إنقاص الكمية',
                                     onPressed: submitting || quantity <= 1
                                         ? null
-                                        : () => onUpdateItem(
-                                            item, quantity - 1, unit),
+                                        : () {
+                                            final next = (quantity - 1)
+                                                .clamp(0.0, double.infinity)
+                                                .toDouble();
+                                            onUpdateItem(item, next, unit);
+                                            setDialogState(() {});
+                                          },
                                     icon: const Icon(Icons.remove, size: 18),
                                   ),
-                                  Text('$quantity'),
+                                  SizedBox(
+                                    width: 72,
+                                    child: TextField(
+                                      controller: quantityControllers[
+                                          '${item.code}|${item.selectedUnit ?? item.unit}|${item.priceOffer ?? item.displayPrice}'],
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                              decimal: true),
+                                      textAlign: TextAlign.center,
+                                      enabled: !submitting,
+                                      onSubmitted: (value) {
+                                        final next = double.tryParse(value);
+                                        if (next == null ||
+                                            !next.isFinite ||
+                                            next <= 0) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                                content: Text(
+                                                    'أدخل كمية صحيحة أكبر من صفر')),
+                                          );
+                                          quantityControllers[
+                                                  '${item.code}|${item.selectedUnit ?? item.unit}|${item.priceOffer ?? item.displayPrice}']
+                                              ?.text = quantity.toString();
+                                          return;
+                                        }
+                                        onUpdateItem(item, next, unit);
+                                        setDialogState(() {});
+                                      },
+                                    ),
+                                  ),
                                   IconButton.filledTonal(
                                     tooltip: 'زيادة الكمية',
                                     onPressed: submitting
                                         ? null
-                                        : () => onUpdateItem(
-                                            item, quantity + 1, unit),
+                                        : () {
+                                            onUpdateItem(
+                                                item, quantity + 1, unit);
+                                            setDialogState(() {});
+                                          },
                                     icon: const Icon(Icons.add, size: 18),
                                   ),
                                   if (units.length > 1)
@@ -324,7 +369,11 @@ class CartSummaryWidget extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ).then((_) {
+      for (final controller in quantityControllers.values) {
+        controller.dispose();
+      }
+    });
   }
 
   static Widget _buildProductImage(Product? product) {

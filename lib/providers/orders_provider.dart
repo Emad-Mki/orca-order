@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'async_session_notifier.dart';
 import '../models/order.dart';
 import '../order_status_mapper.dart';
 import '../repositories/order_repository.dart';
@@ -6,7 +7,7 @@ import '../repositories/order_repository.dart';
 enum OrderSortOption { newest, oldest, valueHighToLow, valueLowToHigh }
 
 /// Provider for the full, permission-scoped order list and local view filters.
-class OrdersProvider extends ChangeNotifier {
+class OrdersProvider extends ChangeNotifier with AsyncSessionNotifier {
   static const Duration minimumManualRefreshInterval = Duration(seconds: 15);
 
   final OrderRepository _orderRepository;

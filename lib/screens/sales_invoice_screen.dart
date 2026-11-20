@@ -7,6 +7,7 @@ import '../models/product.dart';
 import '../providers/products_provider.dart';
 import '../services/api_service.dart';
 import '../utils/number_utils.dart';
+import '../utils/guarded_navigation.dart';
 import '../widgets/product_image_widget.dart';
 
 class SalesInvoiceScreen extends StatefulWidget {
@@ -36,10 +37,57 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
   bool _confirmCredit = false;
   bool _loading = true;
   bool _submitting = false;
+  bool _allowPop = false;
   String? _error;
   String? _requestId;
 
   bool get _isSubmissionLocked => _submitting || _requestId != null;
+
+  Future<void> _handleBack() async {
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+    if (_submitting) return;
+    final hasChanges = _cart.isNotEmpty ||
+        _customerId != null ||
+        _buyerName.text.trim().isNotEmpty ||
+        _buyerPhone.text.trim().isNotEmpty ||
+        _notes.text.trim().isNotEmpty ||
+        _discount.text.trim() != '0' ||
+        [..._received, ..._refunded].any((line) =>
+            line.amount.text.trim().isNotEmpty ||
+            line.equivalent.text.trim().isNotEmpty ||
+            line.rate.text.trim().isNotEmpty ||
+            line.reference.text.trim().isNotEmpty ||
+            line.note.text.trim().isNotEmpty);
+    if (!hasChanges && _requestId == null) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+      return;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('فاتورة غير محفوظة'),
+        content: Text(_requestId == null
+            ? 'مغادرة الصفحة ستفقد بيانات الفاتورة.'
+            : 'تعذر تأكيد نتيجة الحفظ. تحقق من الفواتير قبل إنشاء فاتورة جديدة لتجنب التكرار.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('متابعة التحرير'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('مغادرة الصفحة'),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+    }
+  }
 
   String get _creatorName =>
       ApiService().currentUser?['full_name']?.toString() ??
@@ -581,7 +629,8 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
           ),
         ),
       );
-      Navigator.pop(context, true);
+      popAfterGuard(context,
+          allowPop: () => setState(() => _allowPop = true), result: true);
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -757,19 +806,25 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
       );
     }
     if (_error != null && _config == null) {
-      return Scaffold(
-        appBar: const _InvoiceAppBar(),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_error!, textAlign: TextAlign.center),
-                const SizedBox(height: 12),
-                OutlinedButton(
-                    onPressed: _load, child: const Text('إعادة المحاولة')),
-              ],
+      return PopScope(
+        canPop: _allowPop,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) _handleBack();
+        },
+        child: Scaffold(
+          appBar: const _InvoiceAppBar(),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_error!, textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                      onPressed: _load, child: const Text('إعادة المحاولة')),
+                ],
+              ),
             ),
           ),
         ),

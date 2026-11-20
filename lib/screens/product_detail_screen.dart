@@ -473,7 +473,10 @@ class ProductDetailScreen extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => NewOrderScreen(session: session ?? {}),
+                    builder: (_) => NewOrderScreen(
+                      session: session ?? {},
+                      initialProduct: product,
+                    ),
                   ),
                 );
               },

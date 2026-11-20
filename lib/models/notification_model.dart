@@ -60,10 +60,10 @@ class NotificationModel {
       targetRole: json['target_role']?.toString(),
       targetUserId: (json['target_user_id'] ?? json['user_id'])?.toString(),
       customerId: json['customer_id']?.toString(),
-      orderId: json['order_id']?.toString(),
-      invoiceId: json['invoice_id']?.toString(),
-      productId: json['product_id']?.toString(),
-      deepLink: (json['deep_link'] ?? '').toString(),
+      orderId: _nonEmpty(json['order_id']),
+      invoiceId: _nonEmpty(json['invoice_id']),
+      productId: _nonEmpty(json['product_id']),
+      deepLink: (json['deep_link'] ?? json['screenRoute'] ?? '').toString(),
       createdAt: parseDate(json['created_at']),
       sentAt: parseDate(json['sent_at']),
       readAt: readAt,
@@ -72,6 +72,11 @@ class NotificationModel {
       lastError: json['last_error']?.toString(),
       retryCount: int.tryParse((json['retry_count'] ?? 0).toString()) ?? 0,
     );
+  }
+
+  static String? _nonEmpty(dynamic value) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? null : text;
   }
 
   Map<String, dynamic> toJson() => {
@@ -94,4 +99,46 @@ class NotificationModel {
         'last_error': lastError,
         'retry_count': retryCount,
       };
+
+  NotificationModel copyWith({
+    String? id,
+    String? eventType,
+    String? title,
+    String? body,
+    String? targetRole,
+    String? targetUserId,
+    String? customerId,
+    String? orderId,
+    String? invoiceId,
+    String? productId,
+    String? deepLink,
+    DateTime? createdAt,
+    DateTime? sentAt,
+    DateTime? readAt,
+    bool? isRead,
+    String? status,
+    String? lastError,
+    int? retryCount,
+  }) {
+    return NotificationModel(
+      id: id ?? this.id,
+      eventType: eventType ?? this.eventType,
+      title: title ?? this.title,
+      body: body ?? this.body,
+      targetRole: targetRole ?? this.targetRole,
+      targetUserId: targetUserId ?? this.targetUserId,
+      customerId: customerId ?? this.customerId,
+      orderId: orderId ?? this.orderId,
+      invoiceId: invoiceId ?? this.invoiceId,
+      productId: productId ?? this.productId,
+      deepLink: deepLink ?? this.deepLink,
+      createdAt: createdAt ?? this.createdAt,
+      sentAt: sentAt ?? this.sentAt,
+      readAt: readAt ?? this.readAt,
+      isRead: isRead ?? this.isRead,
+      status: status ?? this.status,
+      lastError: lastError ?? this.lastError,
+      retryCount: retryCount ?? this.retryCount,
+    );
+  }
 }

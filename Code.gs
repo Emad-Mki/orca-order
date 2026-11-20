@@ -19,11 +19,11 @@ const H = {
   Inventory_Movements: ['movement_id','code','type','quantity','note','created_by','created_at', 'reference_id', 'posting_id', 'is_correction'],
   Shipments: ['shipment_id','order_id','delivery_method','carrier','tracking_no','province','shipping_cost_internal','package_count','carton_count','bag_count','shipping_date','status','note','warehouse_note'],
   Low_Stock_Requests: ['request_id','code','requested_qty','status','note','created_by','created_at'],
-  Notifications: ['notification_id','event_type','title','body','target_role','target_user_id','customer_id','order_id','invoice_id','product_id','deep_link','created_at','sent_at','read_at','is_read','status','created_by','retry_count','last_error','last_attempt_at','user_id','type','entity_type','entity_id'],
-  User_Devices: ['device_id','user_id','fcm_token','platform','app_version','last_active_at','is_active','created_at','updated_at'],
+  Notifications: ['notification_id','event_id','event_type','title','body','target_role','target_user_id','customer_id','order_id','invoice_id','product_id','deep_link','created_at','sent_at','read_at','is_read','status','created_by','retry_count','last_error','last_attempt_at','delivered_device_ids','user_id','type','entity_type','entity_id'],
+  User_Devices: ['device_id','user_id','fcm_token','fcm_target_type','platform','app_version','last_active_at','is_active','enabled','created_at','updated_at'],
   Audit_Log: ['log_id','user_id','action','entity','entity_id','details','created_at'],
   Sessions: ['token','user_id','expires_at'],
-  Product_Images: ['image_name', 'normalized_name', 'file_id', 'image_url', 'mime_type', 'last_checked', 'status'],
+  Product_Images: ['image_name', 'normalized_name', 'file_id', 'image_url', 'mime_type', 'last_checked', 'status', 'modified_time'],
   New_Products: ['code','name','description','unit','price','image_url','show_in_new','created_at'],
   Sales_Stock: ['user_id','code','quantity','updated_at','updated_by'],
   Sales_Invoices: ['invoice_id','invoice_number','created_by','created_by_role','customer_id','customer_name','buyer_name','buyer_phone','seller_id','invoice_date','created_at','updated_at','modified_by','revision','status','stock_source','currency','subtotal','discount','net_total','amount_received','payment_currency','payment_method','rate_syp_per_usd','equivalent_received','change_amount','net_received','notes','payment_reference','cash_box_id','client_request_id','total_received_usd','total_refunded_usd','net_paid_usd','balance_due_usd','financial_status','payment_detail_version','void_request_id','void_reason'],
@@ -74,7 +74,13 @@ function _digest(str) {
  * قراءة جميع الصفوف من ورقة مع تحويلها إلى كائنات باستخدام العناوين الفعلية
  */
 function _all(name) {
-  const sheet = _ss().getSheetByName(name);
+  const resolvedName = name === 'Product_Images'
+    ? (PropertiesService.getScriptProperties()
+        .getProperty('PRODUCT_IMAGES_ACTIVE_SHEET') || name)
+    : name;
+  const ss = _ss();
+  const sheet = ss.getSheetByName(resolvedName) ||
+    (resolvedName !== name ? ss.getSheetByName(name) : null);
   if (!sheet) return [];
   const values = sheet.getDataRange().getValues();
   if (values.length === 0) return [];
@@ -762,7 +768,32 @@ function doPost(e) {
         break;
       case 'rebuildImageIndex':
         _needRole(user, ['admin']);
-        result = rebuildImageIndex();
+        result = rebuildImageIndex(body);
+        break;
+      case 'image_index_status':
+        _needRole(user, ['admin']);
+        result = _imageIndexJobStatus_();
+        break;
+      case 'image_index_resume':
+        _needRole(user, ['admin']);
+        result = resumeImageIndexJob();
+        break;
+      case 'image_index_cancel':
+        _needRole(user, ['admin']);
+        result = cancelImageIndexJob();
+        break;
+      case 'image_index_restart':
+        _needRole(user, ['admin']);
+        result = rebuildImageIndex({
+          operation: 'restart',
+          confirmed: body.confirmed,
+        });
+        break;
+      case 'image_index_schedule':
+        _needRole(user, ['admin']);
+        result = _imageIndexSetSchedule_(
+          body.enabled === true || String(body.enabled) === 'true'
+        );
         break;
       case 'product_update_qty':
       case 'updateProductQuantity':
@@ -1592,17 +1623,14 @@ function _handleProducts(body, user) {
   });
 
   // بناء خريطة للبحث السريع عن الصور O(1)
-  const imageMap = {};
-  imageIndex.forEach(img => {
-    if (img.normalized_name && img.status === 'active') {
-      imageMap[img.normalized_name] = img;
-    }
-  });
+  const imageMaps = _buildImageIndexMaps_(imageIndex);
 
   // دمج المنتجات من Sheet الأساسية والجديدة
   let allList = [...products];
+  const knownProductCodes = new Set(products.map(product => product.code));
   newProducts.forEach(np => {
-    if (!allList.find(p => p.code === np.code)) {
+    if (!knownProductCodes.has(np.code)) {
+      knownProductCodes.add(np.code);
       allList.push(np);
     }
   });
@@ -1617,9 +1645,7 @@ function _handleProducts(body, user) {
         String(p.oem || p.OEM || '').toLowerCase().includes(q)
       )
       .map(p => {
-        const imageName = p.image_name || p.code;
-        const normalized = normalizeImageName_(imageName);
-        const imgData = imageMap[normalized];
+        const imgData = _findIndexedProductImage_(p, imageMaps);
 
         const item = _serializeProductForRole(
           p,
@@ -1643,12 +1669,7 @@ function _handleNewProducts(body, user) {
   _all('Products').forEach(product => {
     catalogProducts[String(product.code)] = product;
   });
-  const imageMap = {};
-  _all('Product_Images').forEach(image => {
-    if (image.normalized_name && image.status === 'active') {
-      imageMap[image.normalized_name] = image;
-    }
-  });
+  const imageMaps = _buildImageIndexMaps_(_all('Product_Images'));
   const newProducts = _all('New_Products')
     .filter(p =>
       (p.show_in_new === 'true' || p.show_in_new === true) &&
@@ -1660,8 +1681,7 @@ function _handleNewProducts(body, user) {
     products: newProducts.map(p => {
       const baseProduct = catalogProducts[String(p.code)] || {};
       const mergedProduct = Object.assign({}, baseProduct, p);
-      const imageName = mergedProduct.image_name || mergedProduct.code;
-      const indexedImage = imageMap[normalizeImageName_(imageName)];
+      const indexedImage = _findIndexedProductImage_(mergedProduct, imageMaps);
       const imageUrl = p.image_url ||
         (indexedImage && indexedImage.image_url) ||
         baseProduct.image_url ||
@@ -1680,6 +1700,11 @@ function _handleNewProducts(body, user) {
 function _handleBestSellers(body, user) {
   const orderItems = _all('Order_Items');
   const products = [..._all('Products'), ..._all('New_Products')];
+  const productsByCode = new Map();
+  products.forEach(product => {
+    const code = String(product.code);
+    if (!productsByCode.has(code)) productsByCode.set(code, product);
+  });
   const orders = _all('Orders');
   const imageIndex = _all('Product_Images');
   const thirtyDaysAgo = new Date();
@@ -1716,19 +1741,13 @@ function _handleBestSellers(body, user) {
     throw new Error('غير مصرح لك بعرض المنتجات');
   }
 
-  const imageMap = {};
-  imageIndex.forEach(img => {
-    if (img.normalized_name && img.status === 'active') {
-      imageMap[img.normalized_name] = img;
-    }
-  });
+  const imageMaps = _buildImageIndexMaps_(imageIndex);
 
   const bestSellers = Object.keys(salesMap)
     .map(code => {
-      const product = products.find(item => String(item.code) === code);
+      const product = productsByCode.get(code);
       if (!product) return null;
-      const imageName = product.image_name || product.code;
-      const image = imageMap[normalizeImageName_(imageName)];
+      const image = _findIndexedProductImage_(product, imageMaps);
       const safeProduct = _serializeProductForRole(
         product,
         userRole,
@@ -1751,13 +1770,7 @@ function _handleSearchProducts(body, user) {
   const category = body.category || body.group || '';
   const products = _all('Products');
   const imageIndex = _all('Product_Images');
-  // بناء خريطة للبحث السريع عن الصور O(1)
-  const imageMap = {};
-  imageIndex.forEach(img => {
-    if (img.normalized_name && img.status === 'active') {
-      imageMap[img.normalized_name] = img;
-    }
-  });
+  const imageMaps = _buildImageIndexMaps_(imageIndex);
 
   let filtered = products;
   
@@ -1778,15 +1791,13 @@ function _handleSearchProducts(body, user) {
 
   return {
     products: filtered.map(p => {
-      const imageName = p.image_name || p.code;
-      const normalized = normalizeImageName_(imageName);
-      const imgData = imageMap[normalized];
+      const imgData = _findIndexedProductImage_(p, imageMaps);
       const product = _serializeProductForRole(
         p,
         user.role,
         imgData ? imgData.image_url : ''
       );
-      product.image_name = imageName;
+      product.image_name = p.image_name || p.code;
       product.image_id = imgData ? imgData.file_id : (p.image_id || '');
       product.origin = p.origin;
       return product;
@@ -1801,7 +1812,7 @@ function _handleGetProductCategories(body, user) {
 }
 
 function _handleUpdateProductQuantity(body, user) {
-  _needRole(user, ['admin', 'warehouse']);
+  _needRole(user, ['admin']);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) {
     throw _apiError('BUSY', 'المخزون قيد التحديث، حاول مجددًا', true);
@@ -2023,62 +2034,1135 @@ function normalizeImageName_(value) {
   return String(value).trim().toLowerCase().replace(/\.[^/.]+$/, "");
 }
 
+function _buildImageIndexMaps_(imageIndex) {
+  const byId = Object.create(null);
+  const byName = Object.create(null);
+  const conflicts = Object.create(null);
+  imageIndex.forEach(image => {
+    if (image.status !== 'active') return;
+    const fileId = String(image.file_id || '').trim();
+    const normalizedName = String(image.normalized_name || '').trim();
+    if (fileId) byId[fileId] = image;
+    if (normalizedName) {
+      if (conflicts[normalizedName]) return;
+      const current = byName[normalizedName];
+      if (current && String(current.file_id || '') !== fileId) {
+        delete byName[normalizedName];
+        conflicts[normalizedName] = true;
+        Logger.log('Image index name conflict: ' + normalizedName);
+      } else {
+        byName[normalizedName] = image;
+      }
+    }
+  });
+  return { byId: byId, byName: byName };
+}
+
+function _findIndexedProductImage_(product, imageMaps) {
+  const fileId = String(product.image_file_id || '').trim();
+  if (fileId && imageMaps.byId[fileId]) return imageMaps.byId[fileId];
+  return imageMaps.byName[normalizeImageName_(product.image_name || product.code)] || null;
+}
+
 /**
-* إعادة بناء فهرس صور المنتجات من Google Drive
-* يجب تشغيل هذه الدالة يدوياً أو عبر API عند إضافة صور جديدة
-*/
-function rebuildImageIndex() {
-  const folderId = PropertiesService.getScriptProperties().getProperty('PRODUCT_IMAGES_FOLDER_ID') || '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
+ * Incrementally sync Drive image changes by default; full rebuild is explicit.
+ */
+function rebuildImageIndex(options) {
+  const opts = options || {};
+  const operation = String(opts.operation || 'start').toLowerCase();
+  if (operation === 'status') return _imageIndexJobStatus_();
+  if (operation === 'resume') return resumeImageIndexJob();
+  if (operation === 'cancel') return cancelImageIndexJob();
+  if (operation === 'restart') {
+    if (opts.confirmed !== true && String(opts.confirmed) !== 'true') {
+      throw _apiError('CONFIRMATION_REQUIRED', 'تأكيد إعادة الفهرسة مطلوب', false);
+    }
+    return _startMetadataImageIndexJob_('full', true);
+  }
+  return _startMetadataImageIndexJob_(operation === 'full' ? 'full' : 'update', false);
+}
+
+const IMAGE_INDEX_JOB_PROPERTY_ = 'PRODUCT_IMAGES_INDEX_JOB_V2';
+const IMAGE_INDEX_ACTIVE_PROPERTY_ = 'PRODUCT_IMAGES_ACTIVE_SHEET';
+const IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_ = 'PRODUCT_IMAGES_CHANGES_TOKEN';
+const IMAGE_INDEX_SCHEDULED_PROPERTY_ = 'PRODUCT_IMAGES_SCHEDULED';
+const IMAGE_INDEX_TRIGGER_FUNCTION_ = 'continueImageIndexJob';
+const IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_ = 'scheduledImageIndexUpdate';
+const IMAGE_INDEX_DEFAULT_BATCH_SIZE_ = 1000;
+const IMAGE_INDEX_MAX_BATCH_SIZE_ = 1000;
+const IMAGE_INDEX_DEFAULT_BUDGET_MS_ = 180000;
+const IMAGE_INDEX_MAX_SPREADSHEET_CELLS_ = 10000000;
+const IMAGE_INDEX_MAX_ERRORS_ = 20;
+
+function _imageIndexReadJob_() {
+  const raw = PropertiesService.getScriptProperties()
+    .getProperty(IMAGE_INDEX_JOB_PROPERTY_);
+  if (!raw) return null;
   try {
-    const folder = DriveApp.getFolderById(folderId);
-    const files = folder.getFiles();
-    const ss = _ss();
-    let sheet = ss.getSheetByName('Product_Images');
+    return JSON.parse(raw);
+  } catch (error) {
+    Logger.log('Image index job state is unreadable: ' + _imageIndexSafeError_(error));
+    throw _apiError('IMAGE_INDEX_STATE_INVALID', 'تعذر قراءة حالة مهمة فهرس الصور', false);
+  }
+}
 
-    if (!sheet) {
-      sheet = ss.insertSheet('Product_Images');
-      sheet.appendRow(H.Product_Images);
-    } else {
-      const lastRow = sheet.getLastRow();
-      if (lastRow > 1) {
-        sheet.deleteRows(2, lastRow - 1);
-      }
-    }
+function _imageIndexSaveJob_(job) {
+  job.last_progress_at = _now();
+  PropertiesService.getScriptProperties()
+    .setProperty(IMAGE_INDEX_JOB_PROPERTY_, JSON.stringify(job));
+}
 
-    let count = 0;
-    const now = _now();
-
-    while (files.hasNext()) {
-      const file = files.next();
-      const mimeType = file.getMimeType();
-
-      if (mimeType.indexOf('image/') !== 0) {
-        continue;
-      }
-
-      const fileId = file.getId();
-      const fileName = file.getName();
-      const imageUrl = 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600';
-
-      sheet.appendRow([
-        fileName,
-        normalizeImageName_(fileName),
-        fileId,
-        imageUrl,
-        mimeType,
-        now,
-        'active'
-      ]);
-      count++;
-    }
-
+function _imageIndexPublicStatus_(job) {
+  if (!job) {
     return {
       success: true,
-      message: 'تمت فهرسة ' + count + ' صورة بنجاح',
-      count: count
+      status: 'idle',
+      scheduled_update: _imageIndexScheduleStatus_(),
+      message: 'لا توجد مهمة فهرسة صور حالية',
     };
-  } catch (e) {
-    throw new Error('خطأ في بناء الفهرس: ' + e.message);
+  }
+  return {
+    success: true,
+    jobId: job.job_id,
+    status: job.status,
+    files_scanned: job.files_scanned,
+    files_indexed: job.files_indexed,
+    files_skipped: job.files_skipped,
+    files_added: job.files_added || 0,
+    files_updated: job.files_updated || 0,
+    files_unavailable: job.files_unavailable || 0,
+    name_conflict_count: job.name_conflict_count || 0,
+    duration_ms: (job.completed_at ? Date.parse(job.completed_at) : Date.now()) -
+      Date.parse(job.started_at),
+    timings: job.timings || {},
+    mode: job.mode || 'full',
+    scheduled_update: _imageIndexScheduleStatus_(),
+    token_restarts: job.token_restarts || 0,
+    error_count: job.error_count,
+    errors: job.errors || [],
+    last_progress_at: job.last_progress_at,
+    started_at: job.started_at,
+    completed_at: job.completed_at || null,
+    last_error: job.last_error || null,
+    message: _imageIndexStatusMessage_(job),
+  };
+}
+
+function _imageIndexStatusMessage_(job) {
+  const labels = {
+    pending: 'قيد الانتظار',
+    running: 'جارٍ التنفيذ',
+    continuing: 'جارٍ الاستكمال',
+    publishing: 'جارٍ تفعيل الفهرس الجديد',
+    completed: 'اكتملت الفهرسة',
+    completed_with_errors: 'اكتملت الفهرسة مع أخطاء',
+    failed: 'فشلت المهمة؛ الفهرس السابق ما زال نشطاً',
+    cancelled: 'أُلغيت المهمة؛ الفهرس السابق ما زال نشطاً',
+  };
+  return (labels[job.status] || job.status) +
+    ' — فُحص ' + job.files_scanned +
+    '، أُضيف ' + (job.files_added || 0) +
+    '، عُدّل ' + (job.files_updated || 0) +
+    '، غير متاح ' + (job.files_unavailable || 0) +
+    '، تعارض أسماء ' + (job.name_conflict_count || 0) +
+    '، أخطاء ' + job.error_count +
+    '، المدة ' + Math.max(0, Math.round(
+      ((job.completed_at ? Date.parse(job.completed_at) : Date.now()) -
+        Date.parse(job.started_at)) / 1000
+    )) + ' ث';
+}
+
+function _imageIndexSafeError_(error) {
+  let message = String(error && error.message ? error.message : error || 'خطأ غير معروف');
+  message = message
+    .replace(/https?:\/\/\S+/gi, '[رابط محذوف]')
+    .replace(/(?:ya29\.[\w.-]+|AIza[\w-]{20,})/g, '[بيانات اعتماد محذوفة]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 240);
+  return message || 'خطأ غير معروف';
+}
+
+function _imageIndexConfig_() {
+  const properties = PropertiesService.getScriptProperties();
+  const batchValue = properties.getProperty('IMAGE_INDEX_BATCH_SIZE');
+  const budgetValue = properties.getProperty('IMAGE_INDEX_BUDGET_MS');
+  const configuredBatch = batchValue == null || String(batchValue).trim() === '' ? NaN : Number(batchValue);
+  const configuredBudget = budgetValue == null || String(budgetValue).trim() === '' ? NaN : Number(budgetValue);
+  return {
+    batchSize: Number.isInteger(configuredBatch)
+      ? Math.max(10, Math.min(IMAGE_INDEX_MAX_BATCH_SIZE_, configuredBatch))
+      : IMAGE_INDEX_DEFAULT_BATCH_SIZE_,
+    budgetMs: Number.isFinite(configuredBudget)
+      ? Math.max(30000, Math.min(IMAGE_INDEX_DEFAULT_BUDGET_MS_, configuredBudget))
+      : IMAGE_INDEX_DEFAULT_BUDGET_MS_,
+  };
+}
+
+function _imageIndexDriveApi_(resource, params) {
+  const query = Object.keys(params || {})
+    .map(key => encodeURIComponent(key) + '=' + encodeURIComponent(params[key]))
+    .join('&');
+  const response = UrlFetchApp.fetch(
+    'https://www.googleapis.com/drive/v3/' + resource +
+      (query ? '?' + query : ''),
+    {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true,
+    }
+  );
+  const code = response.getResponseCode();
+  const body = response.getContentText();
+  if (code < 200 || code >= 300) {
+    throw new Error('Drive API ' + code + ': ' + body.slice(0, 300));
+  }
+  return JSON.parse(body);
+}
+
+function _imageIndexEnsureSchema_(sheet) {
+  const headers = H.Product_Images;
+  const lastColumn = sheet.getLastColumn();
+  const existing = lastColumn
+    ? sheet.getRange(1, 1, 1, lastColumn).getValues()[0]
+      .map(value => String(value || '').trim())
+    : [];
+  const missing = headers.filter(header => existing.indexOf(header) < 0);
+  if (missing.length) {
+    const newColumns = sheet.getMaxColumns() < existing.length + missing.length;
+    if (newColumns) {
+      sheet.insertColumnsAfter(
+        sheet.getMaxColumns(),
+        existing.length + missing.length - sheet.getMaxColumns()
+      );
+    }
+    const additions = missing.map(header => [header]);
+    sheet.getRange(1, existing.length + 1, 1, additions.length)
+      .setValues([missing]);
+  }
+  const actual = sheet.getRange(1, 1, 1, headers.length).getValues()[0]
+    .map(value => String(value || '').trim());
+  if (actual.join('\u001f') !== headers.join('\u001f')) {
+    throw _apiError(
+      'IMAGE_INDEX_SCHEMA',
+      'ترتيب أعمدة فهرس الصور غير متوافق؛ لم تُعدّل بيانات الفهرس',
+      false
+    );
+  }
+}
+
+function _imageIndexMetadataRow_(file, folderId) {
+  if (!file || !file.mimeType || !Array.isArray(file.parents)) {
+    throw new Error('بيانات مجلد أو نوع ملف Drive غير مكتملة');
+  }
+  const fileId = String(file && file.id || '').trim();
+  const fileName = String(file && file.name || '').trim();
+  const mimeType = String(file && file.mimeType || '');
+  const modifiedTime = String(file && file.modifiedTime || '');
+  const inFolder = Array.isArray(file && file.parents) &&
+    file.parents.indexOf(folderId) >= 0;
+  if (!fileId || !fileName) throw new Error('بيانات ملف Drive غير مكتملة');
+  if (file.trashed || !inFolder || mimeType.indexOf('image/') !== 0) return null;
+  return [
+    fileName,
+    normalizeImageName_(fileName),
+    fileId,
+    'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600&v=' +
+      encodeURIComponent(modifiedTime),
+    mimeType,
+    _now(),
+    'active',
+    modifiedTime,
+  ];
+}
+
+function _imageIndexNewJob_(mode, folderId, stageSheet, startPageToken, pageToken) {
+  const now = _now();
+  return {
+    engine: 'metadata_v1',
+    job_id: Utilities.getUuid(),
+    mode: mode,
+    status: 'pending',
+    folder_id: folderId,
+    stage_sheet: stageSheet || '',
+    bootstrap_page_token: startPageToken || '',
+    page_token: pageToken || '',
+    files_scanned: 0,
+    files_indexed: 0,
+    files_added: 0,
+    files_updated: 0,
+    files_unavailable: 0,
+    name_conflict_count: 0,
+    files_skipped: 0,
+    error_count: 0,
+    errors: [],
+    timings: {
+      drive_fetch_ms: 0,
+      index_read_ms: 0,
+      match_ms: 0,
+      write_ms: 0,
+      trigger_wait_ms: 0,
+    },
+    started_at: now,
+    last_progress_at: now,
+    completed_at: null,
+    last_error: null,
+  };
+}
+
+function _startMetadataImageIndexJob_(requestedMode, confirmedRestart) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث فهرس الصور؛ حاول مجدداً', true);
+  }
+  try {
+    const current = _imageIndexReadJob_();
+    if (current && ['pending', 'running', 'continuing', 'publishing'].includes(current.status)) {
+      if (!confirmedRestart) return _imageIndexPublicStatus_(current);
+      current.status = 'cancelled';
+      current.completed_at = _now();
+      _imageIndexSaveJob_(current);
+    }
+    const properties = PropertiesService.getScriptProperties();
+    const folderId = properties.getProperty('PRODUCT_IMAGES_FOLDER_ID') ||
+      '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
+    const storedToken = properties.getProperty(IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_);
+    let mode = requestedMode;
+    let startPageToken = '';
+    let pageToken = storedToken || '';
+    let stageName = '';
+    let tokenFetchMs = 0;
+    if (mode === 'full' || !storedToken) {
+      const tokenStarted = Date.now();
+      const tokenResult = _imageIndexDriveApi_('changes/startPageToken', {
+        fields: 'startPageToken',
+      });
+      tokenFetchMs = Date.now() - tokenStarted;
+      startPageToken = String(tokenResult.startPageToken || '');
+      if (!startPageToken) throw new Error('Drive API لم يُرجع رمز بدء التغييرات');
+      mode = requestedMode === 'full' ? 'full' : 'bootstrap';
+      stageName = _imageIndexFindOrCreateStage_(_ss(), Utilities.getUuid()).getName();
+    }
+    const job = _imageIndexNewJob_(mode, folderId, stageName, startPageToken, pageToken);
+    job.timings.drive_fetch_ms += tokenFetchMs;
+    _imageIndexSaveJob_(job);
+  } finally {
+    lock.releaseLock();
+  }
+  continueImageIndexJob();
+  const status = _imageIndexJobStatus_();
+  if (['pending', 'running', 'continuing', 'publishing'].includes(status.status)) {
+    try {
+      _imageIndexEnsureTrigger_();
+    } catch (error) {
+      const job = _imageIndexReadJob_();
+      if (job) {
+        job.status = 'failed';
+        job.last_error = 'تعذر إنشاء مشغّل الاستكمال؛ وافق على الأذونات ثم أعد المحاولة';
+        _imageIndexSaveJob_(job);
+      }
+      Logger.log('Image index trigger creation failed: ' + _imageIndexSafeError_(error));
+      throw _apiError(
+        'IMAGE_INDEX_TRIGGER_FAILED',
+        'تعذر إنشاء مشغّل الاستكمال؛ وافق على الأذونات ثم أعد المحاولة',
+        false
+      );
+    }
+  }
+  return _imageIndexJobStatus_();
+}
+
+function _imageIndexApplyChanges_(job, changes) {
+  const readStarted = Date.now();
+  const ss = _ss();
+  const sheetName = PropertiesService.getScriptProperties()
+    .getProperty(IMAGE_INDEX_ACTIVE_PROPERTY_) || 'Product_Images';
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) throw _apiError('IMAGE_INDEX_SHEET_MISSING', 'ورقة فهرس الصور غير موجودة', false);
+  _imageIndexEnsureSchema_(sheet);
+  const lastRow = sheet.getLastRow();
+  const existingRows = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, H.Product_Images.length).getValues()
+    : [];
+  const byId = Object.create(null);
+  existingRows.forEach((row, index) => {
+    const id = String(row[2] || '');
+    if (id) byId[id] = { row: index + 2, values: row };
+  });
+  job.timings.index_read_ms += Date.now() - readStarted;
+
+  const matchStarted = Date.now();
+  const latest = Object.create(null);
+  changes.forEach(change => {
+    const id = String(change.fileId || change.file && change.file.id || '');
+    if (id) latest[id] = change;
+  });
+  const updates = [];
+  const additions = [];
+  Object.keys(latest).forEach(id => {
+    const change = latest[id];
+    let row = null;
+    if (!change.removed && !change.file) {
+      _imageIndexAppendError_(job, new Error('بيانات التغيير غير متاحة؛ أبقينا سجل الصورة كما هو'));
+      return;
+    }
+    try {
+      if (!change.removed && change.file) {
+        row = _imageIndexMetadataRow_(change.file, job.folder_id);
+      }
+    } catch (error) {
+      _imageIndexAppendError_(job, error);
+      return;
+    }
+    const old = byId[id];
+    if (!row) {
+      if (old && old.values[6] === 'active') {
+        const inactive = old.values.slice();
+        inactive[5] = _now();
+        inactive[6] = 'inactive';
+        updates.push({ row: old.row, values: inactive });
+        job.files_unavailable++;
+      } else {
+        job.files_skipped++;
+      }
+      return;
+    }
+    if (!old) {
+      additions.push(row);
+      job.files_added++;
+      return;
+    }
+    if (old.values[0] !== row[0] ||
+        old.values[4] !== row[4] ||
+        old.values[6] !== row[6] ||
+        String(old.values[7] || '') !== row[7]) {
+      updates.push({ row: old.row, values: row });
+      job.files_updated++;
+    } else {
+      job.files_skipped++;
+    }
+  });
+  job.timings.match_ms += Date.now() - matchStarted;
+
+  const writeStarted = Date.now();
+  updates.sort((a, b) => a.row - b.row);
+  let group = [];
+  const flushGroup = () => {
+    if (!group.length) return;
+    sheet.getRange(group[0].row, 1, group.length, H.Product_Images.length)
+      .setValues(group.map(item => item.values));
+    group = [];
+  };
+  updates.forEach(item => {
+    if (group.length && item.row !== group[group.length - 1].row + 1) flushGroup();
+    group.push(item);
+  });
+  flushGroup();
+  if (additions.length) {
+    const firstRow = lastRow + 1;
+    _imageIndexEnsureRows_(ss, sheet, firstRow + additions.length - 1);
+    sheet.getRange(firstRow, 1, additions.length, H.Product_Images.length)
+      .setValues(additions);
+  }
+  const resultingRows = existingRows.map(row => row.slice());
+  updates.forEach(item => { resultingRows[item.row - 2] = item.values; });
+  additions.forEach(row => resultingRows.push(row));
+  const nameCounts = Object.create(null);
+  resultingRows.forEach(row => {
+    if (row[6] !== 'active') return;
+    const name = String(row[1] || '');
+    if (name) nameCounts[name] = (nameCounts[name] || 0) + 1;
+  });
+  job.name_conflict_count = Object.keys(nameCounts)
+    .filter(name => nameCounts[name] > 1).length;
+  job.files_indexed += job.files_added + job.files_updated;
+  job.timings.write_ms += Date.now() - writeStarted;
+}
+
+function _imageIndexCompleteJob_(job, token) {
+  const properties = PropertiesService.getScriptProperties();
+  if (token) properties.setProperty(IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_, token);
+  job.page_token = '';
+  job.status = job.error_count ? 'completed_with_errors' : 'completed';
+  job.completed_at = _now();
+  job.continuation_token = null;
+  _imageIndexSaveJob_(job);
+  _imageIndexDeleteTriggers_();
+}
+
+function _imageIndexRestartExpiredToken_(job, error) {
+  const message = _imageIndexSafeError_(error);
+  if (!['update', 'bootstrap', 'full'].includes(job.mode) ||
+      Number(job.token_restarts || 0) >= 2 ||
+      !/Drive API 410|page.?token|start.?page.?token/i.test(message)) {
+    return false;
+  }
+  const tokenResult = _imageIndexDriveApi_('changes/startPageToken', {
+    fields: 'startPageToken',
+  });
+  if (!tokenResult.startPageToken) return false;
+  if (job.mode !== 'full') job.mode = 'bootstrap';
+  job.page_token = '';
+  job.bootstrap_page_token = String(tokenResult.startPageToken);
+  job.stage_sheet = _imageIndexFindOrCreateStage_(
+    _ss(),
+    Utilities.getUuid()
+  ).getName();
+  job.token_restarts = Number(job.token_restarts || 0) + 1;
+  job.files_scanned = 0;
+  job.files_indexed = 0;
+  job.files_added = 0;
+  job.files_updated = 0;
+  job.files_unavailable = 0;
+  job.files_skipped = 0;
+  job.error_count = 0;
+  job.errors = [];
+  job.name_conflict_count = 0;
+  job.batch_failures = 0;
+  job.last_error = 'انتهت صلاحية مؤشر تغييرات Drive؛ بدأ فحص وصفي كامل آمن';
+  job.status = 'continuing';
+  _imageIndexSaveJob_(job);
+  return true;
+}
+
+function _continueMetadataImageIndex_(job) {
+  const started = Date.now();
+  const lastRun = Date.parse(job.last_run_at || '');
+  if (Number.isFinite(lastRun) && job.last_run_duration_ms != null) {
+    job.timings.trigger_wait_ms += Math.max(
+      0,
+      started - lastRun - Number(job.last_run_duration_ms)
+    );
+  }
+  job.status = 'running';
+  job.last_run_at = new Date(started).toISOString();
+  const config = _imageIndexConfig_();
+  const pageSize = Math.min(config.batchSize, IMAGE_INDEX_MAX_BATCH_SIZE_);
+  if (job.mode === 'bootstrap' || job.mode === 'full') {
+    while (true) {
+      const fetchStarted = Date.now();
+      const params = {
+        q: "'" + job.folder_id.replace(/'/g, "\\'") + "' in parents and trashed = false",
+        pageSize: pageSize,
+        fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,parents,trashed)',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      };
+      if (job.page_token) params.pageToken = job.page_token;
+      const response = _imageIndexDriveApi_('files', params);
+      job.timings.drive_fetch_ms += Date.now() - fetchStarted;
+      const rows = [];
+      const matchStarted = Date.now();
+      (response.files || []).forEach(file => {
+        job.files_scanned++;
+        try {
+          const row = _imageIndexMetadataRow_(file, job.folder_id);
+          if (row) rows.push(row);
+          else job.files_skipped++;
+        } catch (error) {
+          _imageIndexAppendError_(job, error);
+        }
+      });
+      job.timings.match_ms += Date.now() - matchStarted;
+      if (rows.length) {
+        const writeStarted = Date.now();
+        const ss = _ss();
+        const stage = ss.getSheetByName(job.stage_sheet);
+        if (!stage) throw _apiError('IMAGE_INDEX_STAGE_MISSING', 'ورقة البناء المؤقتة غير موجودة', false);
+        const firstRow = job.files_indexed + 2;
+        _imageIndexEnsureRows_(ss, stage, firstRow + rows.length - 1);
+        stage.getRange(firstRow, 1, rows.length, H.Product_Images.length).setValues(rows);
+        job.timings.write_ms += Date.now() - writeStarted;
+        job.files_indexed += rows.length;
+        job.files_added += rows.length;
+      }
+      if (!response.nextPageToken) {
+        job.status = 'publishing';
+        job.last_run_duration_ms = Date.now() - started;
+        _imageIndexSaveJob_(job);
+        _imageIndexPublish_(job);
+        return;
+      }
+      job.page_token = response.nextPageToken;
+      job.status = 'continuing';
+      job.last_run_duration_ms = Date.now() - started;
+      _imageIndexSaveJob_(job);
+      if (Date.now() - started >= config.budgetMs) return;
+    }
+  }
+
+  while (true) {
+    const fetchStarted = Date.now();
+    const params = {
+      pageToken: job.page_token,
+      pageSize: pageSize,
+      includeRemoved: true,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      fields: 'nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,modifiedTime,parents,trashed))',
+    };
+    const response = _imageIndexDriveApi_('changes', params);
+    job.timings.drive_fetch_ms += Date.now() - fetchStarted;
+    const changes = response.changes || [];
+    job.files_scanned += changes.length;
+    if (changes.length) _imageIndexApplyChanges_(job, changes);
+    job.batch_failures = 0;
+    job.last_error = null;
+    job.last_run_duration_ms = Date.now() - started;
+    if (response.nextPageToken) {
+      job.page_token = response.nextPageToken;
+      job.status = 'continuing';
+      _imageIndexSaveJob_(job);
+      if (Date.now() - started >= config.budgetMs) return;
+      continue;
+    }
+    if (!response.newStartPageToken) {
+      throw new Error('Drive API لم يُرجع رمز الاستئناف بعد اكتمال التغييرات');
+    }
+    _imageIndexCompleteJob_(job, response.newStartPageToken);
+    return;
+  }
+}
+
+function _imageIndexScheduleStatus_() {
+  return PropertiesService.getScriptProperties()
+    .getProperty(IMAGE_INDEX_SCHEDULED_PROPERTY_) === 'true';
+}
+
+function _imageIndexSetSchedule_(enabled) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
+  }
+  try {
+    const triggers = ScriptApp.getProjectTriggers();
+    const matching = triggers.filter(trigger =>
+      trigger.getHandlerFunction() === IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_
+    );
+    if (enabled && !matching.length) {
+      ScriptApp.newTrigger(IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_)
+        .timeBased()
+        .everyHours(6)
+        .create();
+    } else if (!enabled) {
+      matching.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+    }
+    PropertiesService.getScriptProperties()
+      .setProperty(IMAGE_INDEX_SCHEDULED_PROPERTY_, enabled ? 'true' : 'false');
+    return { success: true, scheduled_update: enabled };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function scheduledImageIndexUpdate() {
+  return _startMetadataImageIndexJob_('update', false);
+}
+
+function _imageIndexFindOrCreateStage_(ss, jobId) {
+  const activeSheet = PropertiesService.getScriptProperties()
+    .getProperty(IMAGE_INDEX_ACTIVE_PROPERTY_) || 'Product_Images';
+  const reusableStages = ss.getSheets().filter(current =>
+    current.getName().indexOf('Product_Images_Build_') === 0 &&
+    current.getName() !== activeSheet
+  );
+  for (const candidate of reusableStages) {
+    try {
+      if (candidate.getLastRow() > 0) {
+        const headers = candidate.getRange(1, 1, 1, H.Product_Images.length)
+          .getValues()[0].map(value => String(value || '').trim());
+        if (headers.join('\u001f') !== H.Product_Images.join('\u001f')) continue;
+        const lastRow = candidate.getLastRow();
+        if (lastRow > 1) {
+          candidate.getRange(2, 1, lastRow - 1, H.Product_Images.length)
+            .clearContent();
+        }
+      }
+      return candidate;
+    } catch (error) {
+      Logger.log('Image index staging sheet is not writable; trying a fresh sheet.');
+    }
+  }
+  const sheetName = 'Product_Images_Build_' + jobId.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    const requiredCells = 1000 * 26;
+    const usedCells = ss.getSheets().reduce(
+      (sum, current) => sum + current.getMaxRows() * current.getMaxColumns(), 0
+    );
+    if (usedCells + requiredCells > IMAGE_INDEX_MAX_SPREADSHEET_CELLS_) {
+      throw _apiError('SHEET_CELL_LIMIT', 'لا توجد سعة كافية لإنشاء مساحة بناء مؤقتة', false);
+    }
+    sheet = ss.insertSheet(sheetName);
+  }
+  const headers = H.Product_Images;
+  if (sheet.getMaxColumns() < headers.length) {
+    sheet.insertColumnsAfter(
+      sheet.getMaxColumns(),
+      headers.length - sheet.getMaxColumns()
+    );
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    const active = ss.getSheetByName(activeSheet);
+    if (active && active.getLastColumn() >= headers.length) {
+      active.getRange(1, 1, 1, headers.length).copyTo(
+        sheet.getRange(1, 1, 1, headers.length),
+        SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+        false
+      );
+    }
+  } else {
+    const actual = sheet.getRange(1, 1, 1, headers.length).getValues()[0]
+      .map(value => String(value || '').trim());
+    if (actual.join('\u001f') !== headers.join('\u001f')) {
+      throw _apiError('IMAGE_INDEX_STAGE_SCHEMA', 'مخطط ورقة البناء المؤقتة غير صالح', false);
+    }
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+    }
+  }
+  return sheet;
+}
+
+function _imageIndexEnsureRows_(ss, sheet, requiredLastRow) {
+  const currentRows = sheet.getMaxRows();
+  if (requiredLastRow <= currentRows) return;
+  const missing = requiredLastRow - currentRows;
+  const usedCells = ss.getSheets().reduce(
+    (sum, current) => sum + current.getMaxRows() * current.getMaxColumns(), 0
+  );
+  if (usedCells + missing * sheet.getMaxColumns() >
+      IMAGE_INDEX_MAX_SPREADSHEET_CELLS_) {
+    throw _apiError('SHEET_CELL_LIMIT', 'بلغت ورقة البيانات الحد الآمن لحجمها', false);
+  }
+  sheet.insertRowsAfter(currentRows, missing);
+}
+
+function _imageIndexEnsureTrigger_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  if (triggers.some(trigger =>
+    trigger.getHandlerFunction() === IMAGE_INDEX_TRIGGER_FUNCTION_
+  )) return;
+  ScriptApp.newTrigger(IMAGE_INDEX_TRIGGER_FUNCTION_)
+    .timeBased()
+    .everyMinutes(1)
+    .create();
+}
+
+function _imageIndexDeleteTriggers_() {
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === IMAGE_INDEX_TRIGGER_FUNCTION_) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+function _startImageIndexJob_(confirmedRestart) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
+  }
+  try {
+    const current = _imageIndexReadJob_();
+    if (current && ['pending', 'running', 'continuing', 'publishing'].includes(current.status)) {
+      if (!confirmedRestart) return _imageIndexPublicStatus_(current);
+      current.status = 'cancelled';
+      current.completed_at = _now();
+      _imageIndexSaveJob_(current);
+    }
+    const properties = PropertiesService.getScriptProperties();
+    const folderId = properties.getProperty('PRODUCT_IMAGES_FOLDER_ID') ||
+      '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
+    const jobId = Utilities.getUuid();
+    const stage = _imageIndexFindOrCreateStage_(_ss(), jobId);
+    const job = {
+      job_id: jobId,
+      status: 'pending',
+      folder_id: folderId,
+      stage_sheet: stage.getName(),
+      continuation_token: null,
+      files_scanned: 0,
+      files_indexed: 0,
+      files_skipped: 0,
+      error_count: 0,
+      errors: [],
+      retry_file_id: null,
+      retry_attempts: 0,
+      batch_failures: 0,
+      token_restarts: 0,
+      started_at: _now(),
+      last_progress_at: _now(),
+      completed_at: null,
+      last_error: null,
+    };
+    _imageIndexSaveJob_(job);
+    try {
+      _imageIndexEnsureTrigger_();
+    } catch (error) {
+      job.status = 'failed';
+      job.last_error = 'تعذر إنشاء مشغّل الاستكمال؛ وافق على الأذونات ثم أعد المحاولة';
+      _imageIndexSaveJob_(job);
+      Logger.log('Image index trigger creation failed: ' + _imageIndexSafeError_(error));
+      throw _apiError('IMAGE_INDEX_TRIGGER_FAILED', job.last_error, false);
+    }
+    return _imageIndexPublicStatus_(job);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _imageIndexAppendError_(job, error) {
+  job.error_count++;
+  const safe = _imageIndexSafeError_(error);
+  job.last_error = safe;
+  if (job.errors.length < IMAGE_INDEX_MAX_ERRORS_) {
+    job.errors.push({ message: safe, at: _now() });
+  }
+  Logger.log('Image index file error: ' + safe);
+}
+
+function _imageIndexFileRow_(file) {
+  const mimeType = String(file.getMimeType() || '');
+  if (mimeType.indexOf('image/') !== 0) return null;
+  const fileId = String(file.getId() || '');
+  const fileName = String(file.getName() || '');
+  const modifiedTime = file.getLastUpdated
+    ? file.getLastUpdated().toISOString()
+    : '';
+  if (!fileId || !fileName) throw new Error('بيانات ملف الصورة غير مكتملة');
+  return [
+    fileName,
+    normalizeImageName_(fileName),
+    fileId,
+    'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600&v=' +
+      encodeURIComponent(modifiedTime),
+    mimeType,
+    _now(),
+    'active',
+    modifiedTime,
+  ];
+}
+
+function _imageIndexResetExpiredToken_(job, error) {
+  if (job.token_restarts >= 2) return false;
+  const stage = _ss().getSheetByName(job.stage_sheet);
+  if (!stage) return false;
+  const lastRow = stage.getLastRow();
+  if (lastRow > 1) stage.getRange(2, 1, lastRow - 1, H.Product_Images.length).clearContent();
+  job.continuation_token = null;
+  job.files_scanned = 0;
+  job.files_indexed = 0;
+  job.files_skipped = 0;
+  job.error_count = 0;
+  job.errors = [];
+  job.retry_file_id = null;
+  job.retry_attempts = 0;
+  job.token_restarts++;
+  job.batch_failures = 0;
+  job.status = 'continuing';
+  job.last_error = 'انتهت صلاحية رمز الاستئناف؛ أُعيد البناء في مساحة مؤقتة';
+  Logger.log('Image index continuation token expired; restarting staging build.');
+  _imageIndexSaveJob_(job);
+  return true;
+}
+
+function _imageIndexPublish_(job) {
+  const indexReadStarted = Date.now();
+  const stage = _ss().getSheetByName(job.stage_sheet);
+  if (!stage) throw _apiError('IMAGE_INDEX_STAGE_MISSING', 'ورقة البناء المؤقتة غير موجودة', false);
+  const headers = stage.getRange(1, 1, 1, H.Product_Images.length).getValues()[0]
+    .map(value => String(value || '').trim());
+  if (headers.join('\u001f') !== H.Product_Images.join('\u001f')) {
+    throw _apiError('IMAGE_INDEX_STAGE_SCHEMA', 'فشل التحقق من مخطط الفهرس الجديد', false);
+  }
+  const expectedRows = job.files_indexed;
+  if (stage.getLastRow() !== expectedRows + 1) {
+    throw _apiError('IMAGE_INDEX_STAGE_COUNT', 'عدد صفوف الفهرس المؤقت لا يطابق العداد', false);
+  }
+  const stagedIds = Object.create(null);
+  if (expectedRows > 0) {
+    const rows = stage.getRange(2, 1, expectedRows, H.Product_Images.length).getValues();
+    const ids = Object.create(null);
+    const names = Object.create(null);
+    for (let index = 0; index < rows.length; index++) {
+      const fileId = String(rows[index][2] || '');
+      if (!fileId || ids[fileId] || !String(rows[index][3] || '').startsWith('https://drive.google.com/thumbnail?id=')) {
+        throw _apiError('IMAGE_INDEX_VALIDATION_FAILED', 'تعذر التحقق من سجلات الفهرس المؤقتة', false);
+      }
+      ids[fileId] = true;
+      stagedIds[fileId] = true;
+      const normalizedName = String(rows[index][1] || '');
+      if (normalizedName) names[normalizedName] = (names[normalizedName] || 0) + 1;
+    }
+    job.name_conflict_count = Object.keys(names).filter(name => names[name] > 1).length;
+  }
+  const activeName = PropertiesService.getScriptProperties()
+    .getProperty(IMAGE_INDEX_ACTIVE_PROPERTY_) || 'Product_Images';
+  const activeSheet = _ss().getSheetByName(activeName);
+  if (activeSheet && activeSheet.getLastRow() > 1) {
+    const activeRows = activeSheet.getRange(
+      2,
+      1,
+      activeSheet.getLastRow() - 1,
+      Math.max(7, activeSheet.getLastColumn())
+    ).getValues();
+    job.files_unavailable += activeRows.filter(row =>
+      row[6] === 'active' && row[2] && !stagedIds[String(row[2])]
+    ).length;
+  }
+  job.timings = job.timings || {
+    drive_fetch_ms: 0,
+    index_read_ms: 0,
+    match_ms: 0,
+    write_ms: 0,
+    trigger_wait_ms: 0,
+  };
+  job.timings.index_read_ms += Date.now() - indexReadStarted;
+  if (job.error_count > 0) {
+    job.status = 'completed_with_errors';
+    job.completed_at = _now();
+    job.last_error = 'لم يُفعّل البناء بسبب أخطاء ملفات؛ بقي الفهرس السابق نشطاً';
+    _imageIndexSaveJob_(job);
+    _imageIndexDeleteTriggers_();
+    return;
+  }
+  job.status = 'publishing';
+  _imageIndexSaveJob_(job);
+  const properties = PropertiesService.getScriptProperties();
+  properties.setProperty(IMAGE_INDEX_ACTIVE_PROPERTY_, job.stage_sheet);
+  if (job.bootstrap_page_token) {
+    properties.setProperty(
+      IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_,
+      job.bootstrap_page_token
+    );
+  }
+  job.status = job.error_count > 0 ? 'completed_with_errors' : 'completed';
+  job.completed_at = _now();
+  job.continuation_token = null;
+  _imageIndexSaveJob_(job);
+  _imageIndexDeleteTriggers_();
+}
+
+function continueImageIndexJob() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return;
+  try {
+    const job = _imageIndexReadJob_();
+    if (!job || !['pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
+      _imageIndexDeleteTriggers_();
+      return;
+    }
+    if (job.engine === 'metadata_v1') {
+      _continueMetadataImageIndex_(job);
+      return;
+    }
+    if (job.status === 'publishing') {
+      _imageIndexPublish_(job);
+      return;
+    }
+    job.status = job.files_scanned === 0 ? 'running' : 'continuing';
+    job.last_error = null;
+    const ss = _ss();
+    const stage = ss.getSheetByName(job.stage_sheet);
+    if (!stage) throw _apiError('IMAGE_INDEX_STAGE_MISSING', 'ورقة البناء المؤقتة غير موجودة', false);
+    _imageIndexEnsureSchema_(stage);
+    const folder = DriveApp.getFolderById(job.folder_id);
+    let iterator;
+    try {
+      iterator = job.continuation_token
+        ? DriveApp.continueFileIterator(job.continuation_token)
+        : folder.getFiles();
+    } catch (error) {
+      const safe = _imageIndexSafeError_(error);
+      if (job.continuation_token &&
+          /continuation|token|expired|استئناف|صلاحية/i.test(safe) &&
+          _imageIndexResetExpiredToken_(job, error)) {
+        return;
+      }
+      throw error;
+    }
+
+    const config = _imageIndexConfig_();
+    const started = Date.now();
+    let processedThisBatch = 0;
+    const stagedRows = [];
+    const batchIds = {};
+
+    if (job.retry_file_id) {
+      try {
+        const retryFile = DriveApp.getFileById(job.retry_file_id);
+        const row = _imageIndexFileRow_(retryFile);
+        job.files_scanned++;
+        if (row) {
+          if (!batchIds[row[2]]) {
+            batchIds[row[2]] = true;
+            stagedRows.push(row);
+          } else {
+            job.files_skipped++;
+          }
+        } else {
+          job.files_skipped++;
+        }
+        job.retry_file_id = null;
+        job.retry_attempts = 0;
+        processedThisBatch++;
+      } catch (error) {
+        job.retry_attempts++;
+        if (job.retry_attempts >= 3) {
+          job.files_scanned++;
+          job.files_skipped++;
+          _imageIndexAppendError_(job, error);
+          job.retry_file_id = null;
+          job.retry_attempts = 0;
+          processedThisBatch++;
+        } else {
+          job.status = 'continuing';
+          job.last_error = 'تعذرت قراءة ملف؛ ستتم إعادة المحاولة';
+          _imageIndexSaveJob_(job);
+          return;
+        }
+      }
+    }
+
+    while (processedThisBatch < config.batchSize &&
+        Date.now() - started < config.budgetMs &&
+        iterator.hasNext()) {
+      const file = iterator.next();
+      let fileId = '';
+      try {
+        fileId = String(file.getId() || '');
+        const row = _imageIndexFileRow_(file);
+        job.files_scanned++;
+        if (row) {
+          if (batchIds[fileId]) {
+            job.files_skipped++;
+          } else {
+            batchIds[fileId] = true;
+            stagedRows.push(row);
+          }
+        } else {
+          job.files_skipped++;
+        }
+      } catch (error) {
+        if (fileId && job.retry_attempts < 2) {
+          if (stagedRows.length) {
+            const firstRow = job.files_indexed + 2;
+            _imageIndexEnsureRows_(ss, stage, firstRow + stagedRows.length - 1);
+            stage.getRange(firstRow, 1, stagedRows.length, H.Product_Images.length)
+              .setValues(stagedRows);
+            job.files_indexed += stagedRows.length;
+          }
+          job.retry_file_id = fileId;
+          job.retry_attempts++;
+          job.continuation_token = iterator.getContinuationToken();
+          job.status = 'continuing';
+          job.last_error = 'تعذرت قراءة ملف؛ ستتم إعادة المحاولة';
+          _imageIndexSaveJob_(job);
+          return;
+        }
+        job.files_scanned++;
+        job.files_skipped++;
+        _imageIndexAppendError_(job, error);
+      }
+      processedThisBatch++;
+    }
+
+    if (stagedRows.length) {
+      const firstRow = job.files_indexed + 2;
+      _imageIndexEnsureRows_(ss, stage, firstRow + stagedRows.length - 1);
+      stage.getRange(firstRow, 1, stagedRows.length, H.Product_Images.length)
+        .setValues(stagedRows);
+      job.files_indexed += stagedRows.length;
+    }
+
+    if (job.retry_file_id) {
+      job.continuation_token = iterator.getContinuationToken();
+    } else if (iterator.hasNext()) {
+      job.continuation_token = iterator.getContinuationToken();
+    } else {
+      job.continuation_token = null;
+      _imageIndexPublish_(job);
+      return;
+    }
+
+    job.status = 'continuing';
+    job.batch_failures = 0;
+    _imageIndexSaveJob_(job);
+  } catch (error) {
+    const job = _imageIndexReadJob_();
+    if (job && ['pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
+      const safe = _imageIndexSafeError_(error);
+      if (_imageIndexRestartExpiredToken_(job, error)) return;
+      if (job.continuation_token &&
+          /continuation|token|expired|استئناف|صلاحية/i.test(safe) &&
+          _imageIndexResetExpiredToken_(job, error)) {
+        return;
+      }
+      job.batch_failures = Number(job.batch_failures || 0) + 1;
+      job.last_error = safe;
+      Logger.log('Image index batch failed: ' + safe);
+      if (job.batch_failures <= 2) {
+        job.status = 'continuing';
+      } else {
+        job.status = 'failed';
+        job.completed_at = _now();
+        _imageIndexDeleteTriggers_();
+      }
+      _imageIndexSaveJob_(job);
+    } else {
+      Logger.log('Image index batch failed without active state: ' + _imageIndexSafeError_(error));
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _imageIndexJobStatus_() {
+  return _imageIndexPublicStatus_(_imageIndexReadJob_());
+}
+
+function resumeImageIndexJob() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
+  }
+  try {
+    const job = _imageIndexReadJob_();
+    if (!job || !['failed', 'pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
+      throw _apiError('IMAGE_INDEX_NOT_RESUMABLE', 'لا توجد مهمة قابلة للاستكمال', false);
+    }
+    if (job.status === 'failed') {
+      job.status = job.continuation_token ? 'continuing' : 'pending';
+      job.batch_failures = 0;
+      job.last_error = null;
+      _imageIndexSaveJob_(job);
+    }
+    _imageIndexEnsureTrigger_();
+    return _imageIndexPublicStatus_(job);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cancelImageIndexJob() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
+  }
+  try {
+    const job = _imageIndexReadJob_();
+    if (!job || !['pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
+      return _imageIndexPublicStatus_(job);
+    }
+    job.status = 'cancelled';
+    job.completed_at = _now();
+    job.last_error = null;
+    _imageIndexSaveJob_(job);
+    _imageIndexDeleteTriggers_();
+    return _imageIndexPublicStatus_(job);
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -2186,21 +3270,14 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
   const customer = _all('Customers').find(c => c.customer_id === order.customer_id);
 
   // بناء خريطة للبحث السريع عن الصور O(1)
-  const imageMap = {};
-  imageIndex.forEach(img => {
-    if (img.normalized_name && img.status === 'active') {
-      imageMap[img.normalized_name] = img;
-    }
-  });
+  const imageMaps = _buildImageIndexMaps_(imageIndex);
 
   const detailedItems = items.map(i => {
     const p = productsByCode[String(i.code)];
     let imageUrl = '';
 
     if (p) {
-      const imageName = p.image_name || p.code;
-      const normalized = normalizeImageName_(imageName);
-      const imgData = imageMap[normalized];
+      const imgData = _findIndexedProductImage_(p, imageMaps);
 
       if (imgData) {
         imageUrl = imgData.image_url;
@@ -2697,12 +3774,16 @@ function _handleCreateOrder(body, user) {
     }
 
     _sendNotificationToRoles(
-      'admin,accountant',
-      'طلب جديد #' + orderNumber,
-      'أرسل ' + orderObj.customer_name + ' طلباً جديداً يحتوي ' + itemsSaved + ' بنود.',
+      'admin,manager,accountant',
+      'طلب جديد',
+      'تم استلام طلب جديد رقم #' + orderNumber + ' من ' + orderObj.customer_name,
       'order.created',
       orderId,
-      { order_id: orderId, customer_id: customerId, high_priority: true }
+      {
+        order_id: orderId,
+        customer_id: customerId,
+        event_id: 'order.created:' + clientRequestId
+      }
     );
 
     return { 
@@ -2726,8 +3807,22 @@ function _handleUpdateOrderStatus(body, user) {
   const orderId = body.orderId || body.order_id;
   const newStatus = body.status;
   const requestId = body.request_id || Utilities.getUuid();
+  const proxyForCustomer = body.proxy_for_customer === true ||
+    String(body.proxy_for_customer || '').toLowerCase() === 'true';
+  const proxyReason = String(body.reason || '').trim();
 
   if (!orderId || !newStatus) throw new Error('بيانات غير صالحة');
+  if (proxyForCustomer) {
+    if (!['admin', 'manager', 'accountant'].includes(_normalizeRole(user.role))) {
+      throw _apiError('FORBIDDEN', 'لا يملك هذا الحساب تفويض تأكيد الزبون', false);
+    }
+    if (String(newStatus).trim().toLowerCase() !== 'customer_confirmed') {
+      throw _apiError('INVALID_PROXY_ACTION', 'التفويض مسموح لتأكيد عرض السعر فقط', false);
+    }
+    if (proxyReason.length < 3) {
+      throw _apiError('PROXY_REASON_REQUIRED', 'سبب مختصر مطلوب للتأكيد نيابةً عن الزبون', false);
+    }
+  }
   if (String(newStatus).trim().toLowerCase() === 'cancelled') {
     return _handleCancelOrder({
       order_id: orderId,
@@ -2746,7 +3841,9 @@ function _handleUpdateOrderStatus(body, user) {
     _requireOrderOwnership(user, order);
 
     // التحقق من صلاحية الانتقال
-    _validateStateTransition(order.status, newStatus, user.role);
+    _validateStateTransition(order.status, newStatus, user.role, {
+      proxyForCustomer: proxyForCustomer,
+    });
 
     // إذا كانت الحالة هي "الاعتماد النهائي" (approved) نقوم بالترحيل المالي والمخزني
     if (newStatus === 'approved') {
@@ -2770,7 +3867,19 @@ function _handleUpdateOrderStatus(body, user) {
     _updateByField('Orders', 'order_id', orderId, updates);
 
     // إرسال الإشعارات بناءً على الحالة الجديدة
-    _dispatchStatusNotifications(order, newStatus);
+    _dispatchStatusNotifications(order, newStatus, requestId);
+
+    // إرسال إشعار للشحن إذا تم شحن الطلب
+    if (newStatus === 'shipped') {
+       _sendNotificationToRoles(
+        'admin,manager',
+        'تم شحن الطلب',
+        'تم شحن الطلب رقم #' + (order.order_number || order.order_id),
+        'shipping.shipped',
+        order.order_id,
+        { order_id: order.order_id, customer_id: order.customer_id }
+      );
+    }
 
     _add('Audit_Log', {
       log_id: Utilities.getUuid(),
@@ -2778,7 +3887,11 @@ function _handleUpdateOrderStatus(body, user) {
       action: 'UPDATE_ORDER_STATUS',
       entity: 'Orders',
       entity_id: orderId,
-      details: 'تحديث الحالة إلى: ' + newStatus + (updates.posting_id ? ' | Posting: ' + updates.posting_id : ''),
+      details: proxyForCustomer
+        ? 'تأكيد عرض السعر نيابةً عن الزبون بواسطة ' + _normalizeRole(user.role) +
+          ' | السبب: ' + proxyReason + ' | الحالة السابقة: ' + order.status +
+          ' | الحالة الجديدة: ' + newStatus
+        : 'تحديث الحالة إلى: ' + newStatus + (updates.posting_id ? ' | Posting: ' + updates.posting_id : ''),
       created_at: _now(),
     });
 
@@ -2796,8 +3909,9 @@ function _handleUpdateOrderStatus(body, user) {
 /**
  * التحقق من قواعد انتقال الحالات (RBAC + Workflow)
  */
-function _validateStateTransition(oldStatus, newStatus, role) {
+function _validateStateTransition(oldStatus, newStatus, role, options) {
   const r = _normalizeRole(role);
+  const proxyForCustomer = !!(options && options.proxyForCustomer);
   const from = String(oldStatus || '').trim().toLowerCase();
   const to = String(newStatus || '').trim().toLowerCase();
   const canApproveFinancially = ['admin', 'manager', 'accountant'].includes(r);
@@ -2811,7 +3925,12 @@ function _validateStateTransition(oldStatus, newStatus, role) {
 
   // قواعد الانتقال
   if (to === 'customer_confirmed') {
-    if (!isCustomer) throw new Error('فقط الزبون يمكنه تأكيد الطلبية');
+    if (!isCustomer && !proxyForCustomer) {
+      throw new Error('فقط الزبون أو مفوض مخول يمكنه تأكيد الطلبية');
+    }
+    if (proxyForCustomer && !['admin', 'manager', 'accountant'].includes(r)) {
+      throw new Error('هذا الدور ليس مخولاً للتأكيد نيابةً عن الزبون');
+    }
     if (from !== 'priced') {
       throw new Error('يجب تسعير الطلب أولاً قبل تأكيد السعر');
     }
@@ -2866,6 +3985,13 @@ function _executeFinalPosting(order, user, requestId) {
 
   // تجميع الكميات المطلوب خصمها لكل منتج (في حال تكرر نفس المنتج في الطلب)
   const deductions = {};
+  const productMinStocks = {};
+  const productNames = {};
+
+  // قراءة الحد الأدنى لكل منتج
+  const minStockIdx = prodHeaders.indexOf('minimum_stock');
+  const nameIdx = prodHeaders.indexOf('name');
+
   items.forEach(item => {
     const qtyToDeduct = Number(item.quantity_approved || item.quantity_requested || 0);
     const isUnavailable = String(item.status).toLowerCase() === 'unavailable';
@@ -2875,20 +4001,44 @@ function _executeFinalPosting(order, user, requestId) {
     }
   });
 
-  // تحديث البيانات في الذاكرة
+  // تحديث البيانات في الذاكرة والتحقق من الحد الأدنى
   let modified = false;
+  const lowStockAlerts = [];
+
   for (let j = 1; j < prodData.length; j++) {
     const code = String(prodData[j][codeIdx]);
     if (deductions[code]) {
       const currentQty = Number(prodData[j][qtyIdx] || 0);
-      prodData[j][qtyIdx] = currentQty - deductions[code];
+      const newQty = currentQty - deductions[code];
+      prodData[j][qtyIdx] = newQty;
       modified = true;
+
+      const minStock = Number(prodData[j][minStockIdx] || 0);
+      if (minStock > 0 && newQty < minStock) {
+        lowStockAlerts.push({
+          code: code,
+          name: String(prodData[j][nameIdx] || code),
+          quantity: newQty
+        });
+      }
     }
   }
 
   // حفظ التغييرات دفعة واحدة إذا حدث تعديل
   if (modified) {
     productsSheet.getDataRange().setValues(prodData);
+
+    // إرسال تنبيهات نقص المخزون
+    lowStockAlerts.forEach(alert => {
+      _sendNotificationToRoles(
+        'admin,accountant,warehouse',
+        'تنبيه انخفاض المخزون',
+        'انخفض مخزون المنتج ' + alert.name + ' عن الحد الأدنى بعد ترحيل الطلب.',
+        'alert.low_stock',
+        alert.code,
+        { product_id: alert.code, high_priority: true }
+      );
+    });
   }
 
   // تسجيل حركات المخزون
@@ -2916,7 +4066,9 @@ function _executeFinalPosting(order, user, requestId) {
 /**
  * إرسال الإشعارات بناءً على الحالة
  */
-function _dispatchStatusNotifications(order, newStatus) {
+function _dispatchStatusNotifications(order, newStatus, requestId) {
+  const eventId = 'order.status:' + order.order_id + ':' + newStatus + ':' +
+    String(requestId || order.updated_at || '');
   if (newStatus === 'customer_confirmed') {
     _sendNotificationToRoles(
       'accountant,admin',
@@ -2924,7 +4076,11 @@ function _dispatchStatusNotifications(order, newStatus) {
       'وافق العميل على الطلب #' + (order.order_number || order.order_id) + '.',
       'order.customer_confirmed',
       order.order_id,
-      { order_id: order.order_id, customer_id: order.customer_id }
+      {
+        order_id: order.order_id,
+        customer_id: order.customer_id,
+        event_id: eventId
+      }
     );
   } else if (newStatus === 'approved') {
     _sendNotificationToRoles(
@@ -2933,17 +4089,24 @@ function _dispatchStatusNotifications(order, newStatus) {
       'تم اعتماد الطلب #' + (order.order_number || order.order_id) + '، يرجى البدء بالتجهيز.',
       'order.ready_for_preparation',
       order.order_id,
-      { order_id: order.order_id, customer_id: order.customer_id, high_priority: true }
+      {
+        order_id: order.order_id,
+        customer_id: order.customer_id,
+        high_priority: true,
+        event_id: eventId
+      }
     );
     const customerUser = _all('Users').find(u => u.customer_id === order.customer_id);
     if (customerUser) {
       _sendNotification(customerUser.user_id, 'تم اعتماد طلبك', 'طلبك #' + (order.order_number || order.order_id) + ' قيد التجهيز الآن.', {
         event_type: 'order.approved',
+        event_id: eventId,
         order_id: order.order_id,
         customer_id: order.customer_id
       });
       _sendNotification(customerUser.user_id, 'تم إصدار فاتورة', 'تم إنشاء فاتورة للطلب #' + (order.order_number || order.order_id) + '.', {
         event_type: 'invoice.created',
+        event_id: eventId,
         order_id: order.order_id,
         invoice_id: order.accounting_invoice_no || order.order_id,
         customer_id: order.customer_id
@@ -4214,8 +5377,10 @@ function _reserveStock(orderId, userId) {
 // ============================================================
 function _handleGetCustomers(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
-  // أمين المستودع لا يصل إلى هذه الدالة أصلاً بسبب _needRole
-  const customers = _all('Customers').filter(c => c.status !== 'deleted' && c.status !== 'inactive');
+  // preserve inactive records for audit/history; hide only deleted records
+  const customers = _all('Customers').filter(c =>
+    String(c.status || '').toLowerCase() !== 'deleted'
+  );
   const payments = _all('Payments');
   const orders = _all('Orders');
   const orderItems = _all('Order_Items');
@@ -4548,6 +5713,7 @@ function _handleAddPayment(body, user) {
   if (customerUser) {
     _sendNotification(customerUser.user_id, 'تم تسجيل دفعة', 'تم تسجيل دفعة جديدة على حسابكم.', {
       event_type: 'payment.recorded',
+      event_id: 'payment.recorded:' + paymentId,
       customer_id: body.customer_id,
       invoice_id: body.order_id || ''
     });
@@ -4619,6 +5785,7 @@ function _handleRecordPayment(body, user) {
     if (customerUser) {
       _sendNotification(customerUser.user_id, 'تم تسجيل دفعة', 'تم تسجيل دفعة جديدة على حسابكم.', {
         event_type: 'payment.recorded',
+        event_id: 'payment.recorded:' + paymentId,
         customer_id: customerId,
         invoice_id: body.order_id || ''
       });
@@ -5031,6 +6198,18 @@ function _handleUpdateSalesSettings(body, user) {
   const before = {};
   const changed = [];
   try {
+    if (body.expected_settings !== undefined) {
+      const expected = body.expected_settings;
+      const current = _getSalesSettings_();
+      if (!expected || typeof expected !== 'object' ||
+          Object.keys(current).some(key => expected[key] !== current[key])) {
+        throw _apiError(
+          'SALES_SETTINGS_CONFLICT',
+          'تغيرت إعدادات البيع لدى مستخدم آخر؛ أعد تحميلها قبل الحفظ',
+          false
+        );
+      }
+    }
     Object.keys(updates).forEach(key => {
       before[key] = properties.getProperty(key);
     });
@@ -6006,6 +7185,20 @@ function _handleCreateSalesInvoiceV2(body, user) {
       }),
     });
     auditAdded = true;
+    if (creatorRole === 'salesperson') {
+      _sendNotificationToRoles(
+        'admin,accountant',
+        'فاتورة مبيع جديدة',
+        'أنشأ مندوب المبيعات فاتورة جديدة رقم #' + invoiceNumber + '.',
+        'invoice.sales_created',
+        invoiceId,
+        {
+          invoice_id: invoiceId,
+          customer_id: customerId,
+          event_id: 'sales_invoice.created:' + requestId
+        }
+      );
+    }
     return {
       success: true,
       invoice_id: invoiceId,
@@ -7390,7 +8583,7 @@ function _handleCashBoxOpeningBalance(body, user) {
 // 11. المخزون (Inventory)
 // ============================================================
 function _handleGetInventoryMovements(body, user) {
-  _needRole(user, ['admin', 'manager', 'warehouse']);
+  _needRole(user, ['admin', 'manager', 'accountant', 'warehouse']);
   const movements = _all('Inventory_Movements');
   const code = body.code;
   if (code) {
@@ -7551,19 +8744,20 @@ function _handleMarkNotificationAsRead(body, user) {
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const idIdx = headers.indexOf('notification_id');
-  const ownerIdx = headers.indexOf('target_user_id') >= 0
-    ? headers.indexOf('target_user_id')
-    : headers.indexOf('user_id');
+  const targetOwnerIdx = headers.indexOf('target_user_id');
+  const legacyOwnerIdx = headers.indexOf('user_id');
 
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][idIdx]) === String(notificationId)) {
-      if (String(data[i][ownerIdx]) !== String(user.user_id)) {
+      const ownerId = targetOwnerIdx >= 0 && data[i][targetOwnerIdx]
+        ? data[i][targetOwnerIdx]
+        : legacyOwnerIdx >= 0 ? data[i][legacyOwnerIdx] : '';
+      if (String(ownerId) !== String(user.user_id)) {
         throw _apiError('FORBIDDEN', 'ليس لديك صلاحية تعديل هذا الإشعار', false);
       }
       const updates = {
         read_at: _now(),
-        is_read: true,
-        status: 'read'
+        is_read: true
       };
       Object.keys(updates).forEach(field => {
         const index = headers.indexOf(field);
@@ -7581,18 +8775,18 @@ function _handleMarkAllNotificationsAsRead(user) {
   const data = sheet.getDataRange().getValues();
   if (data.length < 2) return { success: true, updated: 0 };
   const headers = data[0].map(String);
-  const ownerIdx = headers.indexOf('target_user_id') >= 0
-    ? headers.indexOf('target_user_id')
-    : headers.indexOf('user_id');
+  const targetOwnerIdx = headers.indexOf('target_user_id');
+  const legacyOwnerIdx = headers.indexOf('user_id');
   const readAtIdx = headers.indexOf('read_at');
   const readIdx = headers.indexOf('is_read');
-  const statusIdx = headers.indexOf('status');
   let updated = 0;
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][ownerIdx]) !== String(user.user_id)) continue;
+    const ownerId = targetOwnerIdx >= 0 && data[i][targetOwnerIdx]
+      ? data[i][targetOwnerIdx]
+      : legacyOwnerIdx >= 0 ? data[i][legacyOwnerIdx] : '';
+    if (String(ownerId) !== String(user.user_id)) continue;
     if (readAtIdx >= 0) sheet.getRange(i + 1, readAtIdx + 1).setValue(_now());
     if (readIdx >= 0) sheet.getRange(i + 1, readIdx + 1).setValue(true);
-    if (statusIdx >= 0) sheet.getRange(i + 1, statusIdx + 1).setValue('read');
     updated++;
   }
   return { success: true, updated: updated };
@@ -7602,12 +8796,18 @@ function _handleSendNotification(body, user) {
   if (_normalizeRole(user && user.role) !== 'admin') {
     throw _apiError('FORBIDDEN', 'ليس لديك صلاحية إرسال إشعارات إدارية', false);
   }
-  const userIds = Array.isArray(body.user_ids) ? body.user_ids : [];
+  const allowedRoles = ['admin', 'manager', 'accountant', 'warehouse', 'salesperson', 'customer'];
+  const requestedRoles = Array.isArray(body.roles)
+    ? body.roles.map(_normalizeRole).filter(role => allowedRoles.includes(role))
+    : [];
+  if (!requestedRoles.length) {
+    throw _apiError('RECIPIENT_ROLE_REQUIRED', 'يجب تحديد دور مستلم صالح', false);
+  }
   const title = String(body.title || '').trim().substring(0, 100);
   const messageBody = String(body.body || '').trim().substring(0, 240);
   if (!title || !messageBody) throw new Error('العنوان والرسالة مطلوبان');
   const activeUsers = _all('Users').filter(account =>
-    userIds.some(id => String(id) === String(account.user_id)) &&
+    requestedRoles.includes(_normalizeRole(account.role)) &&
     String(account.status || '').toLowerCase() === 'active'
   );
   activeUsers.forEach(account => _sendNotification(
@@ -7624,6 +8824,18 @@ function _handleSendNotification(body, user) {
 }
 
 function _sendNotification(userId, title, body, metadata) {
+  try {
+    return _createNotificationRecord_(userId, title, body, metadata);
+  } catch (error) {
+    Logger.log(
+      'Notification queue failed for recipient ' + String(userId) + ': ' +
+      String(error.message || error).substring(0, 300)
+    );
+    return null;
+  }
+}
+
+function _createNotificationRecord_(userId, title, body, metadata) {
   const recipient = _all('Users').find(account =>
     String(account.user_id) === String(userId) &&
     String(account.status || '').toLowerCase() === 'active'
@@ -7636,6 +8848,10 @@ function _sendNotification(userId, title, body, metadata) {
   const invoiceId = String(meta.invoice_id || (meta.entity_type === 'invoice' ? meta.entity_id : '') || '');
   const productId = String(meta.product_id || (meta.entity_type === 'product' ? meta.entity_id : '') || '');
   const customerId = String(meta.customer_id || recipient.customer_id || '');
+  const entityId = orderId || invoiceId || productId || String(meta.entity_id || '');
+  const eventId = String(
+    meta.event_id || eventType + ':' + (entityId || Utilities.getUuid())
+  );
   const deepLink = meta.deep_link || (orderId
     ? '/orders/' + encodeURIComponent(orderId)
     : invoiceId
@@ -7646,17 +8862,15 @@ function _sendNotification(userId, title, body, metadata) {
           ? '/statement'
         : '/notifications');
   const now = _now();
-  const duplicate = _all('Notifications').some(item =>
-    String(item.event_type || '') === eventType &&
-    String(item.target_user_id || item.user_id || '') === String(userId) &&
-    String(item.order_id || item.invoice_id || item.product_id || '') ===
-      String(orderId || invoiceId || productId) &&
-    Math.abs(Date.parse(now) - Date.parse(item.created_at || 0)) < 60000
+  const duplicate = _all('Notifications').find(item =>
+    String(item.event_id || '') === eventId &&
+    String(item.target_user_id || item.user_id || '') === String(userId)
   );
-  if (duplicate) return null;
+  if (duplicate) return duplicate.notification_id;
 
   const record = {
     notification_id: Utilities.getUuid(),
+    event_id: eventId,
     event_type: eventType,
     title: String(title || '').substring(0, 100),
     body: String(body || '').substring(0, 240),
@@ -7676,6 +8890,7 @@ function _sendNotification(userId, title, body, metadata) {
     retry_count: 0,
     last_error: '',
     last_attempt_at: '',
+    delivered_device_ids: '[]',
     user_id: userId,
     type: eventType.split('.')[0],
     entity_type: eventType.split('.')[0],
@@ -7706,30 +8921,47 @@ function _notifyRole(role, title, body, metadata) {
 }
 
 function _sendNotificationToRoles(rolesStr, title, messageBody, eventType, entityId, metadata) {
-  const roles = String(rolesStr || '').split(',').map(_normalizeRole);
-  const users = _all('Users').filter(u =>
-    roles.includes(_normalizeRole(u.role)) &&
-    String(u.status || '').toLowerCase() === 'active'
-  );
-  const meta = Object.assign({}, metadata || {}, {
-    event_type: eventType || (metadata && metadata.event_type) || 'general.notice',
-    entity_id: entityId || (metadata && metadata.entity_id) || ''
-  });
-  users.forEach(user => {
-    _sendNotification(user.user_id, title, messageBody, Object.assign({}, meta, {
-      target_role: _normalizeRole(user.role)
-    }));
-  });
+  try {
+    const roles = String(rolesStr || '').split(',').map(_normalizeRole);
+    const users = _all('Users').filter(u =>
+      roles.includes(_normalizeRole(u.role)) &&
+      String(u.status || '').toLowerCase() === 'active'
+    );
+    const resolvedEventType = eventType ||
+      (metadata && metadata.event_type) || 'general.notice';
+    const resolvedEntityId = entityId || (metadata && metadata.entity_id) || '';
+    const meta = Object.assign({}, metadata || {}, {
+      event_type: resolvedEventType,
+      entity_id: resolvedEntityId,
+      event_id: (metadata && metadata.event_id) ||
+        resolvedEventType + ':' + (resolvedEntityId || Utilities.getUuid())
+    });
+    users.forEach(user => {
+      _sendNotification(user.user_id, title, messageBody, Object.assign({}, meta, {
+        target_role: _normalizeRole(user.role)
+      }));
+    });
+  } catch (error) {
+    Logger.log(
+      'Role notification queue failed: ' +
+      String(error.message || error).substring(0, 300)
+    );
+  }
 }
 
 function _handleRegisterUserDevice(body, user) {
   const deviceId = String(body.device_id || '').trim();
   const fcmToken = String(body.fcm_token || '').trim();
+  const fcmTargetType = String(body.fcm_target_type || 'token').trim().toLowerCase();
   if (!deviceId || deviceId.length > 120 || fcmToken.length < 20 || fcmToken.length > 4096) {
     throw _apiError('INVALID_DEVICE', 'بيانات الجهاز أو رمز الإشعارات غير صالحة', false);
   }
-  if (String(body.platform || '').toLowerCase() !== 'android') {
-    throw _apiError('UNSUPPORTED_PLATFORM', 'تسجيل الإشعارات متاح حالياً لأجهزة Android فقط', false);
+  if (fcmTargetType !== 'token' && fcmTargetType !== 'fid') {
+    throw _apiError('INVALID_DEVICE_TARGET', 'نوع تسجيل الإشعارات غير صالح', false);
+  }
+  const platform = String(body.platform || '').toLowerCase();
+  if (platform !== 'android' && platform !== 'ios') {
+    throw _apiError('UNSUPPORTED_PLATFORM', 'نظام التشغيل هذا غير مدعوم حالياً للإشعارات', false);
   }
 
   const sheet = _ss().getSheetByName('User_Devices');
@@ -7740,6 +8972,8 @@ function _handleRegisterUserDevice(body, user) {
   const userIdx = headers.indexOf('user_id');
   const tokenIdx = headers.indexOf('fcm_token');
   const activeIdx = headers.indexOf('is_active');
+  const enabledIdx = headers.indexOf('enabled');
+  const platformIdx = headers.indexOf('platform');
   const previousToken = String(body.previous_fcm_token || '').trim();
 
   for (let i = 1; i < data.length; i++) {
@@ -7751,7 +8985,8 @@ function _handleRegisterUserDevice(body, user) {
         (sameToken && !sameDevice) ||
         ((sameDevice || sameToken) &&
           String(data[i][userIdx]) !== String(user.user_id))) {
-      sheet.getRange(i + 1, activeIdx + 1).setValue(false);
+      if (activeIdx >= 0) sheet.getRange(i + 1, activeIdx + 1).setValue(false);
+      if (enabledIdx >= 0) sheet.getRange(i + 1, enabledIdx + 1).setValue(false);
     }
   }
 
@@ -7763,10 +8998,12 @@ function _handleRegisterUserDevice(body, user) {
     device_id: deviceId,
     user_id: user.user_id,
     fcm_token: fcmToken,
-    platform: 'android',
+    fcm_target_type: fcmTargetType,
+    platform: platform,
     app_version: String(body.app_version || 'unknown').substring(0, 40),
     last_active_at: now,
     is_active: true,
+    enabled: true,
     created_at: existingRow > 0
       ? data[existingRow][headers.indexOf('created_at')]
       : now,
@@ -7783,6 +9020,19 @@ function _handleRegisterUserDevice(body, user) {
     _add('User_Devices', record);
   }
 
+  _all('Notifications')
+    .filter(notification =>
+      String(notification.target_user_id || notification.user_id) ===
+        String(user.user_id) &&
+      ['pending', 'failed'].includes(String(notification.status || ''))
+    )
+    .forEach(notification => {
+      _updateByField('Notifications', 'notification_id', notification.notification_id, {
+        status: 'pending',
+        retry_count: 0,
+        last_error: ''
+      });
+    });
   _retryPendingNotificationsForUser_(user.user_id);
   return { success: true, device_id: deviceId, is_active: true };
 }
@@ -7796,6 +9046,7 @@ function _handleDeactivateUserDevice(body, user) {
   const deviceIdx = headers.indexOf('device_id');
   const userIdx = headers.indexOf('user_id');
   const activeIdx = headers.indexOf('is_active');
+  const enabledIdx = headers.indexOf('enabled');
   const updatedIdx = headers.indexOf('updated_at');
   let deactivated = false;
   for (let i = 1; i < data.length; i++) {
@@ -7803,7 +9054,8 @@ function _handleDeactivateUserDevice(body, user) {
     if (String(data[i][userIdx]) !== String(user.user_id)) {
       throw _apiError('FORBIDDEN', 'لا يمكن إلغاء تسجيل جهاز مستخدم آخر', false);
     }
-    sheet.getRange(i + 1, activeIdx + 1).setValue(false);
+    if (activeIdx >= 0) sheet.getRange(i + 1, activeIdx + 1).setValue(false);
+    if (enabledIdx >= 0) sheet.getRange(i + 1, enabledIdx + 1).setValue(false);
     if (updatedIdx >= 0) sheet.getRange(i + 1, updatedIdx + 1).setValue(_now());
     deactivated = true;
   }
@@ -7840,6 +9092,7 @@ function _attemptNotificationSend_(notificationId) {
     String(item.notification_id) === String(notificationId)
   );
   if (!notification) throw new Error('الإشعار غير موجود');
+  if (String(notification.status || '') === 'sent') return true;
   const ownerId = notification.target_user_id || notification.user_id;
   const recipient = _all('Users').find(account =>
     String(account.user_id) === String(ownerId) &&
@@ -7856,36 +9109,39 @@ function _attemptNotificationSend_(notificationId) {
     });
     return false;
   }
-  const activeSession = _all('Sessions').some(session =>
-    String(session.user_id) === String(ownerId) &&
-    Number.isFinite(Date.parse(session.expires_at)) &&
-    Date.parse(session.expires_at) > Date.now()
-  );
-  if (!activeSession) {
-    _deactivateAllUserDevices_(ownerId);
-    _updateByField('Notifications', 'notification_id', notificationId, {
-      status: 'pending',
-      last_error: 'NO_ACTIVE_SESSION',
-      last_attempt_at: _now()
-    });
-    return false;
-  }
   const devices = _all('User_Devices').filter(device =>
     String(device.user_id) === String(ownerId) &&
-    (device.is_active === true ||
-      String(device.is_active).toLowerCase() === 'true' ||
-      String(device.is_active) === '1') &&
+    (device.enabled === undefined || device.enabled === null || device.enabled === ''
+      ? (device.is_active === true ||
+          String(device.is_active).toLowerCase() === 'true' ||
+          String(device.is_active) === '1')
+      : (device.enabled === true ||
+          String(device.enabled).toLowerCase() === 'true' ||
+          String(device.enabled) === '1')) &&
     String(device.fcm_token || '').length > 20
   );
   if (!devices.length) {
+    const retryCount = Number(notification.retry_count || 0) + 1;
     _updateByField('Notifications', 'notification_id', notificationId, {
       status: 'pending',
       last_error: 'NO_ACTIVE_DEVICE',
+      retry_count: retryCount,
       last_attempt_at: _now()
     });
     return false;
   }
 
+  let deliveredDeviceIds = [];
+  try {
+    const priorIds = JSON.parse(notification.delivered_device_ids || '[]');
+    if (Array.isArray(priorIds)) deliveredDeviceIds = priorIds.map(String);
+  } catch (error) {
+    Logger.log(
+      'Invalid delivery ledger for notification ' + notificationId + ': ' +
+      String(error.message || error).substring(0, 120)
+    );
+  }
+  const delivered = new Set(deliveredDeviceIds);
   const now = _now();
   const attempt = Number(notification.retry_count || 0) + 1;
   _updateByField('Notifications', 'notification_id', notificationId, {
@@ -7899,13 +9155,15 @@ function _attemptNotificationSend_(notificationId) {
     order_id: String(notification.order_id || ''),
     invoice_id: String(notification.invoice_id || ''),
     product_id: String(notification.product_id || ''),
-    customer_id: String(notification.customer_id || ''),
-    deep_link: String(notification.deep_link || '/notifications'),
     notification_id: String(notification.notification_id),
+    event_id: String(notification.event_id || ''),
     event_time: String(notification.created_at || now),
     channel_id: channelId,
+    deep_link: String(notification.deep_link || '/notifications'),
     title: String(notification.title || '').substring(0, 100),
-    body: String(notification.body || '').substring(0, 240)
+    body: String(notification.body || '').substring(0, 240),
+    entity_type: String(notification.entity_type || ''),
+    entity_id: String(notification.entity_id || '')
   };
   const highPriority = [
     'order.created',
@@ -7916,44 +9174,142 @@ function _attemptNotificationSend_(notificationId) {
   let allDelivered = true;
   const errors = [];
   devices.forEach(device => {
+    if (delivered.has(String(device.device_id))) return;
     try {
-      _sendFcmMessage_(device.fcm_token, payload, highPriority);
+      _sendFcmMessage_(
+        device.fcm_token,
+        payload,
+        highPriority,
+        String(device.fcm_target_type || 'token').toLowerCase()
+      );
+      delivered.add(String(device.device_id));
+      _updateByField('Notifications', 'notification_id', notificationId, {
+        delivered_device_ids: JSON.stringify(Array.from(delivered))
+      });
     } catch (error) {
       allDelivered = false;
-      errors.push(String(error.message || error).substring(0, 200));
-      if (String(error.message || error).indexOf('UNREGISTERED') >= 0) {
+      const errorCode = String(error.message || error);
+      errors.push(errorCode.substring(0, 120));
+      if (errorCode.indexOf('UNREGISTERED') >= 0 ||
+          errorCode.indexOf('SENDER_ID_MISMATCH') >= 0) {
         _updateByField('User_Devices', 'device_id', device.device_id, {
           is_active: false,
+          enabled: false,
           updated_at: _now()
         });
       }
     }
   });
+  allDelivered = allDelivered && devices.every(device =>
+    delivered.has(String(device.device_id))
+  );
   _updateByField('Notifications', 'notification_id', notificationId, allDelivered
     ? { status: 'sent', sent_at: _now(), last_error: '' }
     : { status: 'failed', last_error: errors.join(' | ').substring(0, 500) });
+  Logger.log(
+    'FCM notification ' + notificationId +
+    ' accepted_devices=' + delivered.size +
+    ' active_devices=' + devices.length +
+    ' result=' + (allDelivered ? 'accepted' : 'partial_or_failed')
+  );
   return allDelivered;
 }
 
-function _sendFcmMessage_(fcmToken, payload, highPriority) {
+// Role topics are public broadcasts, not an authorization boundary.
+function sendFCMNotification(topic, title, body, screenRoute, orderId) {
+  const allowedTopics = ['role_admin', 'role_manager', 'role_accountant',
+    'role_warehouse', 'role_salesperson', 'role_customer'];
+  const target = String(topic || '').trim();
+  const route = String(screenRoute || '/notifications').trim();
+  const id = String(orderId || '').trim();
+  if (!allowedTopics.includes(target)) throw new Error('Invalid FCM role topic');
+  if (!String(title || '').trim() || !String(body || '').trim()) {
+    throw new Error('FCM title and body are required');
+  }
+  if (!['/notifications', '/orders'].includes(route) ||
+      (route === '/orders' && !id)) {
+    throw new Error('Invalid FCM route or missing order ID');
+  }
+  const projectId = String(
+    PropertiesService.getScriptProperties().getProperty('FCM_PROJECT_ID') || ''
+  ).trim();
+  if (!projectId) throw new Error('FCM_PROJECT_ID is not configured');
+  const notificationId = Utilities.getUuid();
+  const payload = {
+    message: {
+      topic: target,
+      notification: { title: String(title), body: String(body) },
+      data: {
+        notification_id: notificationId,
+        deep_link: route,
+        order_id: id,
+        target_role: target.substring('role_'.length),
+        channel_id: route === '/orders' ? 'orders' : 'general'
+      },
+      android: {
+        priority: 'HIGH',
+        notification: { channel_id: route === '/orders' ? 'orders' : 'general' }
+      }
+    }
+  };
+  const response = UrlFetchApp.fetch(
+    'https://fcm.googleapis.com/v1/projects/' +
+      encodeURIComponent(projectId) + '/messages:send',
+    {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    }
+  );
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    let errorStatus = 'SEND_FAILED';
+    try {
+      const error = JSON.parse(response.getContentText()).error;
+      if (error && error.status) errorStatus = String(error.status);
+    } catch (error) {
+      errorStatus = 'UNPARSEABLE_RESPONSE';
+    }
+    throw new Error('FCM_' + errorStatus + '_HTTP_' + status);
+  }
+  return JSON.parse(response.getContentText());
+}
+
+function _sendFcmMessage_(fcmToken, payload, highPriority, targetType) {
   const properties = PropertiesService.getScriptProperties();
   const serviceAccountText = properties.getProperty('FCM_SERVICE_ACCOUNT_JSON');
   if (!serviceAccountText) throw new Error('FCM_SERVICE_ACCOUNT_JSON is not configured');
   const serviceAccount = JSON.parse(serviceAccountText);
   const accessToken = _getFcmAccessToken_(serviceAccount);
+  const targetField = String(targetType || 'token').toLowerCase() === 'fid'
+    ? 'fid'
+    : 'token';
+  const messageTarget = {};
+  messageTarget[targetField] = fcmToken;
   const message = {
-    message: {
-      token: fcmToken,
+    message: Object.assign({
       notification: { title: payload.title, body: payload.body },
-      data: Object.fromEntries(Object.keys(payload).map(key => [key, String(payload[key])])),
+      data: Object.fromEntries(
+        Object.keys(payload)
+          .filter(key => key !== 'title' && key !== 'body')
+          .map(key => [key, String(payload[key])])
+      ),
       android: {
         priority: highPriority ? 'HIGH' : 'NORMAL',
         notification: {
           channel_id: payload.channel_id,
+          tag: String(payload.notification_id),
           sound: 'default'
         }
+      },
+      apns: {
+        headers: {
+          'apns-collapse-id': String(payload.notification_id)
+        }
       }
-    }
+    }, messageTarget)
   };
   const response = UrlFetchApp.fetch(
     'https://fcm.googleapis.com/v1/projects/' +
@@ -7969,7 +9325,23 @@ function _sendFcmMessage_(fcmToken, payload, highPriority) {
   const code = response.getResponseCode();
   const content = response.getContentText();
   if (code < 200 || code >= 300) {
-    throw new Error('FCM_HTTP_' + code + ': ' + content.substring(0, 400));
+    let status = '';
+    let errorCode = '';
+    try {
+      const parsed = JSON.parse(content || '{}');
+      const details = parsed.error && Array.isArray(parsed.error.details)
+        ? parsed.error.details : [];
+      status = String(parsed.error && parsed.error.status || '');
+      const fcmDetail = details.find(detail =>
+        String(detail['@type'] || '').indexOf('FcmError') >= 0
+      );
+      errorCode = String(fcmDetail && fcmDetail.errorCode || status || '');
+    } catch (error) {
+      errorCode = 'UNPARSEABLE_RESPONSE';
+    }
+    throw new Error(
+      'FCM_' + (errorCode || 'SEND_FAILED') + '_HTTP_' + code
+    );
   }
 }
 
@@ -8070,10 +9442,12 @@ function _deactivateAllUserDevices_(userId) {
   const headers = data[0].map(String);
   const userIdx = headers.indexOf('user_id');
   const activeIdx = headers.indexOf('is_active');
+  const enabledIdx = headers.indexOf('enabled');
   const updatedIdx = headers.indexOf('updated_at');
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][userIdx]) !== String(userId)) continue;
     if (activeIdx >= 0) sheet.getRange(i + 1, activeIdx + 1).setValue(false);
+    if (enabledIdx >= 0) sheet.getRange(i + 1, enabledIdx + 1).setValue(false);
     if (updatedIdx >= 0) sheet.getRange(i + 1, updatedIdx + 1).setValue(_now());
   }
 }

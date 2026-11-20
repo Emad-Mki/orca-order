@@ -6,6 +6,7 @@ import '../providers/products_provider.dart';
 import '../providers/orders_provider.dart';
 import '../providers/customer_provider.dart';
 import '../utils/permissions.dart';
+import '../utils/guarded_navigation.dart';
 import 'product_detail_screen.dart';
 import '../widgets/widgets.dart';
 
@@ -14,8 +15,13 @@ class NewOrderScreen extends StatefulWidget {
   final Map<String, dynamic> session;
   final Map<String, dynamic>? customer;
   final OrderDraft? draft;
+  final Product? initialProduct;
   const NewOrderScreen(
-      {super.key, required this.session, this.customer, this.draft});
+      {super.key,
+      required this.session,
+      this.customer,
+      this.draft,
+      this.initialProduct});
   @override
   State<NewOrderScreen> createState() => _NewOrderScreenState();
 }
@@ -27,6 +33,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   List<Product> _filteredProducts = [];
   bool _loading = true;
   bool _isSubmitting = false;
+  bool _allowPop = false;
   bool _refreshNoticeShown = false;
   final _orderNoteCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
@@ -120,6 +127,11 @@ class _NewOrderScreenState extends State<NewOrderScreen>
 
   Future<void> _loadInitialData() async {
     await Future.wait([_loadProducts(), _loadCustomers()]);
+    if (widget.initialProduct != null && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showAddItemDialog(widget.initialProduct!);
+      });
+    }
     if (widget.draft != null) {
       setState(() {
         _cart.clear();
@@ -424,6 +436,52 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     );
   }
 
+  Future<void> _handleBack() async {
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+    if (_isSubmitting) return;
+    if (_cart.isEmpty && _orderNoteCtrl.text.trim().isEmpty) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+      return;
+    }
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('طلب غير محفوظ'),
+        content: const Text('يمكنك حفظ الطلب كمسودة على هذا الجهاز.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'continue'),
+            child: const Text('متابعة التحرير'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'discard'),
+            child: const Text('تجاهل'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'draft'),
+            child: const Text('حفظ مسودة'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null || choice == 'continue') return;
+    if (choice == 'draft') {
+      final saved = await _saveToDraft();
+      if (!mounted) return;
+      if (!saved) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(context.read<DraftsProvider>().error ?? 'تعذر حفظ المسودة'),
+        ));
+        return;
+      }
+    }
+    popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+  }
+
   void _filterProducts() {
     setState(() {
       final query = _searchCtrl.text.toLowerCase();
@@ -556,6 +614,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     }
     String selectedUnit =
         units.contains(product.unit) ? product.unit : units.first;
+    bool adding = false;
 
     showModalBottomSheet(
       context: context,
@@ -706,7 +765,8 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: product.priceForUnit(selectedUnit) == null ||
+                  onPressed: adding ||
+                          product.priceForUnit(selectedUnit) == null ||
                           product.factorForUnit(selectedUnit) == null ||
                           !product.factorForUnit(selectedUnit)!.isFinite ||
                           product.factorForUnit(selectedUnit)! <= 0
@@ -720,14 +780,33 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                             );
                             return;
                           }
+                          setSheetState(() => adding = true);
                           _resetClientRequestId();
                           setState(() {
-                            _cart.add(OrderItem.fromProduct(
-                              product,
-                              quantity: qty,
-                              selectedUnit: selectedUnit,
-                              note: noteCtrl.text,
-                            ));
+                            final price = product.priceForUnit(selectedUnit);
+                            final existingIndex = _cart.indexWhere((item) =>
+                                item.code == product.code &&
+                                (item.selectedUnit ?? item.unit) ==
+                                    selectedUnit &&
+                                item.priceOffer == price);
+                            if (existingIndex >= 0) {
+                              final existing = _cart[existingIndex];
+                              _cart[existingIndex] = existing.copyWith(
+                                quantity: (existing.quantity ?? 0) + qty,
+                                quantityRequested:
+                                    (existing.quantity ?? 0) + qty,
+                                note: noteCtrl.text.trim().isEmpty
+                                    ? existing.note
+                                    : noteCtrl.text,
+                              );
+                            } else {
+                              _cart.add(OrderItem.fromProduct(
+                                product,
+                                quantity: qty,
+                                selectedUnit: selectedUnit,
+                                note: noteCtrl.text,
+                              ));
+                            }
                           });
                           _saveToDraft(immediate: true);
                           Navigator.pop(context);
@@ -848,9 +927,11 @@ class _NewOrderScreenState extends State<NewOrderScreen>
           setState(() => _cart.clear());
           if (fromReviewDialog) {
             navigator.pop();
-            navigator.pop(true);
+            popAfterGuard(context,
+                allowPop: () => setState(() => _allowPop = true), result: true);
           } else {
-            navigator.pop(true);
+            popAfterGuard(context,
+                allowPop: () => setState(() => _allowPop = true), result: true);
           }
         }
       } else {
@@ -878,126 +959,132 @@ class _NewOrderScreenState extends State<NewOrderScreen>
             .take(8)
             .toList();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('طلب جديد'),
-        actions: [
-          _buildSaveStatus(provider),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => _loadProducts(forceRefresh: true),
-            tooltip: 'تحديث',
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (provider.error != null)
-            Container(
-              color: Colors.red.shade100,
-              padding: const EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.red),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child: Text(provider.error!,
-                          style: const TextStyle(color: Colors.red))),
-                  IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => provider.resetStatus()),
-                ],
-              ),
+    return PopScope(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _handleBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('طلب جديد'),
+          actions: [
+            _buildSaveStatus(provider),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () => _loadProducts(forceRefresh: true),
+              tooltip: 'تحديث',
             ),
-          // شريط اسم الزبون
-          if (_isStaffOrder) ...[
-            _buildCustomerSelector(matchingCustomers),
-          ] else
-            CustomerInfoBarWidget(customerName: _customerName),
+          ],
+        ),
+        body: Column(
+          children: [
+            if (provider.error != null)
+              Container(
+                color: Colors.red.shade100,
+                padding: const EdgeInsets.all(8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.red),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: Text(provider.error!,
+                            style: const TextStyle(color: Colors.red))),
+                    IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => provider.resetStatus()),
+                  ],
+                ),
+              ),
+            // شريط اسم الزبون
+            if (_isStaffOrder) ...[
+              _buildCustomerSelector(matchingCustomers),
+            ] else
+              CustomerInfoBarWidget(customerName: _customerName),
 
-          // حقل البحث
-          SearchFieldWidget(
-            controller: _searchCtrl,
-            hintText: 'ابحث عن منتج...',
-            onChanged: (_) => _filterProducts(),
-          ),
+            // حقل البحث
+            SearchFieldWidget(
+              controller: _searchCtrl,
+              hintText: 'ابحث عن منتج...',
+              onChanged: (_) => _filterProducts(),
+            ),
 
-          // قائمة المنتجات
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredProducts.isEmpty
-                    ? const Center(child: Text('لا توجد منتجات'))
-                    : GridView.builder(
-                        padding: const EdgeInsets.all(8),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 0.75,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
+            // قائمة المنتجات
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _filteredProducts.isEmpty
+                      ? const Center(child: Text('لا توجد منتجات'))
+                      : GridView.builder(
+                          padding: const EdgeInsets.all(8),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            childAspectRatio: 0.75,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                          ),
+                          itemCount: _filteredProducts.length,
+                          itemBuilder: (context, index) {
+                            final p = _filteredProducts[index];
+                            return ProductCardWidget(
+                              product: p,
+                              onTap: () => _showAddItemDialog(p),
+                              onLongPress: () => _showProductDetails(p),
+                            );
+                          },
                         ),
-                        itemCount: _filteredProducts.length,
-                        itemBuilder: (context, index) {
-                          final p = _filteredProducts[index];
-                          return ProductCardWidget(
-                            product: p,
-                            onTap: () => _showAddItemDialog(p),
-                            onLongPress: () => _showProductDetails(p),
-                          );
-                        },
-                      ),
-          ),
-
-          // منطقة السلة والإرسال
-          CartSummaryWidget(
-            cartItems: _cart,
-            isSubmitting: _isSubmitting,
-            onSaveDraftTap: _saveDraftManually,
-            onReviewTap: () => CartSummaryWidget.showReviewDialog(
-              context: context,
-              cartItems: _cart,
-              onSubmit: () => _submitOrder(fromReviewDialog: true),
-              onRemoveItem: (item) {
-                _resetClientRequestId();
-                setState(() => _cart.remove(item));
-                _saveToDraft(immediate: true);
-              },
-              onUpdateItem: (item, quantity, unit) {
-                final product = item.product;
-                if (product == null) return;
-                final index = _cart.indexOf(item);
-                if (index < 0) return;
-                _resetClientRequestId();
-                setState(() {
-                  _cart[index] = OrderItem.fromProduct(
-                    product,
-                    quantity: quantity,
-                    selectedUnit: unit,
-                    note: item.note,
-                  );
-                });
-                _saveToDraft(immediate: true);
-              },
-              isSubmitting: _isSubmitting,
             ),
-            onSubmitTap: _submitOrder,
-          ),
 
-          // ملاحظات عامة
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: TextField(
-              controller: _orderNoteCtrl,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'ملاحظات عامة للطلب (اختياري)',
-                border: OutlineInputBorder(),
-                filled: true,
+            // منطقة السلة والإرسال
+            CartSummaryWidget(
+              cartItems: _cart,
+              isSubmitting: _isSubmitting,
+              onSaveDraftTap: _saveDraftManually,
+              onReviewTap: () => CartSummaryWidget.showReviewDialog(
+                context: context,
+                cartItems: _cart,
+                onSubmit: () => _submitOrder(fromReviewDialog: true),
+                onRemoveItem: (item) {
+                  _resetClientRequestId();
+                  setState(() => _cart.remove(item));
+                  _saveToDraft(immediate: true);
+                },
+                onUpdateItem: (item, quantity, unit) {
+                  final product = item.product;
+                  if (product == null) return;
+                  final index = _cart.indexOf(item);
+                  if (index < 0) return;
+                  _resetClientRequestId();
+                  setState(() {
+                    _cart[index] = OrderItem.fromProduct(
+                      product,
+                      quantity: quantity,
+                      selectedUnit: unit,
+                      note: item.note,
+                    );
+                  });
+                  _saveToDraft(immediate: true);
+                },
+                isSubmitting: _isSubmitting,
+              ),
+              onSubmitTap: _submitOrder,
+            ),
+
+            // ملاحظات عامة
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: TextField(
+                controller: _orderNoteCtrl,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'ملاحظات عامة للطلب (اختياري)',
+                  border: OutlineInputBorder(),
+                  filled: true,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

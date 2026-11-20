@@ -11,7 +11,7 @@ class AppConfig {
     defaultValue:
         'https://github.com/Emad-Mki/orca-order-updates/releases/latest/download/update.json',
   );
-  static const String androidPackageName = 'com.example.orca_order';
+  static const String androidPackageName = 'com.orcallc.orca_order';
 
   static String get apiUrl {
     switch (_environment) {

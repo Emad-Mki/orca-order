@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -18,20 +17,15 @@ import 'services/app_update_service.dart';
 import 'services/database_service.dart';
 import 'services/deep_link_service.dart';
 import 'services/fcm_service.dart';
-import 'services/notification_service.dart';
 import 'screens/app_update_dialog.dart';
+import 'settings/setting_definitions.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FcmService.instance.registerBackgroundHandler();
 
   // تهيئة خدمة API والجلسة
   await ApiService().init();
-  try {
-    await Firebase.initializeApp();
-    await FcmService.instance.initialize();
-  } catch (error) {
-    debugPrint('Firebase notifications are not configured: $error');
-  }
 
   // Set preferred orientations
   await SystemChrome.setPreferredOrientations([
@@ -40,7 +34,7 @@ void main() async {
   ]);
 
   final preferences = await SharedPreferences.getInstance();
-  final savedMode = preferences.getString('orca_theme_mode');
+  final savedMode = preferences.getString(SettingDefinitions.theme.key);
   final initialThemeMode = savedMode == 'dark'
       ? ThemeMode.dark
       : savedMode == 'light'
@@ -53,6 +47,15 @@ void main() async {
                       : ThemeMode.light)
                   : ThemeMode.system;
   runApp(OrcaApp(initialThemeMode: initialThemeMode));
+  unawaited(_initializeFirebaseNotifications());
+}
+
+Future<void> _initializeFirebaseNotifications() async {
+  try {
+    await FcmService.instance.initialize();
+  } catch (error) {
+    debugPrint('Firebase notifications are not configured: $error');
+  }
 }
 
 /// تطبيق Orca Order الرئيسي
@@ -70,6 +73,7 @@ class OrcaApp extends StatefulWidget {
 
 class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
   Map<String, dynamic>? _session;
+  int _sessionGeneration = 0;
   bool _isLoading = true;
   late ThemeMode _themeMode;
   late final AppDatabase _database;
@@ -87,7 +91,7 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
   Future<void> setThemeMode(ThemeMode mode) async {
     final preferences = await SharedPreferences.getInstance();
     final saved = await preferences.setString(
-      'orca_theme_mode',
+      SettingDefinitions.theme.key,
       switch (mode) {
         ThemeMode.system => 'system',
         ThemeMode.light => 'light',
@@ -154,7 +158,13 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
   void _handleSessionExpired() {
     FcmService.instance.clearUserSession();
     if (!mounted || _session == null) return;
-    setState(() => _session = null);
+    DeepLinkService.clearSession();
+    DeepLinkService.navigatorKey.currentState
+        ?.popUntil((route) => route.isFirst);
+    setState(() {
+      _sessionGeneration++;
+      _session = null;
+    });
   }
 
   void _initRepositories() {
@@ -173,7 +183,10 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
 
   Future<void> _saveSession(Map<String, dynamic> session) async {
     if (mounted) {
-      setState(() => _session = session);
+      setState(() {
+        _sessionGeneration++;
+        _session = session;
+      });
     }
   }
 
@@ -185,7 +198,13 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
 
   Future<void> _logout() async {
     if (mounted) {
-      setState(() => _session = null);
+      DeepLinkService.clearSession();
+      DeepLinkService.navigatorKey.currentState
+          ?.popUntil((route) => route.isFirst);
+      setState(() {
+        _sessionGeneration++;
+        _session = null;
+      });
     }
   }
 
@@ -200,6 +219,7 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
     }
 
     return MultiProvider(
+      key: ValueKey(_sessionGeneration),
       providers: [
         Provider<AppDatabase>.value(value: _database),
         ProxyProvider<AppDatabase, LocalRepository>(
@@ -221,7 +241,7 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
         ChangeNotifierProvider(
             create: (_) => CustomerProvider(_customerRepository)),
         ChangeNotifierProvider(
-          create: (_) => NotificationProvider(NotificationService()),
+          create: (_) => NotificationProvider(NotificationRepository()),
         ),
         ChangeNotifierProvider<AppUpdateService>.value(
           value: _appUpdateService,

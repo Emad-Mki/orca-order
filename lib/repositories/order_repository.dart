@@ -16,12 +16,16 @@ class OrderRepository {
   /// جلب قائمة الطلبات مع دعم التخزين المحلي
   Future<List<Order>> getOrders(
       {String? customerId, String? status, bool forceRefresh = false}) async {
+    final requestToken = _apiService.token;
     // 1. محاولة القراءة من التخزين المحلي إذا لم يطلب التحديث القسري
     if (!forceRefresh && _db != null) {
       final localOrders = await LocalRepository(_db).getOrders(
         customerId: customerId,
         status: status,
       );
+      if (_apiService.token != requestToken) {
+        throw StateError('تغير الحساب أثناء تحميل الطلبات');
+      }
       if (localOrders.isNotEmpty) return localOrders;
     }
 
@@ -31,6 +35,9 @@ class OrderRepository {
         customerId: customerId,
         status: status,
       );
+      if (_apiService.token != requestToken) {
+        throw StateError('تغير الحساب أثناء تحميل الطلبات');
+      }
 
       final items = response['orders'] ?? response['data'] ?? [];
       if (items is! List) {
@@ -58,6 +65,7 @@ class OrderRepository {
     } catch (e) {
       lastFetchError = e.toString();
       print('Error fetching orders: $e');
+      if (_apiService.token != requestToken) rethrow;
       if (e is FormatException) rethrow;
 
       // محاولة العودة للبيانات المحلية في حال فشل الاتصال
@@ -132,11 +140,16 @@ class OrderRepository {
   }
 
   /// تحديث حالة الطلب
-  Future<bool> updateOrderStatus(String orderId, String status) async {
+  Future<bool> updateOrderStatus(String orderId, String status,
+      {String? reason, bool proxyForCustomer = false}) async {
     try {
       // استخدام الخدمة المنفصلة للطلبات
-      final response =
-          await _apiService.orders.updateOrderStatus(orderId, status);
+      final response = await _apiService.orders.updateOrderStatus(
+        orderId,
+        status,
+        reason: reason,
+        proxyForCustomer: proxyForCustomer,
+      );
       return response['ok'] == true || response['success'] == true;
     } catch (e) {
       print('Error updating order status: $e');

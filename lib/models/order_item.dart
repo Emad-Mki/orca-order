@@ -209,10 +209,9 @@ class OrderItem {
   /// حساب الإجمالي بناءً على الكمية المعتمدة أو المطلوبة
   double get total {
     if (isUnavailable) return 0.0;
-    final qty = quantity ??
-        ((quantityApproved != null && quantityApproved! > 0)
-            ? quantityApproved!
-            : (quantityRequested ?? 0.0));
+    final isUnsubmittedCartItem =
+        quantity != null && status.toLowerCase() == 'pending';
+    final qty = isUnsubmittedCartItem ? quantity! : pricedQuantity;
     if (finalPrice != null) return finalPrice! * qty;
     if (priceOffer != null) return priceOffer! * qty;
     if (defaultPrice != null) return defaultPrice! * qty;
@@ -255,6 +254,10 @@ class OrderItem {
     String? unit2,
     double? factor3,
     String? unit3,
+    Product? product,
+    double? quantity,
+    String? note,
+    String? selectedUnit,
   }) {
     return OrderItem(
       itemId: itemId ?? this.itemId,
@@ -288,6 +291,10 @@ class OrderItem {
       unit2: unit2 ?? this.unit2,
       factor3: factor3 ?? this.factor3,
       unit3: unit3 ?? this.unit3,
+      product: product ?? this.product,
+      quantity: quantity ?? this.quantity,
+      note: note ?? this.note,
+      selectedUnit: selectedUnit ?? this.selectedUnit,
     );
   }
 

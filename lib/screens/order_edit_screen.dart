@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/order.dart';
@@ -7,6 +9,7 @@ import '../repositories/order_repository.dart';
 import '../repositories/product_repository.dart';
 import '../services/database_service.dart';
 import '../utils/permissions.dart';
+import '../utils/guarded_navigation.dart';
 
 class OrderEditScreen extends StatefulWidget {
   final Order order;
@@ -26,6 +29,8 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
   final _noteController = TextEditingController();
   final List<_EditableOrderItem> _items = [];
   bool _isSaving = false;
+  bool _allowPop = false;
+  late final String _initialValues;
   late final bool _isCustomer = widget.role == AppRole.customer;
   late final bool _canEditPrice = !_isCustomer &&
       const {'priced', 'customer_confirmed', 'approved'}
@@ -41,6 +46,52 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
         isCustomer: _isCustomer,
         canEditPrice: _canEditPrice,
       ));
+    }
+    _initialValues = _currentValues();
+  }
+
+  String _currentValues() => jsonEncode({
+        'note': _noteController.text,
+        'items': _items
+            .map((item) => [
+                  item.code,
+                  item.quantityController.text,
+                  item.unitController.text,
+                  item.priceController.text,
+                  item.noteController.text,
+                ])
+            .toList(),
+      });
+
+  Future<void> _handleBack() async {
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+    if (_isSaving) return;
+    if (_currentValues() == _initialValues) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+      return;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تعديلات غير محفوظة'),
+        content: const Text('احفظ التعديلات أولاً أو تجاهلها للعودة.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('متابعة التحرير'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('تجاهل التعديلات'),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
     }
   }
 
@@ -182,7 +233,10 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
         note: _noteController.text.trim(),
         items: updates,
       );
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) {
+        popAfterGuard(context,
+            allowPop: () => setState(() => _allowPop = true), result: true);
+      }
     } catch (error) {
       _showError(error.toString());
     } finally {
@@ -198,42 +252,48 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('تعديل الطلب #${widget.order.orderNumber}')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(
-            controller: _noteController,
-            decoration: const InputDecoration(
-              labelText: 'ملاحظة الطلب',
-              border: OutlineInputBorder(),
+    return PopScope(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _handleBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(title: Text('تعديل الطلب #${widget.order.orderNumber}')),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            TextField(
+              controller: _noteController,
+              decoration: const InputDecoration(
+                labelText: 'ملاحظة الطلب',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
             ),
-            maxLines: 2,
+            const SizedBox(height: 12),
+            for (var index = 0; index < _items.length; index++)
+              _buildItemCard(index),
+            OutlinedButton.icon(
+              onPressed: _isSaving ? null : _addProduct,
+              icon: const Icon(Icons.add),
+              label: const Text('إضافة صنف'),
+            ),
+            const SizedBox(height: 80),
+          ],
+        ),
+        bottomNavigationBar: SafeArea(
+          minimum: const EdgeInsets.all(16),
+          child: ElevatedButton.icon(
+            onPressed: _isSaving ? null : _save,
+            icon: _isSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save),
+            label: Text(_isSaving ? 'جارٍ الحفظ...' : 'حفظ التعديلات'),
           ),
-          const SizedBox(height: 12),
-          for (var index = 0; index < _items.length; index++)
-            _buildItemCard(index),
-          OutlinedButton.icon(
-            onPressed: _isSaving ? null : _addProduct,
-            icon: const Icon(Icons.add),
-            label: const Text('إضافة صنف'),
-          ),
-          const SizedBox(height: 80),
-        ],
-      ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.all(16),
-        child: ElevatedButton.icon(
-          onPressed: _isSaving ? null : _save,
-          icon: _isSaving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.save),
-          label: Text(_isSaving ? 'جارٍ الحفظ...' : 'حفظ التعديلات'),
         ),
       ),
     );

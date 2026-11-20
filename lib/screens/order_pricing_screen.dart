@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/order_detail_provider.dart';
 import '../models/order_item.dart';
 import '../utils/number_utils.dart';
+import '../utils/guarded_navigation.dart';
 import '../repositories/product_repository.dart';
 import '../models/product.dart';
 import '../models/order.dart';
@@ -165,7 +168,52 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
   List<PricingItem> _pricingItems = [];
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _allowPop = false;
   String? _error;
+  String? _initialValues;
+
+  String _currentValues() => jsonEncode({
+        'note': _noteController.text,
+        'items': _pricingItems
+            .map((item) => {
+                  ...item.toJson(),
+                  'quantity_input': item.quantityController.text,
+                  'price_input': item.priceController.text,
+                })
+            .toList(),
+      });
+
+  Future<void> _back() async {
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+    if (_isSaving) return;
+    if (_initialValues == null || _currentValues() == _initialValues) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+      return;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تسعير غير محفوظ'),
+        content: const Text('احفظ التسعير كمسودة أولاً أو تجاهل التعديلات.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('متابعة التحرير'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('تجاهل التعديلات'),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+    }
+  }
 
   @override
   void dispose() {
@@ -212,6 +260,7 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
             return PricingItem.fromModel(item, product: productMap[item.code]);
           }).toList();
           _noteController.text = provider.currentOrder?.accountantNotes ?? '';
+          _initialValues = _currentValues();
         });
       }
     } catch (e) {
@@ -406,7 +455,8 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
             backgroundColor: Theme.of(context).colorScheme.primary,
           ),
         );
-        Navigator.pop(context, true);
+        popAfterGuard(context,
+            allowPop: () => setState(() => _allowPop = true), result: true);
       } else {
         throw Exception(provider.errorMessage ?? 'فشل حفظ التسعير');
       }
@@ -440,83 +490,90 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('تسعير الفاتورة'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _showAddProductDialog,
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(
-                  child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('خطأ: $_error', style: TextStyle(color: colors.error)),
-                    ElevatedButton(
-                        onPressed: _loadData,
-                        child: const Text('إعادة المحاولة'))
-                  ],
-                ))
-              : Column(
-                  children: [
-                    _buildHeaderCard(),
-                    Expanded(
-                      child: _pricingItems.isEmpty
-                          ? const Center(
-                              child: Text('لا توجد بنود في هذه الطلبية'))
-                          : ListView.builder(
-                              padding: const EdgeInsets.all(8),
-                              itemCount: _pricingItems.length,
-                              itemBuilder: (context, index) {
-                                return _buildPricingItemCard(index);
-                              },
-                            ),
-                    ),
-                    _buildSummarySection(),
-                  ],
-                ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _isSaving
-                      ? null
-                      : () => _submitPricing(submitForCustomer: false),
-                  style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16)),
-                  child: const Text('حفظ كمسودة'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _isSaving
-                      ? null
-                      : () => _submitPricing(submitForCustomer: true),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: colors.primary,
-                    foregroundColor: colors.onPrimary,
+    return PopScope(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _back();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('تسعير الفاتورة'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: _showAddProductDialog,
+            ),
+          ],
+        ),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(
+                    child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('خطأ: $_error',
+                          style: TextStyle(color: colors.error)),
+                      ElevatedButton(
+                          onPressed: _loadData,
+                          child: const Text('إعادة المحاولة'))
+                    ],
+                  ))
+                : Column(
+                    children: [
+                      _buildHeaderCard(),
+                      Expanded(
+                        child: _pricingItems.isEmpty
+                            ? const Center(
+                                child: Text('لا توجد بنود في هذه الطلبية'))
+                            : ListView.builder(
+                                padding: const EdgeInsets.all(8),
+                                itemCount: _pricingItems.length,
+                                itemBuilder: (context, index) {
+                                  return _buildPricingItemCard(index);
+                                },
+                              ),
+                      ),
+                      _buildSummarySection(),
+                    ],
                   ),
-                  child: _isSaving
-                      ? SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              color: colors.onPrimary, strokeWidth: 2))
-                      : const Text('اعتماد وإرسال للزبون'),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _isSaving
+                        ? null
+                        : () => _submitPricing(submitForCustomer: false),
+                    style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16)),
+                    child: const Text('حفظ كمسودة'),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _isSaving
+                        ? null
+                        : () => _submitPricing(submitForCustomer: true),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: colors.primary,
+                      foregroundColor: colors.onPrimary,
+                    ),
+                    child: _isSaving
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                                color: colors.onPrimary, strokeWidth: 2))
+                        : const Text('اعتماد وإرسال للزبون'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

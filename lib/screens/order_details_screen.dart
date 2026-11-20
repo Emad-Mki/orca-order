@@ -85,9 +85,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-  Future<void> _updateStatus(String newStatus) async {
+  Future<void> _updateStatus(String newStatus,
+      {String? reason, bool proxyForCustomer = false}) async {
     if (_provider == null) return;
-    final success = await _provider!.updateStatus(newStatus);
+    final success = await _provider!.updateStatus(
+      newStatus,
+      reason: reason,
+      proxyForCustomer: proxyForCustomer,
+    );
 
     if (!mounted) return;
 
@@ -102,6 +107,65 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('فشل التحديث: ${_provider!.errorMessage}')),
+      );
+    }
+  }
+
+  Future<void> _showProxyCustomerConfirm(OrderDetailProvider provider) async {
+    final order = provider.currentOrder;
+    if (order == null) return;
+    final reasonController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('تأكيد السعر نيابةً عن الزبون'),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الطلب: ${order.orderNumber.isNotEmpty ? order.orderNumber : order.orderId}\n'
+                  'الزبون: ${order.customerName.isNotEmpty ? order.customerName : order.customerId}',
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: reasonController,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'سبب تنفيذ الإجراء نيابةً عن الزبون',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) => setDialogState(() {}),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: reasonController.text.trim().length >= 3
+                  ? () => Navigator.pop(context, true)
+                  : null,
+              child: const Text('تأكيد نيابةً عنه'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final proxyReason = reasonController.text.trim();
+    reasonController.dispose();
+    if (confirmed == true && mounted) {
+      await _updateStatus(
+        'customer_confirmed',
+        reason: proxyReason,
+        proxyForCustomer: true,
       );
     }
   }
@@ -619,6 +683,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       ? 'customer_confirmed'
                       : 'approved',
                 ),
+                onProxyCustomerConfirm: () =>
+                    _showProxyCustomerConfirm(provider),
                 onCancel: () => _showCancelConfirmation(provider),
                 onPrepare: () => _startOrResumeWarehousePrep(provider),
                 onShip: () => _showShippingDialog(provider),

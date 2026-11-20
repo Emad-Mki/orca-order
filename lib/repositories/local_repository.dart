@@ -182,13 +182,15 @@ class LocalRepository {
 
   // Orders Cache
   Future<void> saveOrders(List<Order> orders) async {
+    final environment = _env;
+    final accountId = _accountId;
     await _db.batch((batch) {
       batch.insertAll(
         _db.localOrders,
         orders.map((o) => LocalOrdersCompanion.insert(
               orderId: o.orderId,
-              environment: _env,
-              accountId: _accountId,
+              environment: environment,
+              accountId: accountId,
               orderNumber: o.orderNumber,
               customerId: o.customerId,
               customerName: o.customerName,
@@ -252,13 +254,15 @@ class LocalRepository {
 
   // Customers Cache
   Future<void> saveCustomers(List<Customer> customers) async {
+    final environment = _env;
+    final accountId = _accountId;
     await _db.batch((batch) {
       batch.insertAll(
         _db.localCustomers,
         customers.map((c) => LocalCustomersCompanion.insert(
               id: c.id,
-              environment: _env,
-              accountId: _accountId,
+              environment: environment,
+              accountId: accountId,
               name: c.name,
               phone: Value(c.phone),
               balanceMicros:

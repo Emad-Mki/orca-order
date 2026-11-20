@@ -13,13 +13,20 @@ class CustomerRepository {
 
   /// جلب قائمة العملاء
   Future<List<Customer>> getCustomers({bool forceRefresh = false}) async {
+    final requestToken = _apiService.token;
     if (!forceRefresh && _db != null) {
       final localCustomers = await LocalRepository(_db).getCustomers();
+      if (_apiService.token != requestToken) {
+        throw StateError('تغير الحساب أثناء تحميل العملاء');
+      }
       if (localCustomers.isNotEmpty) return localCustomers;
     }
 
     try {
       final response = await _apiService.customers.getCustomers();
+      if (_apiService.token != requestToken) {
+        throw StateError('تغير الحساب أثناء تحميل العملاء');
+      }
       final List data = response['customers'] ?? response['data'] ?? [];
       final customers = data.map((item) => Customer.fromJson(item)).toList();
 
@@ -31,6 +38,7 @@ class CustomerRepository {
       return customers;
     } catch (e) {
       print('Error fetching customers: $e');
+      if (_apiService.token != requestToken) rethrow;
       if (_db != null) {
         return await LocalRepository(_db).getCustomers();
       }

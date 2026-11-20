@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
+import 'async_session_notifier.dart';
 import '../repositories/customer_repository.dart';
 import '../models/customer.dart';
 
 /// Provider لإدارة بيانات العملاء والأرصدة
-class CustomerProvider extends ChangeNotifier {
+class CustomerProvider extends ChangeNotifier with AsyncSessionNotifier {
   final CustomerRepository _customerRepository;
 
   List<Customer> _customers = [];

@@ -14,6 +14,7 @@ class OrderActionsWidget extends StatelessWidget {
   final VoidCallback? onCancel;
   final VoidCallback? onEdit;
   final VoidCallback? onPrint;
+  final VoidCallback? onProxyCustomerConfirm;
   final bool isBusy;
 
   const OrderActionsWidget({
@@ -28,6 +29,7 @@ class OrderActionsWidget extends StatelessWidget {
     this.onCancel,
     this.onEdit,
     this.onPrint,
+    this.onProxyCustomerConfirm,
     this.isBusy = false,
   });
 
@@ -114,6 +116,17 @@ class OrderActionsWidget extends StatelessWidget {
           if (userRole == AppRole.customer && _isConfirmableStatus(status))
             _buildActionButton(context, 'موافق على السعر', Icons.check,
                 Colors.green, isBusy ? null : onApprove),
+
+          if (const {AppRole.admin, AppRole.manager, AppRole.accountant}
+                  .contains(userRole) &&
+              _isConfirmableStatus(status))
+            _buildActionButton(
+              context,
+              'تأكيد السعر نيابةً عن الزبون',
+              Icons.fact_check,
+              Colors.deepPurple,
+              isBusy ? null : onProxyCustomerConfirm,
+            ),
 
           // زر الطباعة دائماً متاح إذا تم توفيره
           if (onPrint != null)

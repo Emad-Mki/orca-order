@@ -206,11 +206,9 @@ class Product {
   bool get hasConflictingUnits {
     final seen = <String, (double?, double?)>{};
     final candidates = <(String, double?, double?)>[
-      (unit, priceForUnit(unit), factorForUnit(unit)),
-      if (unit2?.isNotEmpty == true)
-        (unit2!, priceForUnit(unit2!), factorForUnit(unit2!)),
-      if (unit3?.isNotEmpty == true)
-        (unit3!, priceForUnit(unit3!), factorForUnit(unit3!)),
+      (unit, priceConfigured ? price : null, 1),
+      if (unit2?.isNotEmpty == true) (unit2!, price2, factor2),
+      if (unit3?.isNotEmpty == true) (unit3!, price3, factor3),
     ];
     for (final candidate in candidates) {
       final previous = seen[candidate.$1];

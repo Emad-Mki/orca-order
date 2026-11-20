@@ -155,6 +155,8 @@ class AppUpdateService extends ChangeNotifier {
       MethodChannel('orca_order/apk_updates');
   static const String _manifestCacheKey = 'orca_update.cached_manifest';
   static const String _lastAutomaticCheckKey = 'orca_update.last_auto_check';
+  static const String _lastSuccessfulCheckKey =
+      'orca_update.last_successful_check';
   static const String _pendingInstallKey = 'orca_update.pending_install';
   static const String _lastDismissedBuildKey = 'orca_update.dismissed_build';
 
@@ -175,6 +177,7 @@ class AppUpdateService extends ChangeNotifier {
   bool _installationConfirmed = false;
   bool _installPermissionRequired = false;
   bool _restoredManifest = false;
+  DateTime? _lastSuccessfulCheckAt;
   Future<void>? _initializationRequest;
 
   AppUpdateStatus get status => _status;
@@ -187,6 +190,7 @@ class AppUpdateService extends ChangeNotifier {
   int get installedBuildNumber =>
       int.tryParse(_packageInfo?.buildNumber ?? '') ?? 0;
   String get installedVersionName => _packageInfo?.version ?? 'غير معروف';
+  DateTime? get lastSuccessfulCheckAt => _lastSuccessfulCheckAt;
   int get downloadedBytes => _downloadedBytes;
   int? get totalBytes => _manifest?.sizeBytes;
   double? get progress {
@@ -214,6 +218,12 @@ class AppUpdateService extends ChangeNotifier {
   Future<void> _performInitialization() async {
     try {
       _packageInfo = await PackageInfo.fromPlatform();
+      final lastSuccessfulCheck =
+          (await _preferences).getInt(_lastSuccessfulCheckKey);
+      if (lastSuccessfulCheck != null) {
+        _lastSuccessfulCheckAt =
+            DateTime.fromMillisecondsSinceEpoch(lastSuccessfulCheck);
+      }
       if (_packageInfo!.packageName != AppConfig.androidPackageName) {
         throw StateError('معرّف التطبيق لا يطابق إعداد محدث APK');
       }
@@ -284,6 +294,12 @@ class AppUpdateService extends ChangeNotifier {
       _manifest = manifest;
       _restoredManifest = false;
       await prefs.setString(_manifestCacheKey, jsonEncode(decoded));
+      _lastSuccessfulCheckAt = DateTime.now();
+      await prefs.setInt(
+        _lastSuccessfulCheckKey,
+        _lastSuccessfulCheckAt!.millisecondsSinceEpoch,
+      );
+      notifyListeners();
       await _setManifestResult(manifest, manual: manual);
     } catch (error) {
       final cached = await _readCachedManifest();
