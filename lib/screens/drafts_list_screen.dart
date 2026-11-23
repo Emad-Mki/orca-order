@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../providers/drafts_provider.dart';
 import '../models/order_draft.dart';
 import 'new_order_screen.dart';
+import 'sales_invoice_pdf_screen.dart';
 
 class DraftsListScreen extends StatefulWidget {
   final Map<String, dynamic> session;
@@ -47,6 +48,7 @@ class _DraftsListScreenState extends State<DraftsListScreen> {
                 note: draft.note,
                 currency: draft.currency,
                 customTitle: ctrl.text,
+                clientRequestId: draft.clientRequestId,
               );
               context.read<DraftsProvider>().saveDraft(newDraft);
               Navigator.pop(context);
@@ -127,18 +129,61 @@ class _DraftsListScreenState extends State<DraftsListScreen> {
                       Text(
                           'آخر تعديل: ${DateFormat('yyyy-MM-dd HH:mm').format(draft.updatedAt)}',
                           style: const TextStyle(fontSize: 12)),
+                      if (draft.clientRequestId != null)
+                        const Text(
+                            'إرسال غير مؤكد؛ افتح المسودة لإعادة المحاولة'),
                     ],
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
+                        tooltip: 'معاينة مسودة PDF',
+                        icon: const Icon(Icons.picture_as_pdf_outlined),
+                        onPressed: () {
+                          final snapshot = <String, dynamic>{
+                            'invoice_id': 'order-draft-${draft.id}',
+                            'kind': 'order_draft',
+                            'is_unsynced': true,
+                            'sync_uncertain': draft.clientRequestId != null,
+                            'invoice_date': draft.updatedAt.toIso8601String(),
+                            'customer_name': draft.customerName,
+                            'currency': draft.currency,
+                            'subtotal': draft.total,
+                            'net_total': draft.total,
+                            'notes': draft.note,
+                            'items': draft.items
+                                .map((item) => {
+                                      'code': item.productCode,
+                                      'name_snapshot': item.productName,
+                                      'quantity': item.quantity,
+                                      'unit': item.unit,
+                                      'unit_price': item.price,
+                                      'line_total': item.quantity * item.price,
+                                      'note': item.note,
+                                    })
+                                .toList(),
+                          };
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  SalesInvoicePdfScreen(invoice: snapshot),
+                            ),
+                          );
+                        },
+                      ),
+                      IconButton(
                           icon: const Icon(Icons.edit_outlined),
-                          onPressed: () => _renameDraft(draft)),
+                          onPressed: draft.clientRequestId == null
+                              ? () => _renameDraft(draft)
+                              : null),
                       IconButton(
                           icon: const Icon(Icons.delete_outline,
                               color: Colors.red),
-                          onPressed: () => _confirmDelete(draft)),
+                          onPressed: draft.clientRequestId == null
+                              ? () => _confirmDelete(draft)
+                              : null),
                     ],
                   ),
                   onTap: () {

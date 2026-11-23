@@ -18,6 +18,7 @@ void main() {
     VoidCallback? onApprove,
     VoidCallback? onPrepare,
     VoidCallback? onEdit,
+    VoidCallback? onProxyCustomerConfirm,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -27,6 +28,7 @@ void main() {
           onApprove: onApprove,
           onPrepare: onPrepare,
           onEdit: onEdit,
+          onProxyCustomerConfirm: onProxyCustomerConfirm,
         ),
       ),
     );
@@ -54,6 +56,39 @@ void main() {
     ));
 
     expect(find.text('موافق على السعر'), findsNothing);
+  });
+
+  testWidgets('only authorized staff can confirm a priced order for customer',
+      (tester) async {
+    var confirmations = 0;
+    for (final role in [AppRole.manager, AppRole.accountant, AppRole.admin]) {
+      await tester.pumpWidget(buildActions(
+        status: 'priced',
+        role: role,
+        onProxyCustomerConfirm: () => confirmations++,
+      ));
+      await tester.tap(find.text('تأكيد السعر نيابةً عن الزبون'));
+      expect(find.text('اعتماد الطلب'), findsNothing);
+    }
+    expect(confirmations, 3);
+    for (final role in [
+      AppRole.customer,
+      AppRole.warehouse,
+      AppRole.salesperson
+    ]) {
+      await tester.pumpWidget(buildActions(
+        status: 'priced',
+        role: role,
+        onProxyCustomerConfirm: () => confirmations++,
+      ));
+      expect(find.text('تأكيد السعر نيابةً عن الزبون'), findsNothing);
+    }
+    await tester.pumpWidget(buildActions(
+      status: 'customer_confirmed',
+      role: AppRole.manager,
+      onProxyCustomerConfirm: () => confirmations++,
+    ));
+    expect(find.text('تأكيد السعر نيابةً عن الزبون'), findsNothing);
   });
 
   testWidgets(

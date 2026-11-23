@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:animations/animations.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
@@ -10,28 +11,41 @@ import '../widgets/product_availability_badge.dart';
 import '../widgets/product_card_widget.dart';
 import '../widgets/product_image_widget.dart';
 import '../widgets/product_skeleton_widget.dart';
+import '../widgets/app_motion.dart';
+import '../widgets/guided_tour.dart';
+import '../services/guide_coordinator.dart';
 import 'homepage_screen.dart';
 import 'product_detail_screen.dart';
 
 class ProductsScreen extends StatefulWidget {
   final Map<String, dynamic>? session;
   final ProductSortOption? initialSortOption;
+  final bool guideVisible;
+  final int guideReplay;
 
   const ProductsScreen({
     super.key,
     this.session,
     this.initialSortOption,
+    this.guideVisible = true,
+    this.guideReplay = 0,
   });
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
 }
 
-class _ProductsScreenState extends State<ProductsScreen> {
+class _ProductsScreenState extends State<ProductsScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _throttleNoticeShown = false;
   String? _expandedCategory;
+  late final AnimationController _entrance = AnimationController(
+    vsync: this,
+    duration: AppMotion.duration + AppMotion.staggerInterval * 3,
+  );
+  bool _entranceScheduled = false;
 
   @override
   void initState() {
@@ -51,6 +65,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   void dispose() {
     _searchController.dispose();
     _scrollController.dispose();
+    _entrance.dispose();
     super.dispose();
   }
 
@@ -92,14 +107,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
-  void _showProductDetails(Product product) {
+  Widget _productTransition(
+      Product product, Widget Function(VoidCallback) card) {
     final session = widget.session ??
         context.findAncestorStateOfType<HomePageState>()?.widget.session;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ProductDetailScreen(product: product, session: session),
-      ),
+    final colors = Theme.of(context).colorScheme;
+    return OpenContainer<void>(
+      tappable: false,
+      transitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : AppMotion.duration,
+      closedElevation: 0,
+      openElevation: 0,
+      closedColor: colors.surface,
+      openColor: colors.surface,
+      closedShape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      openBuilder: (_, __) =>
+          ProductDetailScreen(product: product, session: session),
+      closedBuilder: (_, open) => HeroMode(enabled: false, child: card(open)),
     );
   }
 
@@ -206,22 +232,33 @@ class _ProductsScreenState extends State<ProductsScreen> {
       AppPermission.viewProductQuantities,
     );
 
-    return Scaffold(
-      body: Column(
-        children: [
-          _buildSearchHeader(provider, canViewPrices),
-          if (provider.isLoading && !provider.isInitialLoading)
-            const LinearProgressIndicator(minHeight: 2),
-          if (provider.errorMessage != null && provider.products.isNotEmpty)
-            _buildRefreshError(provider),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _fetchProducts,
-              displacement: 20,
-              child: _buildContent(provider, canViewPrices, canViewStock),
+    return GuidedTour(
+      accountId: userRole == AppRole.customer
+          ? (session ?? const <String, dynamic>{})['user_id']?.toString()
+          : null,
+      name: 'products',
+      targetCount: 4,
+      replay: widget.guideReplay,
+      ready: widget.guideVisible &&
+          !provider.isInitialLoading &&
+          GuideCoordinator.ready,
+      builder: (context, target) => Scaffold(
+        body: Column(
+          children: [
+            _buildSearchHeader(provider, canViewPrices, target),
+            if (provider.isLoading && !provider.isInitialLoading)
+              const LinearProgressIndicator(minHeight: 2),
+            if (provider.errorMessage != null && provider.products.isNotEmpty)
+              _buildRefreshError(provider),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _fetchProducts,
+                displacement: 20,
+                child: _buildContent(provider, canViewPrices, canViewStock),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -229,6 +266,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   Widget _buildSearchHeader(
     ProductsProvider provider,
     bool canViewPrices,
+    GuideTarget target,
   ) {
     final theme = Theme.of(context);
     final selectedCategory = provider.selectedCategory;
@@ -270,60 +308,72 @@ class _ProductsScreenState extends State<ProductsScreen> {
             Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    onChanged: provider.setSearchQuery,
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      hintText: 'ابحث بالاسم أو الرمز أو OEM',
-                      prefixIcon: const Icon(Icons.search_rounded),
-                      suffixIcon: _searchController.text.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: 'مسح البحث',
-                              icon: const Icon(Icons.close_rounded),
-                              onPressed: () {
-                                _searchController.clear();
-                                provider.setSearchQuery('');
-                              },
-                            ),
-                      filled: true,
-                      fillColor: theme.colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.45),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: theme.colorScheme.outlineVariant
-                              .withValues(alpha: 0.55),
+                  child: target(
+                    0,
+                    'ابحث عن المنتج بالاسم أو الرمز أو رقم OEM.',
+                    TextField(
+                      controller: _searchController,
+                      onChanged: provider.setSearchQuery,
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        hintText: 'ابحث بالاسم أو الرمز أو OEM',
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        suffixIcon: _searchController.text.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'مسح البحث',
+                                icon: const Icon(Icons.close_rounded),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  provider.setSearchQuery('');
+                                },
+                              ),
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.45),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
                         ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(
+                            color: theme.colorScheme.outlineVariant
+                                .withValues(alpha: 0.55),
+                          ),
+                        ),
+                        contentPadding:
+                            const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                _viewModeToggle(provider),
+                target(1, 'بدّل بين عرض البطاقات وعرض السطور حسب تفضيلك.',
+                    _viewModeToggle(provider)),
                 const SizedBox(width: 4),
-                IconButton.filledTonal(
-                  tooltip: 'ترتيب المنتجات',
-                  onPressed: () =>
-                      _showSortBottomSheet(provider, canViewPrices),
-                  icon: const Icon(Icons.sort_rounded),
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(48, 48),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                ),
+                target(
+                    2,
+                    'رتّب النتائج بالاسم أو الخيارات المتاحة لحسابك.',
+                    IconButton.filledTonal(
+                      tooltip: 'ترتيب المنتجات',
+                      onPressed: () =>
+                          _showSortBottomSheet(provider, canViewPrices),
+                      icon: const Icon(Icons.sort_rounded),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    )),
               ],
             ),
             const SizedBox(height: 10),
-            _buildCategoryFilters(provider, expandedCategory),
+            target(
+                3,
+                'اختر مجموعة لتضييق النتائج، ثم افتح المنتج للاطلاع عليه وإضافته للطلب.',
+                _buildCategoryFilters(provider, expandedCategory)),
             if (activeFilters.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -598,6 +648,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
       );
     }
 
+    if (!_entranceScheduled) {
+      _entranceScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _entrance.forward();
+      });
+    }
+
     if (provider.viewMode == ProductViewMode.grid) {
       return LayoutBuilder(
         builder: (context, constraints) {
@@ -629,10 +686,17 @@ class _ProductsScreenState extends State<ProductsScreen> {
             itemCount: provider.products.length,
             itemBuilder: (context, index) {
               final product = provider.products[index];
-              return ProductCardWidget(
-                product: product,
-                canViewPrice: canViewPrices,
-                onTap: () => _showProductDetails(product),
+              return InitialListEntrance(
+                animation: _entrance,
+                index: index,
+                child: _productTransition(
+                  product,
+                  (open) => ProductCardWidget(
+                    product: product,
+                    canViewPrice: canViewPrices,
+                    onTap: open,
+                  ),
+                ),
               );
             },
           );
@@ -655,11 +719,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
       itemCount: provider.products.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) => _buildListTile(
-        provider.products[index],
-        canViewPrices,
-        canViewStock,
-      ),
+      itemBuilder: (context, index) {
+        final product = provider.products[index];
+        return InitialListEntrance(
+          animation: _entrance,
+          index: index,
+          child: _productTransition(
+            product,
+            (open) =>
+                _buildListTile(product, canViewPrices, canViewStock, open),
+          ),
+        );
+      },
     );
   }
 
@@ -699,6 +770,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     Product product,
     bool canViewPrices,
     bool canViewStock,
+    VoidCallback onTap,
   ) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -718,7 +790,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
         side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.65)),
       ),
       child: InkWell(
-        onTap: () => _showProductDetails(product),
+        onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Row(

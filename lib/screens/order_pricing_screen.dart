@@ -67,6 +67,17 @@ class PricingItem {
     }
   }
 
+  static bool needsOfferPriceOverride(
+      List<PricingItem> pricedItems, List<OrderItem> originalItems) {
+    return pricedItems.any((priced) {
+      if (!priced.available) return false;
+      return originalItems.any((original) =>
+          original.code == priced.productId &&
+          original.offer?.price != null &&
+          priced.effectivePrice != original.offer!.price);
+    });
+  }
+
   static String _formatNum(double n) =>
       n % 1 == 0 ? n.toInt().toString() : n.toString();
 
@@ -362,6 +373,28 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
 
     try {
       final provider = Provider.of<OrderDetailProvider>(context, listen: false);
+      final overridesOffer =
+          PricingItem.needsOfferPriceOverride(_pricingItems, provider.items);
+      if (overridesOffer) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('تأكيد تعديل سعر العرض'),
+            content: const Text(
+                'عدّلت سعر بند مرتبط بعرض. السعر اليدوي سيحل محل سعر العرض '
+                'في التسعير المعتمد، وسيُسجّل التعديل؛ لا يضاف حسم تلقائي آخر.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('مراجعة')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('تأكيد السعر اليدوي')),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+      }
 
       // Map local pricing items back to OrderItem models for the provider
       final List<OrderItem> updatedOrderItems = _pricingItems.map((pItem) {
@@ -442,6 +475,7 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
         total: _subtotal, // Currently no extra discount logic shown in UI
         notes: _noteController.text,
         submitForCustomer: submitForCustomer,
+        confirmOfferPriceOverride: overridesOffer,
       );
 
       if (!mounted) return;

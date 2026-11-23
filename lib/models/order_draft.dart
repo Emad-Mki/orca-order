@@ -1,4 +1,5 @@
 import 'product.dart';
+import 'order_offer.dart';
 
 enum SaveStatus { saving, saved, error, none }
 
@@ -11,6 +12,7 @@ class OrderDraft {
   final List<DraftItem> items;
   final String currency;
   final String? customTitle;
+  final String? clientRequestId;
 
   OrderDraft({
     this.id,
@@ -21,6 +23,7 @@ class OrderDraft {
     required this.items,
     this.currency = 'USD',
     this.customTitle,
+    this.clientRequestId,
   });
 
   double get total {
@@ -37,6 +40,8 @@ class DraftItem {
   final double price;
   final String? note;
   final Product? originalProduct; // Snapshot for alerts if changed
+  final OrderOffer? offer;
+  final double? expectedUnitPrice;
 
   DraftItem({
     this.id,
@@ -47,5 +52,7 @@ class DraftItem {
     required this.price,
     this.note,
     this.originalProduct,
+    this.offer,
+    this.expectedUnitPrice,
   });
 }

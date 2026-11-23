@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'dart:math';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
+import '../models/order_offer.dart';
 import '../providers/drafts_provider.dart';
 import '../providers/products_provider.dart';
 import '../providers/orders_provider.dart';
 import '../providers/customer_provider.dart';
+import '../services/api_service.dart';
 import '../utils/permissions.dart';
 import '../utils/guarded_navigation.dart';
 import 'product_detail_screen.dart';
@@ -16,12 +19,18 @@ class NewOrderScreen extends StatefulWidget {
   final Map<String, dynamic>? customer;
   final OrderDraft? draft;
   final Product? initialProduct;
+  final Map<String, dynamic>? initialOffer;
+  final Future<Map<String, dynamic>> Function()? offerLoader;
+  final Future<Map<String, dynamic>> Function()? productLoader;
   const NewOrderScreen(
       {super.key,
       required this.session,
       this.customer,
       this.draft,
-      this.initialProduct});
+      this.initialProduct,
+      this.initialOffer,
+      this.offerLoader,
+      this.productLoader});
   @override
   State<NewOrderScreen> createState() => _NewOrderScreenState();
 }
@@ -35,6 +44,8 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   bool _isSubmitting = false;
   bool _allowPop = false;
   bool _refreshNoticeShown = false;
+  String? _draftLoadError;
+  bool _draftReady = false;
   final _orderNoteCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
   final _customerSearchCtrl = TextEditingController();
@@ -43,6 +54,8 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   List<Customer> _customers = [];
   int? _draftId;
   String? _clientRequestId;
+  Future<bool>? _initialDraftSave;
+  bool get _pendingSubmission => _clientRequestId != null;
 
   bool get _isStaffOrder {
     final role = PermissionHelper.fromString(
@@ -57,6 +70,8 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _draftId = widget.draft?.id;
+    _clientRequestId = widget.draft?.clientRequestId;
+    _draftReady = widget.draft == null;
     _loadCustomerName();
     _loadInitialData();
     _searchCtrl.addListener(_filterProducts);
@@ -74,15 +89,18 @@ class _NewOrderScreenState extends State<NewOrderScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+    if (!_isSubmitting &&
+        !_allowPop &&
+        (state == AppLifecycleState.inactive ||
+            state == AppLifecycleState.paused)) {
       _saveToDraft(immediate: true);
     }
   }
 
   void _onNoteChanged() {
-    if (!_isSubmitting) _clientRequestId = null;
-    if (_draftId != null) _saveToDraft(immediate: false);
+    if (_draftId != null || _initialDraftSave != null) {
+      _saveToDraft(immediate: false);
+    }
   }
 
   void _resetClientRequestId() {
@@ -127,19 +145,57 @@ class _NewOrderScreenState extends State<NewOrderScreen>
 
   Future<void> _loadInitialData() async {
     await Future.wait([_loadProducts(), _loadCustomers()]);
+    if (!mounted) return;
     if (widget.initialProduct != null && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _showAddItemDialog(widget.initialProduct!);
+        if (mounted) {
+          _showAddItemDialog(widget.initialProduct!,
+              offer: widget.initialOffer == null
+                  ? null
+                  : OrderOffer(widget.initialOffer!));
+        }
       });
     }
     if (widget.draft != null) {
+      final missing = widget.draft!.items.where((item) =>
+          item.originalProduct == null &&
+          !_allProducts.any((product) => product.code == item.productCode));
+      if (missing.isNotEmpty) {
+        setState(() {
+          _draftLoadError =
+              'تعذر استعادة بيانات بعض المواد (${missing.map((item) => item.productCode).join('، ')}). '
+              'المسودة الأصلية محفوظة؛ تحقق من الاتصال وأعد فتحها.';
+        });
+        return;
+      }
+      final changedCurrency = widget.draft!.items.where((item) {
+        final product = _pendingSubmission && item.originalProduct != null
+            ? item.originalProduct
+            : _allProducts.cast<Product?>().firstWhere(
+                  (product) => product?.code == item.productCode,
+                  orElse: () => item.originalProduct,
+                );
+        return product != null &&
+            product.currency.toUpperCase() !=
+                widget.draft!.currency.toUpperCase();
+      });
+      if (changedCurrency.isNotEmpty) {
+        setState(() {
+          _draftLoadError =
+              'تغيرت عملة بعض مواد المسودة (${changedCurrency.map((item) => item.productCode).join('، ')}). '
+              'لم تُعدل المسودة؛ يرجى مراجعة بيانات الأسعار قبل إعادة فتحها.';
+        });
+        return;
+      }
       setState(() {
         _cart.clear();
         for (var item in widget.draft!.items) {
-          final p = _allProducts.cast<Product?>().firstWhere(
-                (element) => element?.code == item.productCode,
-                orElse: () => null,
-              );
+          final p = _pendingSubmission && item.originalProduct != null
+              ? item.originalProduct
+              : _allProducts.cast<Product?>().firstWhere(
+                    (element) => element?.code == item.productCode,
+                    orElse: () => null,
+                  );
 
           if (p != null) {
             _cart.add(OrderItem.fromProduct(
@@ -147,7 +203,10 @@ class _NewOrderScreenState extends State<NewOrderScreen>
               quantity: item.quantity,
               selectedUnit: item.unit,
               note: item.note,
-              overridePrice: item.price, // Keep the draft price initially
+              overridePrice:
+                  item.offer?.price ?? item.expectedUnitPrice ?? item.price,
+              offer: item.offer,
+              expectedUnitPrice: item.expectedUnitPrice,
             ));
           } else if (item.originalProduct != null) {
             _cart.add(OrderItem.fromProduct(
@@ -155,15 +214,19 @@ class _NewOrderScreenState extends State<NewOrderScreen>
               quantity: item.quantity,
               selectedUnit: item.unit,
               note: item.note,
-              overridePrice: item.price,
+              overridePrice:
+                  item.offer?.price ?? item.expectedUnitPrice ?? item.price,
+              offer: item.offer,
+              expectedUnitPrice: item.expectedUnitPrice,
             ));
           }
         }
         _orderNoteCtrl.text = widget.draft!.note ?? '';
+        _draftReady = true;
       });
 
       // Check for changes and offer resolution
-      _validateAndResolveConflicts();
+      if (!_pendingSubmission) _validateAndResolveConflicts();
     }
   }
 
@@ -181,6 +244,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     List<Map<String, dynamic>> conflicts = [];
 
     for (var item in widget.draft!.items) {
+      if (item.offer != null || item.expectedUnitPrice != null) continue;
       final current = _allProducts
           .cast<Product?>()
           .firstWhere((p) => p?.code == item.productCode, orElse: () => null);
@@ -192,13 +256,13 @@ class _NewOrderScreenState extends State<NewOrderScreen>
           'message':
               'المنتج ${item.productName} لم يعد متوفراً في القائمة الحالية.',
         });
-      } else if (current.price != item.price) {
+      } else if (current.priceForUnit(item.unit) != item.price) {
         conflicts.add({
           'type': 'price_change',
           'item': item,
           'current': current,
           'message':
-              'تغير سعر ${item.productName} من ${item.price} إلى ${current.price}.',
+              'تغير سعر ${item.productName} (${item.unit}) من ${item.price} إلى ${current.priceForUnit(item.unit) ?? 'غير مضبوط'}.',
         });
       }
     }
@@ -263,14 +327,20 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: OutlinedButton(
-                                      onPressed:
-                                          conflict['resolved'] == 'update'
-                                              ? null
-                                              : () {
-                                                  setDialogState(() =>
-                                                      conflict['resolved'] =
-                                                          'update');
-                                                },
+                                      onPressed: conflict['resolved'] ==
+                                                  'update' ||
+                                              (conflict['current'] as Product)
+                                                      .priceForUnit(
+                                                          (conflict['item']
+                                                                  as DraftItem)
+                                                              .unit) ==
+                                                  null
+                                          ? null
+                                          : () {
+                                              setDialogState(() =>
+                                                  conflict['resolved'] =
+                                                      'update');
+                                            },
                                       style: OutlinedButton.styleFrom(
                                         backgroundColor:
                                             conflict['resolved'] == 'update'
@@ -350,8 +420,11 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                       if (resolution == 'update' &&
                           conflict['type'] == 'price_change') {
                         final currentProduct = conflict['current'] as Product;
-                        final cartIndex =
-                            _cart.indexWhere((i) => i.code == item.productCode);
+                        final cartIndex = _cart.indexWhere((i) =>
+                            i.code == item.productCode &&
+                            (i.selectedUnit ?? i.unit) == item.unit &&
+                            i.priceOffer == item.price &&
+                            (i.note ?? '') == (item.note ?? ''));
                         if (cartIndex != -1) {
                           _cart[cartIndex] = OrderItem.fromProduct(
                             currentProduct,
@@ -361,7 +434,12 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                           );
                         }
                       } else if (resolution == 'remove') {
-                        _cart.removeWhere((i) => i.code == item.productCode);
+                        final index = _cart.indexWhere((i) =>
+                            i.code == item.productCode &&
+                            (i.selectedUnit ?? i.unit) == item.unit &&
+                            i.priceOffer == item.price &&
+                            (i.note ?? '') == (item.note ?? ''));
+                        if (index >= 0) _cart.removeAt(index);
                       }
                       // 'keep' doesn't need changes as we loaded with draft prices
                     }
@@ -379,8 +457,27 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   }
 
   Future<bool> _saveToDraft({bool immediate = true}) async {
-    if (_cart.isEmpty && _orderNoteCtrl.text.isEmpty) return false;
+    if (_draftLoadError != null || !_draftReady) return false;
+    final initialSave = _initialDraftSave;
+    if (initialSave != null) {
+      if (!await initialSave || !mounted) return false;
+    }
+    if (_cart.isEmpty && _orderNoteCtrl.text.isEmpty && _draftId == null) {
+      return false;
+    }
+    if (_draftId == null) {
+      final save = _persistDraft(immediate: true);
+      _initialDraftSave = save;
+      try {
+        return await save;
+      } finally {
+        _initialDraftSave = null;
+      }
+    }
+    return _persistDraft(immediate: immediate);
+  }
 
+  Future<bool> _persistDraft({required bool immediate}) async {
     final draft = OrderDraft(
       id: _draftId,
       customerId: _customerId ?? '',
@@ -395,15 +492,19 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                 quantity: i.quantity ?? 0,
                 price: i.priceOffer ?? 0,
                 note: i.note,
-                originalProduct: _allProducts
-                    .cast<Product?>()
-                    .firstWhere((p) => p?.code == i.code, orElse: () => null),
+                offer: i.offer,
+                expectedUnitPrice: i.expectedUnitPrice,
+                originalProduct: i.product ??
+                    _allProducts.cast<Product?>().firstWhere(
+                        (p) => p?.code == i.code,
+                        orElse: () => null),
               ))
           .toList(),
       currency: _cart.isNotEmpty
           ? _cart.first.currency
           : widget.draft?.currency ?? 'USD',
       customTitle: widget.draft?.customTitle,
+      clientRequestId: _clientRequestId,
     );
 
     try {
@@ -442,6 +543,14 @@ class _NewOrderScreenState extends State<NewOrderScreen>
       return;
     }
     if (_isSubmitting) return;
+    if (_draftLoadError != null || !_draftReady) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+      return;
+    }
+    if (_pendingSubmission) {
+      popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
+      return;
+    }
     if (_cart.isEmpty && _orderNoteCtrl.text.trim().isEmpty) {
       popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
       return;
@@ -458,7 +567,9 @@ class _NewOrderScreenState extends State<NewOrderScreen>
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, 'discard'),
-            child: const Text('تجاهل'),
+            child: Text(widget.draft == null
+                ? 'تجاهل وحذف المسودة'
+                : 'إغلاق مع الاحتفاظ بالمسودة'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, 'draft'),
@@ -468,6 +579,23 @@ class _NewOrderScreenState extends State<NewOrderScreen>
       ),
     );
     if (!mounted || choice == null || choice == 'continue') return;
+    if (choice == 'discard' && widget.draft == null) {
+      final provider = context.read<DraftsProvider>();
+      if (_initialDraftSave != null) {
+        await _initialDraftSave;
+      }
+      if (!mounted) return;
+      if (_draftId != null) {
+        await provider.deleteDraft(_draftId!);
+        if (!mounted) return;
+        if (provider.error != null) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('تعذر حذف المسودة: ${provider.error}'),
+          ));
+          return;
+        }
+      }
+    }
     if (choice == 'draft') {
       final saved = await _saveToDraft();
       if (!mounted) return;
@@ -558,6 +686,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
         builder: (_) => ProductDetailScreen(
           product: product,
           session: widget.session,
+          onAddToOrder: () => _showAddItemDialog(product),
         ),
       ),
     );
@@ -587,7 +716,8 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     }
   }
 
-  void _showAddItemDialog(Product product) {
+  void _showAddItemDialog(Product product, {OrderOffer? offer}) {
+    if (_pendingSubmission || _isSubmitting) return;
     if (_cart.any((item) =>
         item.currency.toUpperCase() != product.currency.toUpperCase())) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -597,7 +727,10 @@ class _NewOrderScreenState extends State<NewOrderScreen>
       );
       return;
     }
-    final qtyCtrl = TextEditingController(text: '1');
+    final qtyCtrl = TextEditingController(
+        text: offer?.minimum != null && offer!.minimum! > 0
+            ? offer.minimum.toString()
+            : '1');
     final noteCtrl = TextEditingController();
     final units = product.availableUnits;
     if (units.isEmpty || product.hasConflictingUnits) {
@@ -612,13 +745,29 @@ class _NewOrderScreenState extends State<NewOrderScreen>
       noteCtrl.dispose();
       return;
     }
-    String selectedUnit =
-        units.contains(product.unit) ? product.unit : units.first;
+    if (offer != null &&
+        (offer.id.isEmpty ||
+            offer.revision.isEmpty ||
+            offer.productCode != product.code ||
+            !units.contains(offer.unit) ||
+            offer.currency.toUpperCase() != product.currency.toUpperCase() ||
+            offer.minimum == null ||
+            offer.minimum! <= 0 ||
+            offer.price == null ||
+            offer.price! <= 0)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('بيانات العرض غير مكتملة أو لا تطابق المنتج')));
+      qtyCtrl.dispose();
+      noteCtrl.dispose();
+      return;
+    }
+    String selectedUnit = offer?.unit ??
+        (units.contains(product.unit) ? product.unit : units.first);
     bool adding = false;
 
-    showModalBottomSheet(
-      context: context,
+    final route = ModalBottomSheetRoute<void>(
       isScrollControlled: true,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -630,199 +779,390 @@ class _NewOrderScreenState extends State<NewOrderScreen>
             right: 16,
             top: 20,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  ProductImageWidget(
-                    imageUrl: product.imageUrl,
-                    width: 60,
-                    height: 60,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(product.name,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 18)),
-                        Text(
-                          product.priceForUnit(selectedUnit) == null
-                              ? 'سعر هذه الوحدة غير مضبوط'
-                              : '${product.currency} ${product.priceForUnit(selectedUnit)}',
-                          style: TextStyle(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    ProductImageWidget(
+                      imageUrl: product.imageUrl,
+                      width: 60,
+                      height: 60,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(product.name,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 18)),
+                          Text(
+                            offer != null
+                                ? 'سعر العرض: ${offer.price} ${offer.currency}'
+                                : product.priceForUnit(selectedUnit) == null
+                                    ? 'سعر هذه الوحدة غير مضبوط'
+                                    : '${product.currency} ${product.priceForUnit(selectedUnit)}',
+                            style: TextStyle(
+                              color: product.priceForUnit(selectedUnit) == null
+                                  ? Theme.of(context).colorScheme.error
+                                  : Theme.of(context).colorScheme.primary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (offer != null)
+                  Text(
+                      'العرض للوحدة ${offer.unit}، الحد الأدنى ${offer.minimum} ${offer.unit}. السعر يحتاج تأكيد الخادم قبل الإرسال.'),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'إنقاص الكمية',
+                            onPressed: () {
+                              final value = double.tryParse(qtyCtrl.text) ?? 1;
+                              setSheetState(() {
+                                qtyCtrl.text = (value - 1)
+                                    .clamp(1, double.infinity)
+                                    .toString();
+                              });
+                            },
+                            icon: const Icon(Icons.remove_circle_outline),
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: qtyCtrl,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              textAlign: TextAlign.center,
+                              decoration: const InputDecoration(
+                                labelText: 'الكمية',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'زيادة الكمية',
+                            onPressed: () {
+                              final value = double.tryParse(qtyCtrl.text) ?? 0;
+                              setSheetState(() {
+                                qtyCtrl.text = (value + 1).toString();
+                              });
+                            },
+                            icon: const Icon(Icons.add_circle_outline),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: units.length == 1 || offer != null
+                          ? InputDecorator(
+                              decoration: const InputDecoration(
+                                labelText: 'الوحدة',
+                                border: OutlineInputBorder(),
+                              ),
+                              child: Text(selectedUnit),
+                            )
+                          : DropdownButtonFormField<String>(
+                              initialValue: selectedUnit,
+                              decoration: const InputDecoration(
+                                labelText: 'الوحدة',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: units
+                                  .map((u) => DropdownMenuItem(
+                                      value: u, child: Text(u)))
+                                  .toList(),
+                              onChanged: (val) => setSheetState(
+                                () => selectedUnit = val ?? selectedUnit,
+                              ),
+                            ),
+                    ),
+                  ],
+                ),
+                if (units.length > 1 && offer == null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      product.priceForUnit(selectedUnit) == null
+                          ? 'لا يمكن إرسال الطلب قبل ضبط سعر هذه الوحدة'
+                          : 'السعر للوحدة المختارة: ${product.priceForUnit(selectedUnit)} ${product.currency}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: product.priceForUnit(selectedUnit) == null
                                 ? Theme.of(context).colorScheme.error
-                                : Theme.of(context).colorScheme.primary,
-                            fontWeight: FontWeight.bold,
+                                : Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                           ),
-                        ),
-                      ],
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: Row(
-                      children: [
-                        IconButton(
-                          tooltip: 'إنقاص الكمية',
-                          onPressed: () {
-                            final value = double.tryParse(qtyCtrl.text) ?? 1;
-                            setSheetState(() {
-                              qtyCtrl.text = (value - 1)
-                                  .clamp(1, double.infinity)
-                                  .toString();
-                            });
-                          },
-                          icon: const Icon(Icons.remove_circle_outline),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: qtyCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            textAlign: TextAlign.center,
-                            decoration: const InputDecoration(
-                              labelText: 'الكمية',
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'زيادة الكمية',
-                          onPressed: () {
-                            final value = double.tryParse(qtyCtrl.text) ?? 0;
-                            setSheetState(() {
-                              qtyCtrl.text = (value + 1).toString();
-                            });
-                          },
-                          icon: const Icon(Icons.add_circle_outline),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: units.length == 1
-                        ? InputDecorator(
-                            decoration: const InputDecoration(
-                              labelText: 'الوحدة',
-                              border: OutlineInputBorder(),
-                            ),
-                            child: Text(units.first),
-                          )
-                        : DropdownButtonFormField<String>(
-                            initialValue: selectedUnit,
-                            decoration: const InputDecoration(
-                              labelText: 'الوحدة',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: units
-                                .map((u) =>
-                                    DropdownMenuItem(value: u, child: Text(u)))
-                                .toList(),
-                            onChanged: (val) => setSheetState(
-                              () => selectedUnit = val ?? selectedUnit,
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-              if (units.length > 1)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    product.priceForUnit(selectedUnit) == null
-                        ? 'لا يمكن إرسال الطلب قبل ضبط سعر هذه الوحدة'
-                        : 'السعر للوحدة المختارة: ${product.priceForUnit(selectedUnit)} ${product.currency}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: product.priceForUnit(selectedUnit) == null
-                              ? Theme.of(context).colorScheme.error
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: noteCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات للمادة (اختياري)',
+                    border: OutlineInputBorder(),
                   ),
                 ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'ملاحظات للمادة (اختياري)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: adding ||
-                          product.priceForUnit(selectedUnit) == null ||
-                          product.factorForUnit(selectedUnit) == null ||
-                          !product.factorForUnit(selectedUnit)!.isFinite ||
-                          product.factorForUnit(selectedUnit)! <= 0
-                      ? null
-                      : () {
-                          final qty = double.tryParse(qtyCtrl.text);
-                          if (qty == null || !qty.isFinite || qty <= 0) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text('أدخل كمية صحيحة أكبر من صفر')),
-                            );
-                            return;
-                          }
-                          setSheetState(() => adding = true);
-                          _resetClientRequestId();
-                          setState(() {
-                            final price = product.priceForUnit(selectedUnit);
-                            final existingIndex = _cart.indexWhere((item) =>
-                                item.code == product.code &&
-                                (item.selectedUnit ?? item.unit) ==
-                                    selectedUnit &&
-                                item.priceOffer == price);
-                            if (existingIndex >= 0) {
-                              final existing = _cart[existingIndex];
-                              _cart[existingIndex] = existing.copyWith(
-                                quantity: (existing.quantity ?? 0) + qty,
-                                quantityRequested:
-                                    (existing.quantity ?? 0) + qty,
-                                note: noteCtrl.text.trim().isEmpty
-                                    ? existing.note
-                                    : noteCtrl.text,
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: adding ||
+                            (offer == null &&
+                                product.priceForUnit(selectedUnit) == null) ||
+                            product.factorForUnit(selectedUnit) == null ||
+                            !product.factorForUnit(selectedUnit)!.isFinite ||
+                            product.factorForUnit(selectedUnit)! <= 0
+                        ? null
+                        : () {
+                            if (adding) return;
+                            final qty = double.tryParse(qtyCtrl.text);
+                            if (qty == null || !qty.isFinite || qty <= 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content:
+                                        Text('أدخل كمية صحيحة أكبر من صفر')),
                               );
-                            } else {
-                              _cart.add(OrderItem.fromProduct(
-                                product,
-                                quantity: qty,
-                                selectedUnit: selectedUnit,
-                                note: noteCtrl.text,
-                              ));
+                              return;
                             }
-                          });
-                          _saveToDraft(immediate: true);
-                          Navigator.pop(context);
-                        },
-                  child: const Text('إضافة للطلب'),
+                            if (offer != null && qty < offer.minimum!) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                    content: Text(
+                                        'الحد الأدنى للعرض ${offer.minimum} ${offer.unit}')),
+                              );
+                              return;
+                            }
+                            setSheetState(() => adding = true);
+                            _resetClientRequestId();
+                            final itemNote = noteCtrl.text.trim();
+                            setState(() {
+                              final price = offer?.price ??
+                                  product.priceForUnit(selectedUnit);
+                              final existingIndex = _cart.indexWhere((item) =>
+                                  item.code == product.code &&
+                                  (item.selectedUnit ?? item.unit) ==
+                                      selectedUnit &&
+                                  item.priceOffer == price &&
+                                  item.expectedUnitPrice == null &&
+                                  item.offer?.id == offer?.id &&
+                                  item.offer?.revision == offer?.revision &&
+                                  (item.offer == null ||
+                                      (offer != null &&
+                                          item.offer!.sameTerms(offer))) &&
+                                  item.currency == product.currency &&
+                                  (item.note ?? '').trim() == itemNote);
+                              if (existingIndex >= 0) {
+                                final existing = _cart[existingIndex];
+                                _cart[existingIndex] = existing.copyWith(
+                                  quantity: (existing.quantity ?? 0) + qty,
+                                  quantityRequested:
+                                      (existing.quantity ?? 0) + qty,
+                                );
+                              } else {
+                                _cart.add(OrderItem.fromProduct(
+                                  product,
+                                  quantity: qty,
+                                  selectedUnit: selectedUnit,
+                                  note: noteCtrl.text,
+                                  overridePrice: offer?.price,
+                                  offer: offer,
+                                ));
+                              }
+                            });
+                            _saveToDraft(immediate: true);
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              SnackBar(
+                                  content: Text(
+                                      'تمت إضافة ${product.name} إلى الطلب')),
+                            );
+                          },
+                    child: const Text('إضافة للطلب'),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
-            ],
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),
-    ).whenComplete(() {
+    );
+    Navigator.of(context).push(route);
+    route.completed.whenComplete(() {
       qtyCtrl.dispose();
       noteCtrl.dispose();
     });
+  }
+
+  Future<bool> _refreshOffersForSubmission({required bool pending}) async {
+    final hasOffers = _cart.any((item) => item.offer != null);
+    final hasExpected = _cart.any((item) => item.expectedUnitPrice != null);
+    if (!hasOffers && !hasExpected) return true;
+    final offers = <String, OrderOffer>{};
+    DateTime? serverTime;
+    if (hasOffers) {
+      final response = await (widget.offerLoader?.call() ??
+          ApiService().post({'action': 'offer_list'}, useCache: false));
+      final payload = response['data'] is Map
+          ? Map<String, dynamic>.from(response['data'])
+          : response;
+      serverTime = DateTime.tryParse((payload['server_time'] ?? '').toString());
+      final rows = payload['offers'];
+      if (serverTime == null || rows is! List) {
+        throw StateError('تعذر التحقق من العروض من الخادم');
+      }
+      for (final row in rows) {
+        if (row is Map) {
+          final offer = OrderOffer(Map<String, dynamic>.from(row));
+          if (offer.id.isNotEmpty) offers[offer.id] = offer;
+        }
+      }
+    }
+    final replacements = <int, OrderItem>{};
+    final messages = <String>[];
+    List<Product>? freshProducts;
+    Future<void> loadFreshProducts() async {
+      if (freshProducts == null) {
+        final response = await (widget.productLoader?.call() ??
+            ApiService().post({'action': 'product_list'},
+                useCache: false, forceRefresh: true));
+        final rows = response['products'] ?? response['data'];
+        if (rows is! List) {
+          throw StateError('تعذر تحديث أسعار المنتجات من الخادم');
+        }
+        freshProducts = rows
+            .whereType<Map>()
+            .map((row) => Product.fromJson(Map<String, dynamic>.from(row)))
+            .toList();
+      }
+    }
+
+    Future<Product> freshProduct(OrderItem item, String unit) async {
+      await loadFreshProducts();
+      final product = freshProducts!.cast<Product?>().firstWhere(
+            (product) => product?.code == item.code,
+            orElse: () => null,
+          );
+      final price = product?.priceForUnit(unit);
+      final factor = product?.factorForUnit(unit);
+      if (product == null ||
+          product.currency.toUpperCase() != item.currency.toUpperCase() ||
+          price == null ||
+          !price.isFinite ||
+          price < 0 ||
+          factor == null ||
+          !factor.isFinite ||
+          factor <= 0) {
+        throw StateError(
+            'تعذر التحقق من السعر العادي أو الوحدة للصنف ${item.name}؛ احذف الصنف أو راجع بياناته.');
+      }
+      return product;
+    }
+
+    // Retry an uncertain request unchanged after refreshing availability.
+    // The server checks its request id before any price validation.
+    if (pending) {
+      if (hasExpected) await loadFreshProducts();
+      return true;
+    }
+    for (var index = 0; index < _cart.length; index++) {
+      final item = _cart[index];
+      final previous = item.offer;
+      final quantity = item.quantity ?? 0;
+      final unit = item.selectedUnit ?? item.unit;
+      if (previous == null) {
+        if (item.expectedUnitPrice == null) continue;
+        final product = await freshProduct(item, unit);
+        final price = product.priceForUnit(unit)!;
+        replacements[index] = OrderItem.fromProduct(product,
+            quantity: quantity,
+            selectedUnit: unit,
+            note: item.note,
+            overridePrice: price,
+            expectedUnitPrice: price);
+        messages.add(
+            '${item.name}: السعر العادي الحالي $price ${item.currency} لكل $unit (السابق ${item.expectedUnitPrice}).');
+        continue;
+      }
+      final current = offers[previous.id];
+      if (current != null &&
+          current.usableFor(
+            code: item.code,
+            selectedUnit: unit,
+            itemCurrency: item.currency,
+            quantity: quantity,
+            serverTime: serverTime!,
+          )) {
+        if (!previous.sameTerms(current)) {
+          replacements[index] =
+              item.copyWith(offer: current, priceOffer: current.price);
+          messages.add(
+              '${item.name}: سعر العرض ${previous.price} ← ${current.price} ${item.currency} لكل $unit (الحد الأدنى ${current.minimum}).');
+        } else {
+          messages.add(
+              '${item.name}: سعر العرض الحالي ${current.price} ${item.currency} لكل $unit (الحد الأدنى ${current.minimum}).');
+        }
+      } else {
+        final product = await freshProduct(item, unit);
+        final regularPrice = product.priceForUnit(unit)!;
+        replacements[index] = OrderItem.fromProduct(product,
+            quantity: quantity,
+            selectedUnit: unit,
+            note: item.note,
+            overridePrice: regularPrice,
+            expectedUnitPrice: regularPrice);
+        final reason = current != null &&
+                current.minimum != null &&
+                quantity < current.minimum!
+            ? 'الكمية أقل من الحد الأدنى ${current.minimum} $unit'
+            : 'العرض متوقف أو منتهي أو تغيرت شروطه';
+        messages.add(
+            '${item.name}: $reason. السعر العادي المقترح $regularPrice ${item.currency} لكل $unit بدلاً من ${previous.price}.');
+      }
+    }
+    if (!mounted) return false;
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(
+            replacements.isEmpty ? 'تأكيد أسعار العروض' : 'تغيرت شروط العرض'),
+        content: SingleChildScrollView(
+          child: Text('${messages.join('\n\n')}\n\n'
+              'هل توافق على الأسعار الموضحة قبل إرسال الطلب؟'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('العودة للمراجعة')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('أوافق على الأسعار')),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted) return false;
+    setState(() {
+      replacements.forEach((index, item) => _cart[index] = item);
+    });
+    return true;
   }
 
   Future<void> _submitOrder({bool fromReviewDialog = false}) async {
@@ -848,7 +1188,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
             backgroundColor: Colors.orange));
         return;
       }
-      if (!item.hasConfiguredUnitPrice) {
+      if (!item.hasConfiguredUnitPrice && item.offer == null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
               'سعر الوحدة ${item.selectedUnit ?? item.unit} غير مضبوط للصنف ${item.name}'),
@@ -868,10 +1208,20 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     setState(() => _isSubmitting = true);
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
+    final ordersProvider = context.read<OrdersProvider>();
+    final draftsProvider = context.read<DraftsProvider>();
 
+    final hadPendingSubmission = _pendingSubmission;
     try {
-      _clientRequestId ??=
-          'REQ-${DateTime.now().microsecondsSinceEpoch}-${_draftId ?? 0}';
+      if (!await _refreshOffersForSubmission(pending: hadPendingSubmission)) {
+        return;
+      }
+      _clientRequestId ??= 'REQ-${DateTime.now().microsecondsSinceEpoch}-'
+          '${Random.secure().nextInt(0x7fffffff)}';
+      if (!await _saveToDraft(immediate: true)) {
+        if (!hadPendingSubmission) _clientRequestId = null;
+        throw Exception('تعذر حفظ المسودة قبل إرسال الطلب');
+      }
       final clientRequestId = _clientRequestId!;
 
       final order = Order(
@@ -905,24 +1255,28 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                   status: 'pending',
                   stockAvailable: i.stockAvailable,
                   customerNote: i.note,
+                  offer: i.offer,
+                  expectedUnitPrice: i.expectedUnitPrice,
                 ))
             .toList(),
       );
 
-      final ordersProvider = context.read<OrdersProvider>();
-      final draftsProvider = context.read<DraftsProvider>();
       final orderId = await ordersProvider.createOrder(
         order,
         customerId: order.customerId,
       );
 
       if (orderId.isNotEmpty) {
+        if (_draftId != null) {
+          await draftsProvider.deleteDraft(_draftId!);
+          if (draftsProvider.error != null) {
+            throw StateError(
+                'تم إرسال الطلب، لكن تعذر حذف مسودته المحلية: ${draftsProvider.error}');
+          }
+        }
         messenger.showSnackBar(const SnackBar(
             content: Text('تم إرسال الطلب بنجاح'),
             backgroundColor: Colors.green));
-        if (_draftId != null) {
-          await draftsProvider.deleteDraft(_draftId!);
-        }
         if (mounted) {
           setState(() => _cart.clear());
           if (fromReviewDialog) {
@@ -938,8 +1292,36 @@ class _NewOrderScreenState extends State<NewOrderScreen>
         throw Exception('فشل الحصول على رقم الطلب');
       }
     } catch (e) {
+      const preWriteErrors = {
+        'CUSTOMER_NOT_FOUND',
+        'INVALID_ORDER_ITEM',
+        'PRODUCT_NOT_FOUND',
+        'PRODUCT_CURRENCY_MISMATCH',
+        'CONFLICTING_PRODUCT_UNITS',
+        'INVALID_PRODUCT_UNIT',
+        'UNIT_CONVERSION_REQUIRED',
+        'UNIT_PRICE_REQUIRED',
+      };
+      if ((!hadPendingSubmission ||
+              (e is ApiException &&
+                  (e.code == 'OFFER_CHANGED' || e.code == 'PRICE_CHANGED'))) &&
+          mounted &&
+          e is ApiException &&
+          (preWriteErrors.contains(e.code) ||
+              e.code == 'OFFER_CHANGED' ||
+              e.code == 'PRICE_CHANGED')) {
+        final pendingId = _clientRequestId;
+        _clientRequestId = null;
+        if (!await _saveToDraft(immediate: true)) {
+          _clientRequestId = pendingId;
+        }
+      }
       messenger.showSnackBar(SnackBar(
-          content: Text('فشل الإرسال: $e'), backgroundColor: Colors.red));
+          content: Text(e is ApiException &&
+                  (e.code == 'OFFER_CHANGED' || e.code == 'PRICE_CHANGED')
+              ? 'تغير ${e.code == 'OFFER_CHANGED' ? 'العرض' : 'السعر'} قبل الإرسال ولم يُحفظ الطلب. أعد المحاولة لمراجعة الأسعار الحالية.'
+              : 'فشل الإرسال: $e'),
+          backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -976,115 +1358,166 @@ class _NewOrderScreenState extends State<NewOrderScreen>
             ),
           ],
         ),
-        body: Column(
-          children: [
-            if (provider.error != null)
-              Container(
-                color: Colors.red.shade100,
-                padding: const EdgeInsets.all(8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline, color: Colors.red),
-                    const SizedBox(width: 8),
-                    Expanded(
-                        child: Text(provider.error!,
-                            style: const TextStyle(color: Colors.red))),
-                    IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => provider.resetStatus()),
-                  ],
+        body: _draftLoadError != null
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(_draftLoadError!, textAlign: TextAlign.center),
                 ),
-              ),
-            // شريط اسم الزبون
-            if (_isStaffOrder) ...[
-              _buildCustomerSelector(matchingCustomers),
-            ] else
-              CustomerInfoBarWidget(customerName: _customerName),
-
-            // حقل البحث
-            SearchFieldWidget(
-              controller: _searchCtrl,
-              hintText: 'ابحث عن منتج...',
-              onChanged: (_) => _filterProducts(),
-            ),
-
-            // قائمة المنتجات
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _filteredProducts.isEmpty
-                      ? const Center(child: Text('لا توجد منتجات'))
-                      : GridView.builder(
-                          padding: const EdgeInsets.all(8),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            childAspectRatio: 0.75,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                          ),
-                          itemCount: _filteredProducts.length,
-                          itemBuilder: (context, index) {
-                            final p = _filteredProducts[index];
-                            return ProductCardWidget(
-                              product: p,
-                              onTap: () => _showAddItemDialog(p),
-                              onLongPress: () => _showProductDetails(p),
-                            );
-                          },
+              )
+            : !_draftReady
+                ? const Center(child: CircularProgressIndicator())
+                : Column(
+                    children: [
+                      if (_pendingSubmission)
+                        const MaterialBanner(
+                          content: Text(
+                              'نتيجة الإرسال غير مؤكدة. أعد المحاولة بالطلب نفسه؛ التعديل معطل حتى تتأكد النتيجة.'),
+                          actions: [SizedBox.shrink()],
                         ),
-            ),
+                      if (provider.error != null)
+                        Container(
+                          color: Colors.red.shade100,
+                          padding: const EdgeInsets.all(8),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.error_outline,
+                                  color: Colors.red),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                  child: Text(provider.error!,
+                                      style:
+                                          const TextStyle(color: Colors.red))),
+                              IconButton(
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () => provider.resetStatus()),
+                            ],
+                          ),
+                        ),
+                      // شريط اسم الزبون
+                      if (_isStaffOrder) ...[
+                        IgnorePointer(
+                          ignoring: _pendingSubmission || _isSubmitting,
+                          child: _buildCustomerSelector(matchingCustomers),
+                        ),
+                      ] else
+                        CustomerInfoBarWidget(customerName: _customerName),
 
-            // منطقة السلة والإرسال
-            CartSummaryWidget(
-              cartItems: _cart,
-              isSubmitting: _isSubmitting,
-              onSaveDraftTap: _saveDraftManually,
-              onReviewTap: () => CartSummaryWidget.showReviewDialog(
-                context: context,
-                cartItems: _cart,
-                onSubmit: () => _submitOrder(fromReviewDialog: true),
-                onRemoveItem: (item) {
-                  _resetClientRequestId();
-                  setState(() => _cart.remove(item));
-                  _saveToDraft(immediate: true);
-                },
-                onUpdateItem: (item, quantity, unit) {
-                  final product = item.product;
-                  if (product == null) return;
-                  final index = _cart.indexOf(item);
-                  if (index < 0) return;
-                  _resetClientRequestId();
-                  setState(() {
-                    _cart[index] = OrderItem.fromProduct(
-                      product,
-                      quantity: quantity,
-                      selectedUnit: unit,
-                      note: item.note,
-                    );
-                  });
-                  _saveToDraft(immediate: true);
-                },
-                isSubmitting: _isSubmitting,
-              ),
-              onSubmitTap: _submitOrder,
-            ),
+                      // حقل البحث
+                      SearchFieldWidget(
+                        controller: _searchCtrl,
+                        hintText: 'ابحث عن منتج...',
+                        onChanged: (_) => _filterProducts(),
+                      ),
 
-            // ملاحظات عامة
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextField(
-                controller: _orderNoteCtrl,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: 'ملاحظات عامة للطلب (اختياري)',
-                  border: OutlineInputBorder(),
-                  filled: true,
-                ),
-              ),
-            ),
-          ],
-        ),
+                      // قائمة المنتجات
+                      Expanded(
+                        child: _loading
+                            ? const Center(child: CircularProgressIndicator())
+                            : _filteredProducts.isEmpty
+                                ? const Center(child: Text('لا توجد منتجات'))
+                                : GridView.builder(
+                                    padding: const EdgeInsets.all(8),
+                                    gridDelegate:
+                                        const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 2,
+                                      childAspectRatio: 0.75,
+                                      crossAxisSpacing: 8,
+                                      mainAxisSpacing: 8,
+                                    ),
+                                    itemCount: _filteredProducts.length,
+                                    itemBuilder: (context, index) {
+                                      final p = _filteredProducts[index];
+                                      return ProductCardWidget(
+                                        product: p,
+                                        onTap: () => _showAddItemDialog(p),
+                                        onLongPress: () =>
+                                            _showProductDetails(p),
+                                      );
+                                    },
+                                  ),
+                      ),
+
+                      // منطقة السلة والإرسال
+                      CartSummaryWidget(
+                        cartItems: _cart,
+                        isSubmitting: _isSubmitting,
+                        onSaveDraftTap: _saveDraftManually,
+                        onReviewTap: () => CartSummaryWidget.showReviewDialog(
+                          context: context,
+                          guideAccountId: PermissionHelper.fromString(
+                                      widget.session['role']?.toString() ??
+                                          '') ==
+                                  AppRole.customer
+                              ? widget.session['user_id']?.toString()
+                              : null,
+                          cartItems: _cart,
+                          onSubmit: () => _submitOrder(fromReviewDialog: true),
+                          onRemoveItem: (item) {
+                            if (_pendingSubmission || _isSubmitting) return;
+                            _resetClientRequestId();
+                            setState(() => _cart.remove(item));
+                            _saveToDraft(immediate: false);
+                          },
+                          onUpdateItem: (item, quantity, unit) {
+                            if (_pendingSubmission || _isSubmitting) return;
+                            final product = item.product;
+                            if (product == null) return;
+                            if (unit != (item.selectedUnit ?? item.unit) &&
+                                (product.priceForUnit(unit) == null ||
+                                    product.factorForUnit(unit) == null ||
+                                    !product.factorForUnit(unit)!.isFinite ||
+                                    product.factorForUnit(unit)! <= 0)) {
+                              ScaffoldMessenger.of(context)
+                                  .showSnackBar(const SnackBar(
+                                content: Text(
+                                    'سعر الوحدة أو معامل تحويلها غير مضبوط'),
+                              ));
+                              return;
+                            }
+                            final index = _cart.indexOf(item);
+                            if (index < 0) return;
+                            _resetClientRequestId();
+                            setState(() {
+                              if (unit == (item.selectedUnit ?? item.unit)) {
+                                item.quantity = quantity;
+                              } else {
+                                _cart[index] = OrderItem.fromProduct(
+                                  product,
+                                  quantity: quantity,
+                                  selectedUnit: unit,
+                                  note: item.note,
+                                  expectedUnitPrice:
+                                      item.expectedUnitPrice == null
+                                          ? null
+                                          : product.priceForUnit(unit),
+                                );
+                              }
+                            });
+                            _saveToDraft(immediate: false);
+                          },
+                          isSubmitting: _isSubmitting,
+                          canEdit: () => !_pendingSubmission && !_isSubmitting,
+                        ),
+                        onSubmitTap: _submitOrder,
+                      ),
+
+                      // ملاحظات عامة
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: TextField(
+                          controller: _orderNoteCtrl,
+                          readOnly: _pendingSubmission || _isSubmitting,
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'ملاحظات عامة للطلب (اختياري)',
+                            border: OutlineInputBorder(),
+                            filled: true,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
       ),
     );
   }
@@ -1106,21 +1539,31 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                 icon: const Icon(Icons.clear),
                 onPressed: () {
                   setState(() {
+                    _resetClientRequestId();
                     _customerId = null;
                     _customerName = null;
                     _customerSearchCtrl.clear();
                   });
+                  if (_draftId != null || _initialDraftSave != null) {
+                    _saveToDraft(immediate: false);
+                  }
                 },
               ),
               border: const OutlineInputBorder(),
             ),
             onChanged: (value) {
+              final changed =
+                  _customerId != null && value.trim() != _customerName;
               setState(() {
                 if (value.trim() != _customerName) {
+                  _resetClientRequestId();
                   _customerId = null;
                   _customerName = null;
                 }
               });
+              if (changed && (_draftId != null || _initialDraftSave != null)) {
+                _saveToDraft(immediate: false);
+              }
             },
           ),
           if (_customerId != null && _customerName != null)
@@ -1158,6 +1601,9 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                         _customerSearchCtrl.selection = TextSelection.collapsed(
                             offset: _customerSearchCtrl.text.length);
                       });
+                      if (_draftId != null || _initialDraftSave != null) {
+                        _saveToDraft(immediate: false);
+                      }
                       FocusScope.of(context).unfocus();
                     },
                   );

@@ -14,11 +14,13 @@ String _formatProductQuantity(double value) => value == value.roundToDouble()
 class ProductDetailScreen extends StatelessWidget {
   final Product product;
   final Map<String, dynamic>? session;
+  final VoidCallback? onAddToOrder;
 
   const ProductDetailScreen({
     super.key,
     required this.product,
     this.session,
+    this.onAddToOrder,
   });
 
   @override
@@ -123,12 +125,11 @@ class ProductDetailScreen extends StatelessWidget {
       ),
       flexibleSpace: FlexibleSpaceBar(
         background: Semantics(
-          button: true,
           label: 'عرض صورة المنتج بالحجم الكامل',
-          child: GestureDetector(
-            onTap: () => _showFullScreenImage(context),
-            child: ColoredBox(
-              color: colors.surfaceContainerHighest.withValues(alpha: 0.32),
+          child: Material(
+            color: colors.surfaceContainerHighest.withValues(alpha: 0.32),
+            child: InkWell(
+              onTap: () => _showFullScreenImage(context),
               child: SafeArea(
                 bottom: false,
                 child: Padding(
@@ -470,6 +471,11 @@ class ProductDetailScreen extends StatelessWidget {
             height: 50,
             child: FilledButton.icon(
               onPressed: () {
+                if (onAddToOrder != null) {
+                  Navigator.pop(context);
+                  onAddToOrder!();
+                  return;
+                }
                 Navigator.push(
                   context,
                   MaterialPageRoute(

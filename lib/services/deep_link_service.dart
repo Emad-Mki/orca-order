@@ -9,15 +9,21 @@ import '../screens/customer_statement_screen.dart';
 import '../screens/sales_invoices_screen.dart';
 import '../services/api_service.dart';
 import '../utils/permissions.dart';
+import 'guide_coordinator.dart';
 
 class DeepLinkService {
   DeepLinkService._();
 
-  static final navigatorKey = GlobalKey<NavigatorState>();
+  static GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
   static Map<String, dynamic>? _pendingNotification;
   static bool navigationReady = false;
 
   static bool get hasPendingNotification => _pendingNotification != null;
+
+  static void resetNavigator() {
+    navigationReady = false;
+    navigatorKey = GlobalKey<NavigatorState>();
+  }
 
   static void clearSession() {
     _pendingNotification = null;
@@ -41,6 +47,7 @@ class DeepLinkService {
 
   static Future<void> openNotification(Map<String, dynamic> data) async {
     _pendingNotification = Map<String, dynamic>.from(data);
+    GuideCoordinator.interrupt();
     await resumePendingNotification();
   }
 

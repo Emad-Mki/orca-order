@@ -76,6 +76,22 @@ void main() {
     );
     expect(await _draftItemCount(database, id), 1);
   });
+
+  test('pending submission identifier survives reload and updates', () async {
+    final id = await repository.saveDraft(OrderDraft(
+      customerId: 'customer-1',
+      customerName: 'Customer',
+      updatedAt: DateTime.now(),
+      items: [
+        _draft(items: [_item('ITEM', 2)]).items.single
+      ],
+      clientRequestId: 'REQ-persisted-123',
+    ));
+    final restored = (await repository.getAllDrafts()).single;
+    expect(restored.id, id);
+    expect(restored.clientRequestId, 'REQ-persisted-123');
+    expect(restored.items.single.quantity, 2);
+  });
 }
 
 Future<int> _draftItemCount(AppDatabase database, int draftId) async {

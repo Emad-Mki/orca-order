@@ -5,7 +5,10 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,10 +35,30 @@ void main() {
     expect(find.text('أوركا أوردر'), findsOneWidget);
     expect(find.text('اسم المستخدم'), findsOneWidget);
     expect(find.text('دخول'), findsOneWidget);
+    expect(
+      find.image(const AssetImage('assets/images/logo.png')),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('settings displays the active account and hides admin actions',
-      (WidgetTester tester) async {
+  testWidgets('in-app logo asset has a transparent background', (tester) async {
+    final data = await rootBundle.load('assets/images/logo.png');
+    await tester.runAsync(() async {
+      final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+      final frame = await codec.getNextFrame();
+      final pixels = await frame.image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      expect(pixels, isNotNull);
+      expect(pixels!.getUint8(3), 0);
+      frame.image.dispose();
+      codec.dispose();
+    });
+  });
+
+  testWidgets('settings displays the active account and hides admin actions', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       ChangeNotifierProvider(
         create: (_) => AppUpdateService(),
@@ -57,8 +80,9 @@ void main() {
     expect(find.text('مزامنة البيانات'), findsNothing);
   });
 
-  testWidgets('settings supports a small RTL screen with larger dark text',
-      (tester) async {
+  testWidgets('settings supports a small RTL screen with larger dark text', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -75,10 +99,9 @@ void main() {
             ),
             child: const Directionality(
               textDirection: TextDirection.rtl,
-              child: SettingsScreen(session: {
-                'username': 'customer',
-                'role': 'customer',
-              }),
+              child: SettingsScreen(
+                session: {'username': 'customer', 'role': 'customer'},
+              ),
             ),
           ),
         ),

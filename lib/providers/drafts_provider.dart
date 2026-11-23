@@ -12,6 +12,7 @@ class DraftsProvider with ChangeNotifier, AsyncSessionNotifier {
   SaveStatus _saveStatus = SaveStatus.none;
   String? _error;
   Timer? _debounceTimer;
+  Future<void> _writeQueue = Future<void>.value();
 
   DraftsProvider(this._localRepository);
 
@@ -19,6 +20,19 @@ class DraftsProvider with ChangeNotifier, AsyncSessionNotifier {
   bool get isLoading => _isLoading;
   SaveStatus get saveStatus => _saveStatus;
   String? get error => _error;
+
+  Future<T> _queueWrite<T>(Future<T> Function() operation) {
+    final scope = _localRepository.draftScope;
+    final result = _writeQueue.then((_) {
+      if (_localRepository.draftScope != scope) {
+        throw StateError('تغير الحساب قبل حفظ المسودة');
+      }
+      return operation();
+    });
+    _writeQueue =
+        result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return result;
+  }
 
   Future<void> loadDrafts() async {
     _isLoading = true;
@@ -40,7 +54,7 @@ class DraftsProvider with ChangeNotifier, AsyncSessionNotifier {
       _saveStatus = SaveStatus.saving;
       notifyListeners();
       try {
-        final id = await _localRepository.saveDraft(draft);
+        final id = await _queueWrite(() => _localRepository.saveDraft(draft));
         _saveStatus = SaveStatus.saved;
         await loadDrafts();
         return id;
@@ -59,13 +73,18 @@ class DraftsProvider with ChangeNotifier, AsyncSessionNotifier {
       _saveStatus = SaveStatus.saving;
       notifyListeners();
       _debounceTimer?.cancel();
+      final scope = _localRepository.draftScope;
       _debounceTimer = Timer(const Duration(seconds: 2), () async {
         try {
-          await _localRepository.saveDraft(draft);
+          if (_localRepository.draftScope != scope) {
+            throw StateError('تغير الحساب قبل حفظ المسودة');
+          }
+          await _queueWrite(() => _localRepository.saveDraft(draft));
           _saveStatus = SaveStatus.saved;
           await loadDrafts();
         } catch (e) {
           _saveStatus = SaveStatus.error;
+          _error = e.toString();
           notifyListeners();
         }
       });
@@ -75,8 +94,9 @@ class DraftsProvider with ChangeNotifier, AsyncSessionNotifier {
 
   Future<void> deleteDraft(int id) async {
     _debounceTimer?.cancel();
+    _error = null;
     try {
-      await _localRepository.deleteDraft(id);
+      await _queueWrite(() => _localRepository.deleteDraft(id));
       await loadDrafts();
     } catch (e) {
       _error = e.toString();
@@ -103,6 +123,7 @@ class DraftsProvider with ChangeNotifier, AsyncSessionNotifier {
           note: note,
           currency: old.currency,
           customTitle: old.customTitle,
+          clientRequestId: old.clientRequestId,
         );
       }
     } catch (e) {

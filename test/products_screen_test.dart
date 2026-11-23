@@ -1,4 +1,5 @@
 import 'package:drift/native.dart';
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orca_order/models/product.dart';
@@ -6,7 +7,9 @@ import 'package:orca_order/providers/products_provider.dart';
 import 'package:orca_order/repositories/local_repository.dart';
 import 'package:orca_order/repositories/product_repository.dart';
 import 'package:orca_order/screens/products_screen.dart';
+import 'package:orca_order/screens/product_detail_screen.dart';
 import 'package:orca_order/services/database_service.dart';
+import 'package:orca_order/services/guide_coordinator.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -39,6 +42,7 @@ void main() {
   });
 
   tearDown(() async {
+    GuideCoordinator.ready = false;
     await database.close();
   });
 
@@ -75,5 +79,84 @@ void main() {
     expect((firstRow.dy - secondRow.dy).abs(), greaterThan(40));
     expect((firstRow.dx - secondRow.dx).abs(), lessThan(2));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('opens one product detail and returns to the catalog',
+      (tester) async {
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+      value: provider,
+      child: const MaterialApp(
+        home: ProductsScreen(session: {'role': 'customer'}),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('منتج 1').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(ProductDetailScreen), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(ProductDetailScreen), findsNothing);
+    expect(find.text('منتج 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reduced motion keeps product navigation available',
+      (tester) async {
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+      value: provider,
+      child: const MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: ProductsScreen(session: {'role': 'customer'}),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final transition = tester.widget<OpenContainer<void>>(
+      find.byType(OpenContainer<void>).first,
+    );
+    expect(transition.transitionDuration, Duration.zero);
+    await tester.tap(find.text('منتج 1').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(ProductDetailScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('product guide runs only when visible and records skip',
+      (tester) async {
+    GuideCoordinator.ready = true;
+    Widget page(bool visible) => ChangeNotifierProvider.value(
+          value: provider,
+          child: MaterialApp(
+            home: ProductsScreen(
+              session: const {'role': 'customer', 'user_id': 'product-user'},
+              guideVisible: visible,
+            ),
+          ),
+        );
+    await tester.pumpWidget(page(false));
+    await tester.pumpAndSettle();
+    expect(find.text('تخطي'), findsNothing);
+    await tester.pumpWidget(page(true));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('تخطي'), findsOneWidget);
+    expect(find.text('ابحث عن المنتج بالاسم أو الرمز أو رقم OEM.'),
+        findsOneWidget);
+    await tester.tap(find.text('التالي'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pump();
+    expect(find.text('بدّل بين عرض البطاقات وعرض السطور حسب تفضيلك.'),
+        findsOneWidget);
+    await tester.tap(find.text('تخطي'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('guide.products.v1.product-user'), 'skipped');
+    await tester.pumpWidget(page(false));
+    await tester.pumpWidget(page(true));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('تخطي'), findsNothing);
   });
 }

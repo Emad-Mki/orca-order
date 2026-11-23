@@ -11,8 +11,9 @@ const H = {
   Users: ['user_id','username','password_hash','salt','full_name','phone','role','customer_id','status','must_change_password','created_at','last_login','city','address','email','customer_type','internal_notes','sales_stock_id','cash_box_id','updated_at','updated_by'],
   Customers: ['customer_id','full_name','company_name','phone','address','province','notes','opening_usd','opening_syp','status','created_at','is_system_record','creation_request_id'],
   Products: ['code','name','image_name','group','origin','unit_1','quantity','minimum_stock','unit_2','factor_2','quantity_2','unit_3','factor_3','quantity_3','display_price','price_2','price_3','currency','notes','updated_at','updated_by','image_file_id','sub_group','oem','availability_status'],
+  Offers: ['offer_id','product_code','title','unit','old_price','offer_price','currency','min_quantity','starts_at','ends_at','note','enabled','sort_order','revision','created_at','created_by','updated_at','updated_by','archived_at','archived_by'],
   Orders: ['order_id', 'order_number', 'customer_id', 'customer_name', 'status', 'currency', 'note', 'accounting_invoice_no', 'is_read', 'is_new', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at', 'created_by', 'subtotal', 'total', 'priced_by', 'priced_at', 'accountant_notes', 'posting_id', 'posted_at', 'matching_status', 'revision_no', 'client_request_id'],
-  Order_Items: ['item_id', 'order_id', 'order_number', 'code', 'name_snapshot', 'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot', 'unit_1', 'unit_2', 'factor_2', 'unit_3', 'factor_3', 'quantity_requested', 'quantity_approved', 'quantity_prepared', 'display_price_snapshot', 'final_price', 'currency', 'status', 'customer_note', 'accountant_note', 'warehouse_note', 'warehouse_package_numbers', 'warehouse_package_type', 'warehouse_custom_package_type', 'total_price'],
+  Order_Items: ['item_id', 'order_id', 'order_number', 'code', 'name_snapshot', 'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot', 'unit_1', 'unit_2', 'factor_2', 'unit_3', 'factor_3', 'quantity_requested', 'quantity_approved', 'quantity_prepared', 'display_price_snapshot', 'final_price', 'currency', 'status', 'customer_note', 'accountant_note', 'warehouse_note', 'warehouse_package_numbers', 'warehouse_package_type', 'warehouse_custom_package_type', 'total_price', 'offer_id', 'offer_revision', 'offer_old_price', 'offer_min_quantity', 'offer_starts_at', 'offer_ends_at'],
   Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type','payment_method','invoice_currency','invoice_equivalent','exchange_rate','reference','client_request_id','change_amount','change_currency','receipt_id','reversal_of'],
   Boxes_Balance: ['box_id','box_name','currency','balance','last_updated'],
   Sham_Cash_Balance: ['id','currency','balance','last_updated'],
@@ -521,7 +522,7 @@ function _withoutFinancialFields(record, role) {
   if (role === 'admin' || role === 'manager' || role === 'accountant') return record;
 
   const financialFields = [
-    'price', 'display_price', 'display_price_snapshot', 'price_offer',
+    'price', 'display_price', 'display_price_snapshot', 'price_offer', 'offer_old_price',
     'price_2', 'price_3',
     'unit_price_snapshot', 'base_price_snapshot',
     'final_price', 'default_price', 'total_price', 'subtotal', 'total',
@@ -582,7 +583,9 @@ function _serializeProductForRole(product, role, imageUrl) {
     item.price_3 = product.price_3 === '' || product.price_3 == null ? null : Number(product.price_3);
   }
   if (['admin', 'manager', 'accountant', 'warehouse', 'salesperson'].includes(userRole)) {
-    item.quantity = Number(product.quantity || product.stock || 0);
+    item.quantity = Number(product.quantity === '' || product.quantity == null
+      ? (product.stock === '' || product.stock == null ? 0 : product.stock)
+      : product.quantity);
     item.stock = item.quantity;
   } else if (userRole === 'customer') {
     item.price = product.display_price === '' || product.display_price == null
@@ -709,7 +712,8 @@ function doGet(e) {
 function doPost(e) {
   const requestId = Utilities.getUuid();
   try {
-    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const rawBody = (e && e.postData && e.postData.contents) || '{}';
+    const body = JSON.parse(rawBody);
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw _apiError('INVALID_REQUEST', 'محتوى الطلب غير صالح', false);
     }
@@ -739,6 +743,7 @@ function doPost(e) {
         false
       );
     }
+    if (action === 'invoice_template_update') _invoiceTemplateRejectDuplicateJsonKeys_(rawBody);
 
     // تسجيل النشاط (Audit Log)
     Logger.log('Action: ' + action + ' by User: ' + user.username);
@@ -749,6 +754,15 @@ function doPost(e) {
         break;
       case 'validate_session':
         result = { valid: true, user: { username: user.username, role: user.role } };
+        break;
+      case 'offer_list':
+        result = _handleOfferList_(body, user);
+        break;
+      case 'offer_save':
+        result = _handleOfferSave_(body, user);
+        break;
+      case 'offer_archive':
+        result = _handleOfferArchive_(body, user);
         break;
       // --- المنتجات ---
       case 'product_list':
@@ -1040,6 +1054,12 @@ function doPost(e) {
         break;
       case 'sales_settings_update':
         result = _handleUpdateSalesSettings(body, user);
+        break;
+      case 'invoice_template_get':
+        result = _handleInvoiceTemplateGet_(body, user);
+        break;
+      case 'invoice_template_update':
+        result = _handleInvoiceTemplateUpdate_(body, user);
         break;
       case 'sales_invoice_create':
         result = _handleCreateSalesInvoiceV2(body, user);
@@ -1612,6 +1632,361 @@ function _handleResetManagedPassword(body, user) {
 // ============================================================
 // 6. المنتجات (Products)
 // ============================================================
+// Offers are separate from product prices and share the order-creation script lock.
+function _offerError_(code, message) {
+  throw _apiError(code, message, false);
+}
+
+function _offerBoolean_(value) {
+  if (value === true || value === 1 || value === '1') return true;
+  if (value === false || value === 0 || value === '0') return false;
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase();
+    if (text === 'true' || text === 'yes') return true;
+    if (text === 'false' || text === 'no') return false;
+  }
+  _offerError_('INVALID_OFFER', 'قيمة منطقية غير صالحة');
+}
+
+function _offerTime_(value) {
+  if (value instanceof Date) {
+    if (Number.isFinite(value.getTime())) return value.toISOString();
+    _offerError_('INVALID_OFFER', 'تاريخ العرض غير صالح');
+  }
+  if (typeof value !== 'string') _offerError_('INVALID_OFFER', 'التاريخ يتطلب توقيت UTC أو إزاحة');
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/);
+  if (!m) _offerError_('INVALID_OFFER', 'التاريخ يتطلب توقيت UTC أو إزاحة');
+  const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
+  const hour = Number(m[4]), minute = Number(m[5]), second = Number(m[6]);
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(year, month - 1, day);
+  calendar.setUTCHours(hour, minute, second, 0);
+  if (month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59 ||
+      calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) {
+    _offerError_('INVALID_OFFER', 'تاريخ العرض غير صالح');
+  }
+  if (m[8] !== 'Z') {
+    const offsetHour = Number(m[8].slice(1, 3)), offsetMinute = Number(m[8].slice(4, 6));
+    if (offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) {
+      _offerError_('INVALID_OFFER', 'إزاحة التوقيت غير صالحة');
+    }
+  }
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) _offerError_('INVALID_OFFER', 'تاريخ العرض غير صالح');
+  return new Date(ms).toISOString();
+}
+
+function _offerStatus_(offer, now) {
+  if (offer.archived_at) return 'archived';
+  if (!_offerBoolean_(offer.enabled)) return 'disabled';
+  const start = Date.parse(_offerTime_(offer.starts_at));
+  const end = Date.parse(_offerTime_(offer.ends_at));
+  if (now < start) return 'scheduled';
+  return now < end ? 'active' : 'expired';
+}
+
+function _offerPublic_(offer, role, now) {
+  const result = {};
+  H.Offers.forEach(key => { result[key] = offer[key] === undefined ? '' : offer[key]; });
+  result.enabled = _offerBoolean_(offer.enabled);
+  ['old_price', 'offer_price', 'min_quantity', 'sort_order', 'revision'].forEach(key => {
+    result[key] = Number(offer[key]);
+  });
+  ['starts_at', 'ends_at', 'created_at', 'updated_at', 'archived_at'].forEach(key => {
+    if (result[key]) result[key] = _offerTime_(result[key]);
+  });
+  result.status = _offerStatus_(offer, now);
+  if (_normalizeRole(role) === 'warehouse') {
+    delete result.old_price;
+    delete result.offer_price;
+  }
+  return result;
+}
+
+function _offerManager_(user) {
+  if (!canPriceOrder_(user.role)) _offerError_('FORBIDDEN', 'ليست لديك صلاحية إدارة العروض');
+}
+
+function _offerNumber_(value, positive) {
+  if ((typeof value !== 'number' && typeof value !== 'string') ||
+      String(value).trim() === '' || !Number.isFinite(Number(value)) ||
+      (positive && Number(value) <= 0)) {
+    _offerError_('INVALID_OFFER', 'قيمة رقمية غير صالحة');
+  }
+  return Number(value);
+}
+
+function _offerText_(value, required) {
+  if (typeof value !== 'string' || (required && !value.trim()) || value.length > 2000) {
+    _offerError_('INVALID_OFFER', 'نص العرض غير صالح');
+  }
+  return value.trim();
+}
+
+function _offerProductPrice_(product, unit) {
+  if (!product) return null;
+  const definitions = [
+    [product.unit_1, product.display_price, 1],
+    [product.unit_2, product.price_2, product.factor_2],
+    [product.unit_3, product.price_3, product.factor_3]
+  ];
+  const matching = definitions.filter(entry => String(entry[0] || '').trim() === unit);
+  if (matching.length !== 1) return null;
+  const price = matching[0][1], factor = Number(matching[0][2]);
+  if (price == null || String(price).trim() === '' || !Number.isFinite(Number(price)) ||
+      Number(price) <= 0 || !Number.isFinite(factor) || factor <= 0) return null;
+  return Number(price);
+}
+
+function _offerMatchesProduct_(offer, product) {
+  const price = _offerProductPrice_(product, String(offer.unit || '').trim());
+  const oldPrice = Number(offer.old_price), offerPrice = Number(offer.offer_price);
+  return price !== null && Number.isFinite(oldPrice) && Number.isFinite(offerPrice) &&
+    offerPrice > 0 && offerPrice < oldPrice && oldPrice <= price &&
+    String(product.currency || 'USD').trim().toUpperCase() === String(offer.currency || '').trim().toUpperCase();
+}
+
+function _offerValidate_(input, product) {
+  const offer = {};
+  offer.product_code = _offerText_(input.product_code, true);
+  offer.title = _offerText_(input.title == null ? '' : input.title, false);
+  offer.note = _offerText_(input.note == null ? '' : input.note, false);
+  offer.unit = _offerText_(input.unit, true);
+  offer.currency = _offerText_(input.currency, true).toUpperCase();
+  if (!product) _offerError_('PRODUCT_NOT_FOUND', 'المنتج غير موجود');
+  if (![product.unit_1, product.unit_2, product.unit_3].map(v => String(v || '').trim()).filter(Boolean).includes(offer.unit)) {
+    _offerError_('INVALID_PRODUCT_UNIT', 'الوحدة غير معرفة للمنتج');
+  }
+  const productCurrency = String(product.currency || 'USD').trim().toUpperCase();
+  if (!['USD', 'SYP'].includes(offer.currency) || offer.currency !== productCurrency) {
+    _offerError_('INVALID_OFFER', 'عملة العرض غير مدعومة أو لا تطابق المنتج');
+  }
+  offer.old_price = _offerNumber_(input.old_price, true);
+  offer.offer_price = _offerNumber_(input.offer_price, true);
+  if (offer.offer_price >= offer.old_price) _offerError_('INVALID_OFFER', 'سعر العرض يجب أن يكون أقل من السعر القديم');
+  if (!_offerMatchesProduct_(offer, product)) {
+    _offerError_('INVALID_OFFER', 'أسعار العرض تتجاوز سعر وحدة المنتج المهيأ أو سعر الوحدة غير صالح');
+  }
+  offer.min_quantity = _offerNumber_(input.min_quantity, true);
+  offer.sort_order = _offerNumber_(input.sort_order == null ? 0 : input.sort_order, false);
+  offer.enabled = _offerBoolean_(input.enabled == null ? true : input.enabled);
+  // API timestamps must be strings with an explicit zone, never local sheet dates.
+  if (typeof input.starts_at !== 'string' || typeof input.ends_at !== 'string') {
+    _offerError_('INVALID_OFFER', 'تاريخ العرض يتطلب توقيت UTC أو إزاحة');
+  }
+  offer.starts_at = _offerTime_(input.starts_at);
+  offer.ends_at = _offerTime_(input.ends_at);
+  if (Date.parse(offer.ends_at) <= Date.parse(offer.starts_at)) _offerError_('INVALID_OFFER', 'نهاية العرض يجب أن تلي بدايته');
+  return offer;
+}
+
+function _offerWrite_(offer, existing) {
+  const sheet = _ss().getSheetByName('Offers');
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0].map(h => String(h).trim());
+  const safe = value => typeof value === 'string' && /^[=+\-@]/.test(value) ? "'" + value : value;
+  if (!existing) {
+    sheet.appendRow(headers.map(key => safe(offer[key] == null ? '' : offer[key])));
+    return;
+  }
+  const idIndex = headers.indexOf('offer_id');
+  const rowIndex = data.findIndex((row, i) => i > 0 && String(row[idIndex]) === String(existing.offer_id));
+  if (rowIndex < 1) _offerError_('OFFER_NOT_FOUND', 'العرض غير موجود');
+  const row = headers.map((key, index) =>
+    Object.prototype.hasOwnProperty.call(offer, key) ? safe(offer[key]) : data[rowIndex][index]);
+  sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([row]);
+}
+
+function _offerAudit_(user, action, before, after, now) {
+  const timestamp = new Date(now).toISOString();
+  _add('Audit_Log', {
+    log_id: Utilities.getUuid(),
+    user_id: user.user_id,
+    action: action,
+    entity: 'Offers',
+    entity_id: after.offer_id,
+    details: JSON.stringify({
+      before: before ? _offerPublic_(before, 'admin', now) : null,
+      after: _offerPublic_(after, 'admin', now)
+    }),
+    created_at: timestamp
+  });
+}
+
+function _handleOfferList_(body, user) {
+  const manage = body.manage == null ? false : _offerBoolean_(body.manage);
+  if (manage) _offerManager_(user);
+  _requireColumns_('Offers', H.Offers);
+  const now = Date.now();
+  const products = new Map((manage ? [] : _all('Products'))
+    .map(product => [String(product.code).trim(), product]));
+  const offers = _all('Offers').filter(offer => manage ||
+    (_offerStatus_(offer, now) === 'active' && _offerMatchesProduct_(offer,
+      products.get(String(offer.product_code).trim()))))
+    .map(offer => _offerPublic_(offer, user.role, now))
+    .sort((a, b) => a.sort_order - b.sort_order || String(a.offer_id).localeCompare(String(b.offer_id)));
+  return { offers: offers, server_time: new Date(now).toISOString() };
+}
+
+function _handleOfferSave_(body, user) {
+  _offerManager_(user);
+  if (!body.offer || typeof body.offer !== 'object' || Array.isArray(body.offer)) _offerError_('INVALID_OFFER', 'بيانات العرض مطلوبة');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw _apiError('BUSY', 'العروض قيد التحديث، حاول مجدداً', true);
+  try {
+    _requireColumns_('Offers', H.Offers);
+    _requireColumns_('Audit_Log', H.Audit_Log);
+    const input = body.offer;
+    const id = String(input.offer_id || '').trim();
+    const offers = _all('Offers');
+    const previous = id ? offers.find(o => String(o.offer_id) === id) : null;
+    if (id && !previous) _offerError_('OFFER_NOT_FOUND', 'العرض غير موجود');
+    if (previous && previous.archived_at) _offerError_('OFFER_ARCHIVED', 'لا يمكن تعديل عرض مؤرشف');
+    if (previous && (!Number.isSafeInteger(Number(input.revision)) || Number(input.revision) !== Number(previous.revision))) {
+      _offerError_('OFFER_CHANGED', 'تغير العرض، يرجى إعادة تحميله');
+    }
+    const merged = Object.assign({}, previous || {}, input);
+    if (previous) {
+      if (!Object.prototype.hasOwnProperty.call(input, 'starts_at')) merged.starts_at = _offerTime_(previous.starts_at);
+      if (!Object.prototype.hasOwnProperty.call(input, 'ends_at')) merged.ends_at = _offerTime_(previous.ends_at);
+    }
+    const code = typeof merged.product_code === 'string' ? merged.product_code.trim() : '';
+    const product = _all('Products').find(p => String(p.code).trim() === code);
+    const offer = _offerValidate_(merged, product);
+    if (offer.enabled) {
+      const overlap = offers.some(other => {
+        if (String(other.offer_id) === id || other.archived_at || !_offerBoolean_(other.enabled) ||
+            String(other.product_code).trim() !== offer.product_code || String(other.unit).trim() !== offer.unit) return false;
+        return Date.parse(_offerTime_(other.starts_at)) < Date.parse(offer.ends_at) &&
+          Date.parse(offer.starts_at) < Date.parse(_offerTime_(other.ends_at));
+      });
+      if (overlap) _offerError_('OFFER_OVERLAP', 'يوجد عرض مفعل متداخل للمنتج والوحدة');
+    }
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    Object.assign(offer, {
+      offer_id: previous ? previous.offer_id : 'OFR-' + Utilities.getUuid(),
+      revision: previous ? Number(previous.revision) + 1 : 1,
+      created_at: previous ? previous.created_at : now,
+      created_by: previous ? previous.created_by : user.user_id,
+      updated_at: now, updated_by: user.user_id,
+      archived_at: '', archived_by: ''
+    });
+    const action = !previous ? 'OFFER_CREATE' :
+      _offerBoolean_(previous.enabled) !== offer.enabled
+        ? (offer.enabled ? 'OFFER_ENABLE' : 'OFFER_DISABLE') : 'OFFER_UPDATE';
+    _offerAudit_(user, action, previous, offer, nowMs);
+    SpreadsheetApp.flush();
+    _offerWrite_(offer, previous);
+    SpreadsheetApp.flush();
+    return { offer: _offerPublic_(offer, user.role, Date.now()) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _handleOfferArchive_(body, user) {
+  _offerManager_(user);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw _apiError('BUSY', 'العروض قيد التحديث، حاول مجدداً', true);
+  try {
+    _requireColumns_('Offers', H.Offers);
+    _requireColumns_('Audit_Log', H.Audit_Log);
+    const id = String(body.offer_id || '').trim();
+    const offer = _all('Offers').find(o => String(o.offer_id) === id);
+    if (!offer) _offerError_('OFFER_NOT_FOUND', 'العرض غير موجود');
+    if (!Number.isSafeInteger(Number(body.revision)) || Number(body.revision) !== Number(offer.revision)) {
+      _offerError_('OFFER_CHANGED', 'تغير العرض، يرجى إعادة تحميله');
+    }
+    if (offer.archived_at) _offerError_('OFFER_ARCHIVED', 'العرض مؤرشف');
+    const before = Object.assign({}, offer);
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    Object.assign(offer, { enabled: false, revision: Number(offer.revision) + 1,
+      updated_at: now, updated_by: user.user_id, archived_at: now, archived_by: user.user_id });
+    _offerAudit_(user, 'OFFER_ARCHIVE', before, offer, nowMs);
+    SpreadsheetApp.flush();
+    _offerWrite_(offer, offer);
+    SpreadsheetApp.flush();
+    return { offer: _offerPublic_(offer, user.role, Date.now()) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _orderOfferClaim_(item, offers, currency, now) {
+  const keys = ['offer_id', 'offer_revision', 'offer_price'];
+  const claimed = keys.some(key => Object.prototype.hasOwnProperty.call(item, key));
+  if (!claimed) return null;
+  const changed = () => _offerError_('OFFER_CHANGED', 'العرض تغير أو لم يعد مؤهلاً، يرجى تحديث الطلب');
+  if (!keys.every(key => Object.prototype.hasOwnProperty.call(item, key)) ||
+      typeof item.offer_id !== 'string' || !item.offer_id.trim() ||
+      !['number', 'string'].includes(typeof item.offer_revision) ||
+      String(item.offer_revision).trim() === '' ||
+      !Number.isSafeInteger(Number(item.offer_revision)) || Number(item.offer_revision) <= 0 ||
+      !['number', 'string'].includes(typeof item.offer_price) || String(item.offer_price).trim() === '' ||
+      !Number.isFinite(Number(item.offer_price))) changed();
+  const offer = offers.find(o => String(o.offer_id) === item.offer_id.trim());
+  if (!offer) changed();
+  try {
+    const quantity = Number(item.quantity ?? item.quantity_requested);
+    if (_offerStatus_(offer, now) !== 'active' ||
+        String(offer.product_code).trim() !== String(item.code || '').trim() ||
+        String(offer.unit).trim() !== String(item.unit || '').trim() ||
+        String(offer.currency).trim().toUpperCase() !== currency ||
+        !Number.isFinite(quantity) || quantity <= 0 ||
+        !Number.isFinite(Number(offer.min_quantity)) || Number(offer.min_quantity) <= 0 ||
+        quantity < Number(offer.min_quantity) ||
+        Number(item.offer_revision) !== Number(offer.revision) ||
+        Number(item.offer_price) !== Number(offer.offer_price) ||
+        !Number.isFinite(Number(offer.offer_price)) || Number(offer.offer_price) <= 0 ||
+        !Number.isFinite(Number(offer.old_price)) || Number(offer.old_price) <= Number(offer.offer_price) ||
+        Date.parse(_offerTime_(offer.ends_at)) <= Date.parse(_offerTime_(offer.starts_at))) changed();
+  } catch (error) {
+    changed();
+  }
+  return offer;
+}
+
+function _validateUnchangedOfferItem_(input, previous, partial) {
+  const reject = () => _offerError_('OFFER_REQUOTE_REQUIRED', 'تغيير بند العرض يتطلب إعادة اقتباس');
+  if (input.action === 'delete') reject();
+  const sameNumber = (a, b) => a != null && b != null &&
+    String(a).trim() !== '' && String(b).trim() !== '' &&
+    Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Number(a) === Number(b);
+  if (!sameNumber(input.quantity, previous.quantity_requested)) reject();
+  if ((!partial || input.unit !== undefined) &&
+      String(input.unit || '').trim() !== String(previous.unit || '').trim()) reject();
+  if (input.code !== undefined && String(input.code).trim() !== String(previous.code).trim()) reject();
+  const snapshotFields = [
+    'offer_id', 'offer_revision', 'offer_old_price', 'offer_min_quantity',
+    'offer_starts_at', 'offer_ends_at', 'unit_price_snapshot', 'display_price_snapshot',
+    'base_price_snapshot', 'unit_factor', 'unit_1', 'unit_2', 'unit_3', 'factor_2', 'factor_3',
+    'quantity_requested', 'quantity_approved', 'final_price', 'total_price', 'currency', 'status'
+  ];
+  const numericFields = ['offer_revision', 'offer_old_price', 'offer_min_quantity',
+    'unit_price_snapshot', 'display_price_snapshot', 'base_price_snapshot', 'unit_factor', 'factor_2', 'factor_3',
+    'quantity_requested', 'quantity_approved', 'final_price', 'total_price'];
+  snapshotFields.forEach(field => {
+    if (!Object.prototype.hasOwnProperty.call(input, field)) return;
+    const a = input[field], b = previous[field];
+    if ((a == null || a === '') && (b == null || b === '')) return;
+    if (field === 'offer_starts_at' || field === 'offer_ends_at') {
+      try {
+        if (_offerTime_(a) !== _offerTime_(b)) reject();
+      } catch (error) {
+        reject();
+      }
+    } else if (numericFields.includes(field) ? !sameNumber(a, b) : String(a) !== String(b)) reject();
+  });
+  if (input.offer_price !== undefined && !sameNumber(input.offer_price, previous.unit_price_snapshot)) reject();
+  if (input.price !== undefined && input.price !== null && input.price !== '') {
+    const price = previous.final_price !== '' && previous.final_price != null
+      ? previous.final_price : previous.unit_price_snapshot;
+    if (!sameNumber(input.price, price)) reject();
+  }
+}
+
 function _handleProducts(body, user) {
   const q = String(body.q || '').toLowerCase();
   const products = _all('Products');
@@ -1961,14 +2336,22 @@ function _handleUpdateProductPrice(body, user) {
   if (!code || !Number.isFinite(price) || price < 0) {
     throw _apiError('INVALID_PRODUCT_PRICE', 'رمز المنتج والسعر الجديد مطلوبان', false);
   }
-  const product = _all('Products').find(item => String(item.code) === code);
-  if (!product) throw _apiError('PRODUCT_NOT_FOUND', 'المنتج غير موجود', false);
-  _updateByField('Products', 'code', code, {
-    display_price: price,
-    currency: body.currency || product.currency || 'USD',
-    updated_at: _now(),
-    updated_by: user.user_id
-  });
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw _apiError('BUSY', 'الأسعار قيد التحديث، حاول مجدداً', true);
+  let product;
+  try {
+    product = _all('Products').find(item => String(item.code) === code);
+    if (!product) throw _apiError('PRODUCT_NOT_FOUND', 'المنتج غير موجود', false);
+    _updateByField('Products', 'code', code, {
+      display_price: price,
+      currency: body.currency || product.currency || 'USD',
+      updated_at: _now(),
+      updated_by: user.user_id
+    });
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
   _sendNotificationToRoles(
     'admin,accountant',
     'تم تحديث سعر منتج',
@@ -3330,14 +3713,27 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
       note: i.customer_note || i.note || ''
     };
 
+    if (i.offer_id) {
+      item.offer_id = i.offer_id;
+      item.offer_revision = Number(i.offer_revision);
+      item.offer_old_price = Number(i.offer_old_price);
+      item.offer_min_quantity = Number(i.offer_min_quantity);
+      item.offer_starts_at = _offerTime_(i.offer_starts_at);
+      item.offer_ends_at = _offerTime_(i.offer_ends_at);
+    }
+
     // تطبيق أمان الحقول على مستوى العناصر
     if (userRole === 'warehouse') {
+      delete item.base_price_snapshot;
+      delete item.unit_price_snapshot;
+      delete item.offer_old_price;
       delete item.price_offer;
       delete item.final_price;
       delete item.default_price;
       delete item.total_price;
       delete item.accountant_note;
     } else if (userRole === 'customer') {
+      delete item.stock_available;
       delete item.accountant_note;
       delete item.warehouse_note;
       delete item.warehouse_package_numbers;
@@ -3627,7 +4023,7 @@ function _handleCreateOrder(body, user) {
       const savedItems = _all('Order_Items').filter(
         item => String(item.order_id) === String(existing.order_id)
       );
-      if (savedItems.length === 0) {
+      if (savedItems.length !== items.length) {
         throw _apiError('ORDER_RETRY_INCOMPLETE', 'تعذر التحقق من اكتمال الطلب السابق؛ يرجى مراجعة الدعم قبل إعادة الإرسال', false);
       }
       return {
@@ -3650,7 +4046,16 @@ function _handleCreateOrder(body, user) {
       productsByCode[String(product.code)] = product;
     });
     const requestedCurrency = String(body.currency || 'USD').trim().toUpperCase();
+    const hasOfferClaims = items.some(item => item && typeof item === 'object' &&
+      ['offer_id', 'offer_revision', 'offer_price'].some(key => Object.prototype.hasOwnProperty.call(item, key)));
+    if (hasOfferClaims) _requireColumns_('Offers', H.Offers);
+    const offers = hasOfferClaims ? _all('Offers') : [];
+    const offerCheckTime = Date.now();
     const validatedItems = items.map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw _apiError('INVALID_ORDER_ITEM', 'بند الطلب غير صالح', false);
+      }
+      const offer = _orderOfferClaim_(item, offers, requestedCurrency, offerCheckTime);
       const qty = Number(item.quantity ?? item.quantity_requested);
       const code = String(item.code || '').trim();
       if (!code || !Number.isFinite(qty) || qty <= 0) {
@@ -3658,12 +4063,17 @@ function _handleCreateOrder(body, user) {
       }
       const product = productsByCode[code];
       if (!product) {
+        if (offer) _offerError_('OFFER_CHANGED', 'المنتج المرتبط بالعرض غير موجود');
         throw _apiError('PRODUCT_NOT_FOUND', 'المنتج غير موجود: ' + code, false);
       }
       const productCurrency =
         String(product.currency || 'USD').trim().toUpperCase();
       if (productCurrency !== requestedCurrency) {
+        if (offer) _offerError_('OFFER_CHANGED', 'عملة المنتج المرتبط بالعرض تغيرت');
         throw _apiError('PRODUCT_CURRENCY_MISMATCH', 'عملة المنتج ' + code + ' لا تطابق عملة الطلب', false);
+      }
+      if (offer && !_offerMatchesProduct_(offer, product)) {
+        _offerError_('OFFER_CHANGED', 'سعر وحدة المنتج المرتبط بالعرض تغير');
       }
       const unit1 = String(product.unit_1 || '').trim();
       const unit2 = String(product.unit_2 || '').trim();
@@ -3684,6 +4094,7 @@ function _handleCreateOrder(body, user) {
       });
       const unit = String(item.unit || unit1).trim();
       if (!unit || ![unit1, unit2, unit3].filter(Boolean).includes(unit)) {
+        if (offer) _offerError_('OFFER_CHANGED', 'وحدة المنتج المرتبط بالعرض تغيرت');
         throw _apiError('INVALID_PRODUCT_UNIT', 'الوحدة المحددة غير معرفة للمنتج ' + code, false);
       }
       let factor = 1;
@@ -3701,9 +4112,21 @@ function _handleCreateOrder(body, user) {
         throw _apiError('UNIT_CONVERSION_REQUIRED', 'معامل تحويل الوحدة غير مضبوط للمنتج ' + code, false);
       }
       if (unitPrice == null || String(unitPrice).trim() === '' || !Number.isFinite(Number(unitPrice))) {
+        if (Object.prototype.hasOwnProperty.call(item, 'expected_unit_price')) {
+          _offerError_('PRICE_CHANGED', 'سعر الوحدة تغير، يرجى تحديث الطلب');
+        }
         throw _apiError('UNIT_PRICE_REQUIRED', 'سعر الوحدة غير مضبوط للمنتج ' + code, false);
       }
-      return { item: item, product: product, code: code, unit: unit, quantity: qty, factor: factor, unitPrice: Number(unitPrice) };
+      const authoritativePrice = offer ? Number(offer.offer_price) : Number(unitPrice);
+      if (Object.prototype.hasOwnProperty.call(item, 'expected_unit_price') &&
+          (!['number', 'string'].includes(typeof item.expected_unit_price) ||
+           String(item.expected_unit_price).trim() === '' ||
+           !Number.isFinite(Number(item.expected_unit_price)) ||
+           Number(item.expected_unit_price) !== authoritativePrice)) {
+        _offerError_('PRICE_CHANGED', 'سعر الوحدة تغير، يرجى تحديث الطلب');
+      }
+      return { item: item, product: product, code: code, unit: unit, quantity: qty, factor: factor,
+        unitPrice: authoritativePrice, offer: offer };
     });
 
     _requireColumns_('Orders', [
@@ -3714,6 +4137,10 @@ function _handleCreateOrder(body, user) {
       'item_id', 'order_id', 'order_number', 'code', 'name_snapshot',
       'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot',
       'quantity_requested', 'display_price_snapshot'
+    ]);
+    if (hasOfferClaims) _requireColumns_('Order_Items', [
+      'offer_id', 'offer_revision', 'offer_old_price', 'offer_min_quantity',
+      'offer_starts_at', 'offer_ends_at'
     ]);
 
     // The global script lock protects both the annual sequence and this write.
@@ -3762,6 +4189,12 @@ function _handleCreateOrder(body, user) {
         factor_3: product.factor_3 || '',
         quantity_requested: validated.quantity,
         display_price_snapshot: validated.unitPrice,
+        offer_id: validated.offer ? validated.offer.offer_id : '',
+        offer_revision: validated.offer ? Number(validated.offer.revision) : '',
+        offer_old_price: validated.offer ? Number(validated.offer.old_price) : '',
+        offer_min_quantity: validated.offer ? Number(validated.offer.min_quantity) : '',
+        offer_starts_at: validated.offer ? _offerTime_(validated.offer.starts_at) : '',
+        offer_ends_at: validated.offer ? _offerTime_(validated.offer.ends_at) : '',
         currency: orderObj.currency,
         status: 'pending',
         customer_note: item.note || item.customer_note || ''
@@ -3772,6 +4205,7 @@ function _handleCreateOrder(body, user) {
     if (itemsSaved === 0) {
       throw new Error('لم يتم حفظ أي بنود في الطلب');
     }
+    if (hasOfferClaims) SpreadsheetApp.flush();
 
     _sendNotificationToRoles(
       'admin,manager,accountant',
@@ -4451,6 +4885,25 @@ function _handleUpdateOrderPricing(body, user) {
   
   try {
     const ss = _ss();
+    const ordersSheet = ss.getSheetByName('Orders');
+    const ordersData = ordersSheet.getDataRange().getValues();
+    const ordersHeaders = ordersData[0].map(h => String(h).trim());
+    const oIdColIdx = ordersHeaders.indexOf('order_id');
+    let currentOrderData = null;
+    for (let i = 1; i < ordersData.length; i++) {
+      if (String(ordersData[i][oIdColIdx]).trim() === orderId) {
+        currentOrderData = Object.fromEntries(ordersHeaders.map((h, j) => [h, ordersData[i][j]]));
+        break;
+      }
+    }
+    if (!currentOrderData) throw new Error('الطلب غير موجود');
+    if (body.last_updated_at && currentOrderData.updated_at) {
+      const clientTs = new Date(body.last_updated_at).getTime();
+      const serverTs = new Date(currentOrderData.updated_at).getTime();
+      if (Math.abs(serverTs - clientTs) > 2000 && serverTs > clientTs) {
+        throw new Error('فشل الحفظ: قام مستخدم آخر بتعديل الطلب بالفعل. يرجى تحديث البيانات والمحاولة مرة أخرى.');
+      }
+    }
 
     // 1. تحديث بنود الطلب في ورقة Order_Items
     const itemsSheet = ss.getSheetByName('Order_Items');
@@ -4466,22 +4919,89 @@ function _handleUpdateOrderPricing(body, user) {
     const accNoteIdx = itemsHeaders.indexOf('accountant_note');
     const totalIdx = itemsHeaders.indexOf('total_price');
     const unitIdx = itemsHeaders.indexOf('unit');
+    const offerIdIdx = itemsHeaders.indexOf('offer_id');
+    const offerMinIdx = itemsHeaders.indexOf('offer_min_quantity');
+    const offerPriceIdx = itemsHeaders.indexOf('unit_price_snapshot');
 
     // تجميع الأكواد الموجودة حالياً لهذا الطلب
     const existingItems = {};
+    const offerItems = new Map();
+    const duplicateCodes = new Set();
     for (let i = 1; i < itemsData.length; i++) {
       if (String(itemsData[i][oIdIdx]).trim() === orderId) {
-        existingItems[String(itemsData[i][codeIdx]).trim()] = i + 1;
+        const code = String(itemsData[i][codeIdx]).trim();
+        if (Object.prototype.hasOwnProperty.call(existingItems, code)) duplicateCodes.add(code);
+        existingItems[code] = i + 1;
+        if (offerIdIdx >= 0 && String(itemsData[i][offerIdIdx] || '').trim()) {
+          offerItems.set(code, itemsData[i]);
+        }
+      }
+    }
+    if (offerItems.size) {
+      const rejectOfferPricing = () => _offerError_('OFFER_REQUOTE_REQUIRED',
+        'تعذر تسعير العرض بشروط مختلفة عن لقطة الطلب؛ يلزم إعادة اقتباس');
+      const overrides = [];
+      if (offerMinIdx < 0 || offerPriceIdx < 0 || unitIdx < 0 ||
+          qtyAppIdx < 0 || finalPriceIdx < 0 || statusIdx < 0 || totalIdx < 0) {
+        rejectOfferPricing();
+      }
+      const submitted = new Map();
+      itemsUpdates.forEach(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) rejectOfferPricing();
+        const code = String(item.productId || item.code || '').trim();
+        if (!code || submitted.has(code)) rejectOfferPricing();
+        submitted.set(code, item);
+      });
+      offerItems.forEach((row, code) => {
+        const item = submitted.get(code);
+        if (duplicateCodes.has(code) || !item) rejectOfferPricing();
+        const unit = String(row[unitIdx] || '').trim();
+        const min = row[offerMinIdx], price = row[offerPriceIdx];
+        if (!unit || min == null || String(min).trim() === '' ||
+            !Number.isFinite(Number(min)) || Number(min) <= 0 ||
+            price == null || String(price).trim() === '' ||
+            !Number.isFinite(Number(price)) || Number(price) <= 0 ||
+            (item.unit != null && String(item.unit).trim() !== '' &&
+             String(item.unit).trim() !== unit)) rejectOfferPricing();
+        if (item.status !== 'unavailable') {
+          const qty = item.quantity_approved !== undefined ? item.quantity_approved : item.quantity;
+          const finalPrice = item.final_price !== undefined ? item.final_price :
+            (item.price !== undefined ? item.price : item.unitPrice);
+          if (!['number', 'string'].includes(typeof qty) || String(qty).trim() === '' || !Number.isFinite(Number(qty)) ||
+              Number(qty) < Number(min) || !['number', 'string'].includes(typeof finalPrice) || String(finalPrice).trim() === '' ||
+              !Number.isFinite(Number(finalPrice)) || Number(finalPrice) < 0 ||
+              (Number(finalPrice) !== Number(price) && body.confirm_offer_price_override !== true)) {
+            rejectOfferPricing();
+          }
+          if (Number(finalPrice) !== Number(price)) {
+            overrides.push({
+              item_id: idIdx >= 0 ? row[idIdx] : '', code: code, unit: unit,
+              offer_id: row[offerIdIdx], offer_price: Number(price),
+              previous_final_price: finalPriceIdx >= 0 && row[finalPriceIdx] !== '' ? Number(row[finalPriceIdx]) : null,
+              final_price: Number(finalPrice), quantity_approved: Number(qty)
+            });
+          }
+        }
+      });
+      if (overrides.length) {
+        _requireColumns_('Audit_Log', H.Audit_Log);
+        _add('Audit_Log', {
+          log_id: Utilities.getUuid(), user_id: user.user_id,
+          action: 'OFFER_PRICE_OVERRIDE', entity: 'Orders', entity_id: orderId,
+          details: JSON.stringify({ overrides: overrides }), created_at: _now()
+        });
+        SpreadsheetApp.flush();
       }
     }
 
     // معالجة التحديثات والإضافات
     itemsUpdates.forEach(item => {
       const code = String(item.productId || item.code || '').trim();
+      const isOfferItem = offerItems.has(code);
       const available = item.status !== 'unavailable';
       const status = available ? 'available' : 'unavailable';
-      const qty = Number(item.quantity_approved !== undefined ? item.quantity_approved : (item.quantity || 0));
-      const price = Number(item.final_price !== undefined ? item.final_price : (item.price || item.unitPrice || 0));
+      const qty = isOfferItem && !available ? 0 : Number(item.quantity_approved !== undefined ? item.quantity_approved : (item.quantity || 0));
+      const price = isOfferItem && !available ? 0 : Number(item.final_price !== undefined ? item.final_price : (item.price || item.unitPrice || 0));
       const note = item.accountant_note || item.note || '';
       const lineTotal = available ? qty * price : 0;
       const unit = item.unit || '';
@@ -4503,29 +5023,31 @@ function _handleUpdateOrderPricing(body, user) {
         if (statusIdx !== -1) itemsSheet.getRange(row, statusIdx + 1).setValue(status);
         if (accNoteIdx !== -1) itemsSheet.getRange(row, accNoteIdx + 1).setValue(note);
         if (totalIdx !== -1) itemsSheet.getRange(row, totalIdx + 1).setValue(lineTotal);
-        if (unitIdx !== -1 && unit) itemsSheet.getRange(row, unitIdx + 1).setValue(unit);
+        if (!isOfferItem && unitIdx !== -1 && unit) itemsSheet.getRange(row, unitIdx + 1).setValue(unit);
 
         // Update new tracking fields if present
-        const ufIdx = itemsHeaders.indexOf('unit_factor');
-        if (ufIdx !== -1 && unitFactor !== undefined) itemsSheet.getRange(row, ufIdx + 1).setValue(unitFactor);
+        if (!isOfferItem) {
+          const ufIdx = itemsHeaders.indexOf('unit_factor');
+          if (ufIdx !== -1 && unitFactor !== undefined) itemsSheet.getRange(row, ufIdx + 1).setValue(unitFactor);
 
-        const bpsIdx = itemsHeaders.indexOf('base_price_snapshot');
-        if (bpsIdx !== -1 && basePriceSnapshot !== undefined) itemsSheet.getRange(row, bpsIdx + 1).setValue(basePriceSnapshot);
+          const bpsIdx = itemsHeaders.indexOf('base_price_snapshot');
+          if (bpsIdx !== -1 && basePriceSnapshot !== undefined) itemsSheet.getRange(row, bpsIdx + 1).setValue(basePriceSnapshot);
 
-        const u1Idx = itemsHeaders.indexOf('unit_1');
-        if (u1Idx !== -1 && unit1 !== undefined) itemsSheet.getRange(row, u1Idx + 1).setValue(unit1);
+          const u1Idx = itemsHeaders.indexOf('unit_1');
+          if (u1Idx !== -1 && unit1 !== undefined) itemsSheet.getRange(row, u1Idx + 1).setValue(unit1);
 
-        const u2Idx = itemsHeaders.indexOf('unit_2');
-        if (u2Idx !== -1 && unit2 !== undefined) itemsSheet.getRange(row, u2Idx + 1).setValue(unit2);
+          const u2Idx = itemsHeaders.indexOf('unit_2');
+          if (u2Idx !== -1 && unit2 !== undefined) itemsSheet.getRange(row, u2Idx + 1).setValue(unit2);
 
-        const f2Idx = itemsHeaders.indexOf('factor_2');
-        if (f2Idx !== -1 && factor2 !== undefined) itemsSheet.getRange(row, f2Idx + 1).setValue(factor2);
+          const f2Idx = itemsHeaders.indexOf('factor_2');
+          if (f2Idx !== -1 && factor2 !== undefined) itemsSheet.getRange(row, f2Idx + 1).setValue(factor2);
 
-        const u3Idx = itemsHeaders.indexOf('unit_3');
-        if (u3Idx !== -1 && unit3 !== undefined) itemsSheet.getRange(row, u3Idx + 1).setValue(unit3);
+          const u3Idx = itemsHeaders.indexOf('unit_3');
+          if (u3Idx !== -1 && unit3 !== undefined) itemsSheet.getRange(row, u3Idx + 1).setValue(unit3);
 
-        const f3Idx = itemsHeaders.indexOf('factor_3');
-        if (f3Idx !== -1 && factor3 !== undefined) itemsSheet.getRange(row, f3Idx + 1).setValue(factor3);
+          const f3Idx = itemsHeaders.indexOf('factor_3');
+          if (f3Idx !== -1 && factor3 !== undefined) itemsSheet.getRange(row, f3Idx + 1).setValue(factor3);
+        }
       } else {
         // إضافة بند جديد
         _add('Order_Items', {
@@ -4566,37 +5088,6 @@ function _handleUpdateOrderPricing(body, user) {
     });
 
     // 2. تحديث الطلب الرئيسي في ورقة Orders
-    const ordersSheet = ss.getSheetByName('Orders');
-    const ordersData = ordersSheet.getDataRange().getValues();
-    const ordersHeaders = ordersData[0].map(h => String(h).trim());
-    const oIdColIdx = ordersHeaders.indexOf('order_id');
-    const updatedAtColIdx = ordersHeaders.indexOf('updated_at');
-
-    let orderRowIndex = -1;
-    let currentOrderData = null;
-    for (let i = 1; i < ordersData.length; i++) {
-      if (String(ordersData[i][oIdColIdx]).trim() === orderId) {
-        orderRowIndex = i + 1;
-        currentOrderData = Object.fromEntries(ordersHeaders.map((h, j) => [h, ordersData[i][j]]));
-        break;
-      }
-    }
-
-    if (orderRowIndex === -1) {
-      throw new Error('الطلب غير موجود');
-    }
-
-    // تحقق من تزامن البيانات (Optimistic Concurrency Control)
-    if (body.last_updated_at && currentOrderData && currentOrderData.updated_at) {
-      const clientTs = new Date(body.last_updated_at).getTime();
-      const serverTs = new Date(currentOrderData.updated_at).getTime();
-
-      // نسمح بفارق بسيط 2 ثانية لتجنب مشاكل التقريب البسيطة
-      if (Math.abs(serverTs - clientTs) > 2000 && serverTs > clientTs) {
-        throw new Error('فشل الحفظ: قام مستخدم آخر بتعديل الطلب بالفعل. يرجى تحديث البيانات والمحاولة مرة أخرى.');
-      }
-    }
-
     const updates = {
       'updated_at': _now(),
       'subtotal': Number(body.subtotal || 0),
@@ -4680,7 +5171,6 @@ function _handleEditOrder(body, user) {
     if (!(customerCanEdit ? customerStatuses : financialStatuses).includes(status)) {
       throw _apiError('INVALID_STATE', 'لا يمكن تعديل الطلب في مرحلته الحالية', false);
     }
-
     const ss = _ss();
     const itemsSheet = ss.getSheetByName('Order_Items');
     const itemsData = itemsSheet.getDataRange().getValues();
@@ -4702,6 +5192,29 @@ function _handleEditOrder(body, user) {
           values: itemsData[rowIndex]
         });
       }
+    }
+    const existingOffers = new Map();
+    existingRows.forEach((row, id) => {
+      const previous = Object.fromEntries(headers.map((header, index) => [header, row.values[index]]));
+      if (String(previous.offer_id || '').trim()) existingOffers.set(id, previous);
+    });
+    const offerIds = new Set();
+    submittedItems.forEach(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw _apiError('INVALID_ORDER_ITEM', 'بند الطلب غير صالح', false);
+      }
+      const id = String(item.item_id || '').trim();
+      const previous = existingOffers.get(id);
+      if (previous) {
+        if (offerIds.has(id)) _offerError_('OFFER_REQUOTE_REQUIRED', 'تكرار بند العرض يتطلب إعادة اقتباس');
+        offerIds.add(id);
+        _validateUnchangedOfferItem_(item, previous, false);
+      } else if (item.offer_id || item.offer_revision || item.offer_price) {
+        _offerError_('OFFER_REQUOTE_REQUIRED', 'إضافة عرض تتطلب إعادة اقتباس');
+      }
+    });
+    if (offerIds.size !== existingOffers.size) {
+      _offerError_('OFFER_REQUOTE_REQUIRED', 'حذف بند العرض يتطلب إعادة اقتباس');
     }
 
     const products = _all('Products');
@@ -4735,6 +5248,22 @@ function _handleEditOrder(body, user) {
         }
       }
 
+      const previousOffer = existingOffers.get(itemId);
+      if (previousOffer) {
+        const approvedQuantity = previousOffer.quantity_approved !== '' && previousOffer.quantity_approved != null
+          ? Number(previousOffer.quantity_approved) : Number(previousOffer.quantity_requested);
+        const savedTotal = previousOffer.total_price !== '' && previousOffer.total_price != null
+          ? Number(previousOffer.total_price) : 0;
+        if (!Number.isFinite(approvedQuantity) || !Number.isFinite(savedTotal)) {
+          _offerError_('OFFER_REQUOTE_REQUIRED', 'لقطة العرض غير صالحة');
+        }
+        return {
+          itemId: itemId, existing: existing, previous: previousOffer, isOffer: true,
+          code: code, quantity: quantity, approvedQuantity: approvedQuantity,
+          unit: unit, status: String(previousOffer.status || '').trim().toLowerCase(),
+          lineTotal: savedTotal, note: item.note === undefined ? null : String(item.note || '').trim()
+        };
+      }
       const product = productsByCode.get(code);
       if (!product) {
         throw _apiError('PRODUCT_NOT_FOUND', 'الصنف غير موجود: ' + code, false);
@@ -4808,10 +5337,8 @@ function _handleEditOrder(body, user) {
         const values = existing.values;
         if (String(values[col('status')] || '').toLowerCase() === 'unavailable') return;
         const code = String(values[col('code')]).trim();
-        const quantity = Number(
-          (col('quantity_approved') >= 0 && values[col('quantity_approved')]) ||
-          values[col('quantity_requested')] || 0
-        );
+        const approved = col('quantity_approved') >= 0 ? values[col('quantity_approved')] : '';
+        const quantity = Number(approved !== '' && approved != null ? approved : values[col('quantity_requested')] || 0);
         previousConsumption[code] = (previousConsumption[code] || 0) + quantity;
       });
     }
@@ -4820,7 +5347,8 @@ function _handleEditOrder(body, user) {
     if (status === 'approved') {
       normalizedItems.forEach(item => {
         if (item.status === 'unavailable') return;
-        nextConsumption[item.code] = (nextConsumption[item.code] || 0) + item.quantity;
+        nextConsumption[item.code] = (nextConsumption[item.code] || 0) +
+          (item.isOffer ? item.approvedQuantity : item.quantity);
       });
 
       const productsSheet = ss.getSheetByName('Products');
@@ -4877,6 +5405,15 @@ function _handleEditOrder(body, user) {
     };
     let subtotal = 0;
     normalizedItems.forEach(item => {
+      if (item.isOffer) {
+        if (item.note !== null) {
+          const noteFields = {};
+          noteFields[customerCanEdit ? 'customer_note' : 'accountant_note'] = item.note;
+          setItemFields(item.existing.rowNumber, noteFields);
+        }
+        if (!customerCanEdit && hasPricing && item.status !== 'unavailable') subtotal += item.lineTotal;
+        return;
+      }
       const fields = {
         code: item.code,
         unit: item.unit,
@@ -4998,78 +5535,91 @@ function _handleUpdateCustomerOrder(body, user) {
   const items = body.items;
   if (!orderId || !Array.isArray(items)) throw new Error('بيانات غير صالحة');
 
-  const order = _all('Orders').find(o => String(o.order_id) === String(orderId));
-  if (!order) throw _apiError('ORDER_NOT_FOUND', 'الطلب غير موجود', false);
-  _requireOrderOwnership(user, order);
-  if (!['pending', 'submitted', 'priced', 'customer_changed'].includes(String(order.status))) {
-    throw _apiError('INVALID_STATE', 'لا يمكن تعديل الطلب في حالته الحالية', false);
-  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) throw _apiError('BUSY', 'النظام مشغول، يرجى المحاولة لاحقاً', true);
+  try {
+    const order = _all('Orders').find(o => String(o.order_id) === String(orderId));
+    if (!order) throw _apiError('ORDER_NOT_FOUND', 'الطلب غير موجود', false);
+    _requireOrderOwnership(user, order);
+    if (!['pending', 'submitted', 'priced', 'customer_changed'].includes(String(order.status))) {
+      throw _apiError('INVALID_STATE', 'لا يمكن تعديل الطلب في حالته الحالية', false);
+    }
+    const ss = _ss();
+    const itemsSheet = ss.getSheetByName('Order_Items');
+    const itemsData = itemsSheet.getDataRange().getValues();
+    const headers = itemsData[0];
+    const itemIdIdx = headers.indexOf('item_id');
+    const qtyReqIdx = headers.indexOf('quantity_requested');
+    const qtyAppIdx = headers.indexOf('quantity_approved');
+    const codeIdx = headers.indexOf('code');
 
-  const ss = _ss();
-  const itemsSheet = ss.getSheetByName('Order_Items');
-  const itemsData = itemsSheet.getDataRange().getValues();
-  const headers = itemsData[0];
-  const itemIdIdx = headers.indexOf('item_id');
-  const qtyReqIdx = headers.indexOf('quantity_requested');
-  const qtyAppIdx = headers.indexOf('quantity_approved');
-  const codeIdx = headers.indexOf('code');
+    let actions = [];
+    items.forEach(upd => {
+      const index = itemsData.findIndex((row, i) =>
+        i > 0 &&
+        String(row[itemIdIdx]) === String(upd.item_id) &&
+        String(row[headers.indexOf('order_id')]) === String(orderId)
+      );
+      if (index < 1) {
+        throw _apiError('ORDER_ITEM_NOT_FOUND', 'أحد بنود الطلب غير موجود', false);
+      }
+      if (!['update', 'delete'].includes(upd.action)) {
+        throw _apiError('INVALID_ORDER_ITEM_ACTION', 'إجراء تعديل البند غير صالح', false);
+      }
+      const previous = Object.fromEntries(headers.map((header, j) => [String(header).trim(), itemsData[index][j]]));
+      if (String(previous.offer_id || '').trim()) {
+        _validateUnchangedOfferItem_(upd, previous, true);
+      }
+      actions.push({ row: index + 1, data: itemsData[index], update: upd });
+    });
 
-  let actions = [];
-  items.forEach(upd => {
-    const index = itemsData.findIndex((row, i) =>
-      i > 0 &&
-      String(row[itemIdIdx]) === String(upd.item_id) &&
-      String(row[headers.indexOf('order_id')]) === String(orderId)
+    const updates = actions.filter(a => a.update.action === 'update');
+    updates.forEach(a => {
+      const approved = Number(a.data[qtyAppIdx] || 0);
+      const requested = Number(a.update.quantity);
+      if (!Number.isFinite(requested) || requested <= 0) {
+        throw _apiError('INVALID_QUANTITY', 'الكمية المطلوبة يجب أن تكون أكبر من صفر', false);
+      }
+      if (requested < approved) {
+        throw new Error('غير مسموح بتخفيض الكمية المصادق عليها للصنف (' + a.data[codeIdx] + '). المعتمد: ' + approved);
+      }
+    });
+    updates.forEach(a => {
+      if (!String(a.data[headers.indexOf('offer_id')] || '').trim()) {
+        itemsSheet.getRange(a.row, qtyReqIdx + 1).setValue(Number(a.update.quantity));
+      }
+    });
+
+    const deletes = actions.filter(a => a.update.action === 'delete').sort((a, b) => b.row - a.row);
+    deletes.forEach(a => {
+      itemsSheet.deleteRow(a.row);
+    });
+
+    _updateStatusInternal(orderId, 'customer_changed');
+
+    _add('Audit_Log', {
+      log_id: Utilities.getUuid(),
+      user_id: user.user_id,
+      action: 'CUSTOMER_UPDATE_ORDER',
+      entity: 'Orders',
+      entity_id: orderId,
+      details: 'الزبون قام بتعديل الطلبية. بنود محدثة: ' + updates.length + ', بنود محذوفة: ' + deletes.length,
+      created_at: _now(),
+    });
+
+    _sendNotificationToRoles(
+      'admin,accountant',
+      'تم تعديل الطلب',
+      'قام العميل بتعديل الطلب #' + (order.order_number || orderId) + ' ويحتاج إلى مراجعة.',
+      'order.customer_updated',
+      orderId,
+      { order_id: orderId, customer_id: order.customer_id }
     );
-    if (index < 1) {
-      throw _apiError('ORDER_ITEM_NOT_FOUND', 'أحد بنود الطلب غير موجود', false);
-    }
-    if (!['update', 'delete'].includes(upd.action)) {
-      throw _apiError('INVALID_ORDER_ITEM_ACTION', 'إجراء تعديل البند غير صالح', false);
-    }
-    actions.push({ row: index + 1, data: itemsData[index], update: upd });
-  });
 
-  const updates = actions.filter(a => a.update.action === 'update');
-  updates.forEach(a => {
-    const approved = Number(a.data[qtyAppIdx] || 0);
-    const requested = Number(a.update.quantity);
-    if (!Number.isFinite(requested) || requested <= 0) {
-      throw _apiError('INVALID_QUANTITY', 'الكمية المطلوبة يجب أن تكون أكبر من صفر', false);
-    }
-    if (requested < approved) {
-      throw new Error('غير مسموح بتخفيض الكمية المصادق عليها للصنف (' + a.data[codeIdx] + '). المعتمد: ' + approved);
-    }
-    itemsSheet.getRange(a.row, qtyReqIdx + 1).setValue(requested);
-  });
-
-  const deletes = actions.filter(a => a.update.action === 'delete').sort((a, b) => b.row - a.row);
-  deletes.forEach(a => {
-    itemsSheet.deleteRow(a.row);
-  });
-
-  _updateStatusInternal(orderId, 'customer_changed');
-
-  _add('Audit_Log', {
-    log_id: Utilities.getUuid(),
-    user_id: user.user_id,
-    action: 'CUSTOMER_UPDATE_ORDER',
-    entity: 'Orders',
-    entity_id: orderId,
-    details: 'الزبون قام بتعديل الطلبية. بنود محدثة: ' + updates.length + ', بنود محذوفة: ' + deletes.length,
-    created_at: _now(),
-  });
-
-  _sendNotificationToRoles(
-    'admin,accountant',
-    'تم تعديل الطلب',
-    'قام العميل بتعديل الطلب #' + (order.order_number || orderId) + ' ويحتاج إلى مراجعة.',
-    'order.customer_updated',
-    orderId,
-    { order_id: orderId, customer_id: order.customer_id }
-  );
-
-  return { success: true };
+    return { success: true };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function _handleConfirmWarehousePrep(body, user) {
@@ -5378,21 +5928,53 @@ function _reserveStock(orderId, userId) {
 function _handleGetCustomers(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
   // preserve inactive records for audit/history; hide only deleted records
-  const customers = _all('Customers').filter(c =>
+  let customers = _all('Customers').filter(c =>
     String(c.status || '').toLowerCase() !== 'deleted'
   );
+  const paginated = body.limit !== undefined;
+  let nextOffset = null;
+  if (paginated) {
+    const limit = Number(body.limit);
+    const offset = Number(body.offset || 0);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 ||
+        !Number.isInteger(offset) || offset < 0) {
+      throw _apiError('INVALID_PAGINATION', 'معلمات صفحات العملاء غير صالحة', false);
+    }
+    const query = String(body.query || '').trim().toLowerCase();
+    const status = String(body.status || 'all').trim().toLowerCase();
+    if (!['all', 'active', 'inactive'].includes(status)) {
+      throw _apiError('INVALID_STATUS', 'حالة العميل غير صالحة', false);
+    }
+    customers = customers.filter(c => {
+      const customerStatus = String(c.status || 'active').toLowerCase();
+      return (status === 'all' || status === customerStatus) &&
+        (!query || [c.full_name, c.company_name, c.phone].join(' ').toLowerCase().includes(query));
+    }).sort((a, b) => String(a.customer_id).localeCompare(String(b.customer_id)));
+    nextOffset = offset + limit < customers.length ? offset + limit : null;
+    customers = customers.slice(offset, offset + limit);
+  }
   const payments = _all('Payments');
   const orders = _all('Orders');
   const orderItems = _all('Order_Items');
   const salesInvoices = _all('Sales_Invoices');
+  const customerTypes = new Map();
+  _all('Users').forEach(account => {
+    if (_normalizeRole(account.role) !== 'customer') return;
+    const id = String(account.customer_id || '');
+    const type = String(account.customer_type || '').trim();
+    if (!id || !type) return;
+    if (!customerTypes.has(id)) customerTypes.set(id, new Set());
+    customerTypes.get(id).add(type);
+  });
 
   return {
+    ...(paginated ? { next_offset: nextOffset } : {}),
     customers: customers.map(c => {
       const customerPayments = payments.filter(p =>
         String(p.customer_id) === String(c.customer_id)
       );
       let totalPaid = 0;
-      let needsFinancialReview = false;
+      let needsFinancialReview = Number(c.opening_syp || 0) !== 0;
       customerPayments.forEach(payment => {
         const equivalent = _paymentEquivalentUsd_(payment);
         if (equivalent === null) {
@@ -5414,8 +5996,11 @@ function _handleGetCustomers(body, user) {
         const currency = String(o.currency || 'USD').toUpperCase();
         const rate = Number(o.exchange_rate || o.rate_syp_per_usd || 0);
         items.forEach(item => {
-          const value = Number(item.final_price || item.display_price_snapshot || 0) *
-            Number(item.quantity_approved || item.quantity_requested || 0);
+          const price = item.final_price === '' || item.final_price == null
+            ? item.display_price_snapshot : item.final_price;
+          const quantity = item.quantity_approved === '' || item.quantity_approved == null
+            ? item.quantity_requested : item.quantity_approved;
+          const value = Number(price || 0) * Number(quantity || 0);
           if (currency === 'USD') totalOrdersValue += value;
           else if (currency === 'SYP' && rate > 0) totalOrdersValue += value / rate;
           else needsFinancialReview = true;
@@ -5444,6 +6029,7 @@ function _handleGetCustomers(body, user) {
         opening_usd: c.opening_usd,
         opening_syp: c.opening_syp,
         status: c.status,
+        login_customer_types: Array.from(customerTypes.get(String(c.customer_id)) || []),
         balance: Number((
           totalOrdersValue + salesInvoiceValue - totalPaid +
           Number(c.opening_usd || 0)
@@ -6132,6 +6718,240 @@ function _setSalesStockQuantity_(userId, code, quantity) {
     );
   }
   sheet.getRange(matchingRows[0].index + 1, quantityIndex + 1).setValue(quantity);
+}
+
+const _INVOICE_TEMPLATE_COLUMNS_ = [
+  'index', 'image', 'name', 'quantity', 'unit', 'price', 'total', 'note',
+];
+
+function _invoiceTemplateRejectDuplicateJsonKeys_(source) {
+  const stack = [];
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '"') {
+      const start = i++;
+      while (i < source.length) {
+        if (source[i] === '\\') {
+          i += 2;
+        } else if (source[i] === '"') {
+          break;
+        } else {
+          i++;
+        }
+      }
+      let next = i + 1;
+      while (/\s/.test(source[next] || '') && next < source.length) next++;
+      if (source[next] === ':' && stack.length && stack[stack.length - 1]) {
+        const key = JSON.parse(source.slice(start, i + 1));
+        const keys = stack[stack.length - 1];
+        if (keys.has(key)) throw _invoiceTemplateInvalid_('مفتاح JSON مكرر');
+        keys.add(key);
+      }
+    } else if (ch === '{') {
+      stack.push(new Set());
+    } else if (ch === '[') {
+      stack.push(null);
+    } else if (ch === '}' || ch === ']') {
+      stack.pop();
+    }
+  }
+}
+const _INVOICE_TEMPLATE_KEYS_ = [
+  'version', 'company_name', 'company_details', 'footer', 'primary_color',
+  'font_size', 'margin', 'columns', 'column_widths', 'show_images', 'show_notes',
+];
+
+function _invoiceTemplateInvalid_(detail) {
+  return _apiError('INVALID_INVOICE_TEMPLATE', 'قالب الفاتورة غير صالح: ' + detail, false);
+}
+
+function _invoiceTemplateSheet_() {
+  const sheet = _ss().getSheetByName('Invoice_Template');
+  if (!sheet) {
+    throw _apiError('INVOICE_TEMPLATE_SHEET_MISSING', 'ورقة Invoice_Template غير موجودة', false);
+  }
+  const rows = sheet.getDataRange().getValues();
+  if (!rows.length || rows[0][0] !== 'key' || rows[0][1] !== 'value' ||
+      rows[0].slice(2).some(value => value !== '')) {
+    throw _invoiceTemplateInvalid_('العناوين يجب أن تكون key و value');
+  }
+  const settings = Object.create(null);
+  const positions = Object.create(null);
+  rows.slice(1).forEach((row, index) => {
+    if (row.every(value => value === '')) return;
+    const key = row[0];
+    if (typeof key !== 'string' ||
+        !_INVOICE_TEMPLATE_KEYS_.concat(['logo_file_id']).includes(key) ||
+        Object.prototype.hasOwnProperty.call(settings, key) ||
+        row.slice(2).some(value => value !== '')) {
+      throw _invoiceTemplateInvalid_('مفتاح مكرر أو غير معروف أو عمود إضافي');
+    }
+    settings[key] = row[1];
+    positions[key] = index;
+  });
+  if (_INVOICE_TEMPLATE_KEYS_.some(key => !Object.prototype.hasOwnProperty.call(settings, key))) {
+    throw _invoiceTemplateInvalid_('بعض المفاتيح المطلوبة مفقودة');
+  }
+  return { sheet: sheet, rows: rows.slice(1), settings: settings, positions: positions };
+}
+
+function _invoiceTemplateValidate_(input, fromSheet) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw _invoiceTemplateInvalid_('template يجب أن يكون كائناً');
+  }
+  const allowed = _INVOICE_TEMPLATE_KEYS_.concat(['logo_file_id']);
+  if (Object.keys(input).some(key => !allowed.includes(key)) ||
+      _INVOICE_TEMPLATE_KEYS_.some(key => !Object.prototype.hasOwnProperty.call(input, key))) {
+    throw _invoiceTemplateInvalid_('المفاتيح المطلوبة أو الإضافية');
+  }
+  function text(key, max, singleLine) {
+    const value = input[key];
+    if (typeof value !== 'string' || value.length > max ||
+        /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value) ||
+        (singleLine && /[\r\n\t\u2028\u2029]/.test(value))) {
+      throw _invoiceTemplateInvalid_(key);
+    }
+    return value;
+  }
+  function number(key, min, max) {
+    let value = input[key];
+    if (fromSheet && typeof value === 'string' &&
+        /^-?(?:\d+\.?\d*|\.\d+)$/.test(value)) value = Number(value);
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+      throw _invoiceTemplateInvalid_(key);
+    }
+    return value;
+  }
+  function bool(key) {
+    const value = input[key];
+    if (value === true || (fromSheet && value === 'true')) return true;
+    if (value === false || (fromSheet && value === 'false')) return false;
+    throw _invoiceTemplateInvalid_(key);
+  }
+  function json(key) {
+    if (!fromSheet) return input[key];
+    if (typeof input[key] !== 'string' || input[key].length > 4096) {
+      throw _invoiceTemplateInvalid_(key);
+    }
+    try {
+      return JSON.parse(input[key]);
+    } catch (error) {
+      throw _invoiceTemplateInvalid_(key);
+    }
+  }
+  const version = text('version', 40);
+  const color = text('primary_color', 7);
+  const logoId = Object.prototype.hasOwnProperty.call(input, 'logo_file_id')
+    ? text('logo_file_id', 200) : '';
+  if (!/^[A-Za-z0-9._-]{1,40}$/.test(version) ||
+      !/^#[0-9a-fA-F]{6}$/.test(color) ||
+      (logoId && !/^[A-Za-z0-9_-]+$/.test(logoId))) {
+    throw _invoiceTemplateInvalid_('version أو primary_color أو logo_file_id');
+  }
+  const columns = json('columns');
+  if (!Array.isArray(columns) || columns.length !== _INVOICE_TEMPLATE_COLUMNS_.length ||
+      columns.some(key => !_INVOICE_TEMPLATE_COLUMNS_.includes(key)) ||
+      new Set(columns).size !== columns.length) {
+    throw _invoiceTemplateInvalid_('columns');
+  }
+  const widths = json('column_widths');
+  if (!widths || typeof widths !== 'object' || Array.isArray(widths) ||
+      Object.keys(widths).length !== _INVOICE_TEMPLATE_COLUMNS_.length ||
+      _INVOICE_TEMPLATE_COLUMNS_.some(key =>
+        !Object.prototype.hasOwnProperty.call(widths, key) ||
+        typeof widths[key] !== 'number' || !Number.isFinite(widths[key]) ||
+        widths[key] < 0.4 || widths[key] > 4)) {
+    throw _invoiceTemplateInvalid_('column_widths');
+  }
+  if (fromSheet) {
+    _invoiceTemplateRejectDuplicateJsonKeys_(input.column_widths);
+  }
+  const margin = number('margin', 20, 50);
+  const showImages = bool('show_images');
+  const showNotes = bool('show_notes');
+  const visible = columns.filter(key =>
+    (key !== 'image' || showImages) && (key !== 'note' || showNotes)
+  );
+  const totalWidth = visible.reduce((sum, key) => sum + widths[key], 0);
+  const availableWidth = 595.2756 - 2 * margin;
+  if (visible.some(key => availableWidth * widths[key] / totalWidth < 28 - 1e-9)) {
+    throw _invoiceTemplateInvalid_('عرض العمود الظاهر أقل من 28 نقطة');
+  }
+  return {
+    version: version,
+    company_name: text('company_name', 200, true),
+    company_details: text('company_details', 2000),
+    footer: text('footer', 120, true),
+    primary_color: color,
+    font_size: number('font_size', 8, 14),
+    margin: margin,
+    columns: columns,
+    column_widths: widths,
+    show_images: showImages,
+    show_notes: showNotes,
+    logo_file_id: logoId,
+  };
+}
+
+function _invoiceTemplateResponse_(settings) {
+  const template = Object.assign({}, settings);
+  delete template.logo_file_id;
+  if (settings.logo_file_id) {
+    let bytes;
+    try {
+      const file = DriveApp.getFileById(settings.logo_file_id);
+      if (file.getSize() > 1024 * 1024) throw new Error('size');
+      const blob = file.getBlob();
+      const mime = blob.getContentType();
+      bytes = blob.getBytes();
+      const png = bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10]
+        .every((value, index) => (bytes[index] & 255) === value);
+      const jpeg = bytes.length >= 3 && (bytes[0] & 255) === 255 &&
+        (bytes[1] & 255) === 216 && (bytes[2] & 255) === 255;
+      if (bytes.length > 1024 * 1024 ||
+          !((mime === 'image/png' && png) || (mime === 'image/jpeg' && jpeg))) {
+        throw new Error('format');
+      }
+    } catch (error) {
+      throw _apiError('INVALID_INVOICE_TEMPLATE_LOGO', 'تعذر قراءة شعار PNG/JPEG خاص بحجم لا يتجاوز 1MB', false);
+    }
+    template.logo_base64 = Utilities.base64Encode(bytes);
+  }
+  return { template: template };
+}
+
+function _handleInvoiceTemplateGet_(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant', 'salesperson']);
+  const data = _invoiceTemplateSheet_();
+  return _invoiceTemplateResponse_(_invoiceTemplateValidate_(data.settings, true));
+}
+
+function _handleInvoiceTemplateUpdate_(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  const settings = _invoiceTemplateValidate_(body.template, false);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    throw _apiError('BUSY', 'قالب الفاتورة قيد التحديث، حاول مجدداً', true);
+  }
+  try {
+    const data = _invoiceTemplateSheet_();
+    const response = _invoiceTemplateResponse_(settings);
+    if (!Object.prototype.hasOwnProperty.call(data.positions, 'logo_file_id') && settings.logo_file_id) {
+      data.positions.logo_file_id = data.rows.length;
+      data.rows.push(['logo_file_id', '']);
+    }
+    Object.keys(data.positions).forEach(key => {
+      const value = settings[key];
+      const serialized = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      data.rows[data.positions[key]] = [key, "'" + serialized];
+    });
+    if (data.rows.length) data.sheet.getRange(2, 1, data.rows.length, 2).setValues(
+      data.rows.map(row => [row[0], row[1]])
+    );
+    return response;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function _salesProperty_(key) {
@@ -7762,7 +8582,8 @@ function _handleSalesSummary(body, user) {
 }
 
 function _paymentEquivalentUsd_(payment) {
-  if (payment.invoice_equivalent !== '' &&
+  if (String(payment.invoice_currency || '').toUpperCase() === 'USD' &&
+      payment.invoice_equivalent !== '' &&
       payment.invoice_equivalent !== null &&
       payment.invoice_equivalent !== undefined) {
     const saved = Number(payment.invoice_equivalent);
@@ -9612,7 +10433,19 @@ function _handleGetCustomerStatement(body, user) {
 
   let statement = [];
   const openingUsd = Number(customer.opening_usd || 0);
-  let needsManualReview = false;
+  let needsManualReview = Number(customer.opening_syp || 0) !== 0;
+
+  if (needsManualReview) {
+    statement.push({
+      date: customer.created_at || _now(),
+      type: 'رصيد افتتاحي بعملة تحتاج مراجعة',
+      ref: '-',
+      debit: 0,
+      credit: 0,
+      note: 'يوجد رصيد افتتاحي بالليرة دون سعر صرف تاريخي محفوظ.',
+      needs_manual_review: true,
+    });
+  }
 
   if (openingUsd !== 0) {
     statement.push({
@@ -9631,8 +10464,11 @@ function _handleGetCustomerStatement(body, user) {
     const currency = String(o.currency || 'USD').toUpperCase();
     const rate = Number(o.exchange_rate || o.rate_syp_per_usd || 0);
     items.forEach(item => {
-      total += Number(item.final_price || item.display_price_snapshot || 0) *
-        Number(item.quantity_approved || item.quantity_requested || 0);
+      const price = item.final_price === '' || item.final_price == null
+        ? item.display_price_snapshot : item.final_price;
+      const quantity = item.quantity_approved === '' || item.quantity_approved == null
+        ? item.quantity_requested : item.quantity_approved;
+      total += Number(price || 0) * Number(quantity || 0);
     });
     if (currency === 'SYP') {
       if (Number.isFinite(rate) && rate > 0) total /= rate;
@@ -9649,6 +10485,18 @@ function _handleGetCustomerStatement(body, user) {
         });
         return;
       }
+    } else if (currency !== 'USD') {
+      needsManualReview = true;
+      statement.push({
+        date: o.created_at,
+        type: 'طلب بعملة تاريخية تحتاج مراجعة',
+        ref: o.order_id,
+        debit: 0,
+        credit: 0,
+        note: 'عملة الطلب غير مدعومة في كشف الدولار.',
+        needs_manual_review: true,
+      });
+      return;
     }
     statement.push({
       date: o.created_at,
@@ -9799,7 +10647,9 @@ function _handleExportStatement(body, user) {
   });
 
   html += '</tbody></table>';
-  html += '<div style="margin-top: 30px; text-align: left;"><h3>الرصيد الإجمالي: ' + res.finalBalance + ' $</h3></div>';
+  html += res.needs_manual_review
+    ? '<div style="margin-top: 30px;"><h3>الرصيد يحتاج إلى مراجعة؛ الأرصدة المعروضة جزئية.</h3></div>'
+    : '<div style="margin-top: 30px; text-align: left;"><h3>الرصيد الإجمالي: ' + res.finalBalance + ' $</h3></div>';
   html += '<div style="margin-top: 50px; text-align: center; color: #888; font-size: 10px;">';
   html += 'تم الإنشاء بواسطة نظام أوركا أوردر - ' + new Date().toLocaleString('ar-EG');
   html += '</div></div>';

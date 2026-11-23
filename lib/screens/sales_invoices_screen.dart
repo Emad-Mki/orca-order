@@ -1,18 +1,25 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../app_config.dart';
 import '../providers/products_provider.dart';
 import '../services/api_service.dart';
+import '../services/invoice_product_images.dart';
+import '../services/sales_invoice_store.dart';
 import '../utils/number_utils.dart';
 import '../utils/permissions.dart';
 import '../widgets/product_image_widget.dart';
 import 'sales_invoice_screen.dart';
+import 'sales_invoice_pdf_screen.dart';
 
 class SalesInvoicesScreen extends StatefulWidget {
   final Map<String, dynamic> session;
-  const SalesInvoicesScreen({super.key, required this.session});
+  final String? customerId;
+  const SalesInvoicesScreen(
+      {super.key, required this.session, this.customerId});
 
   @override
   State<SalesInvoicesScreen> createState() => _SalesInvoicesScreenState();
@@ -25,6 +32,9 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
   List<Map<String, dynamic>> _salespeople = [];
   Map<String, dynamic> _summary = {};
   bool _loading = true;
+  bool _offline = false;
+  String? _storageError;
+  int _loadGeneration = 0;
   String? _error;
   DateTimeRange? _dateRange;
   String _paymentFilter = 'all';
@@ -38,7 +48,23 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
   @override
   void initState() {
     super.initState();
+    _customerFilter = widget.customerId;
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant SalesInvoicesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session['user_id'] != widget.session['user_id'] ||
+        oldWidget.session['id'] != widget.session['id'] ||
+        oldWidget.session['role'] != widget.session['role'] ||
+        oldWidget.customerId != widget.customerId) {
+      _customers = [];
+      _salespeople = [];
+      _sellerFilter = null;
+      _customerFilter = widget.customerId;
+      _load();
+    }
   }
 
   @override
@@ -48,78 +74,255 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final api = ApiService();
+    final token = api.token;
+    final account = (widget.session['user_id'] ?? widget.session['id'])
+            ?.toString()
+            .trim() ??
+        '';
+    final role = _role.name;
+    final environment = '${AppConfig.environmentName}:${AppConfig.apiUrl}';
+    bool authorized() {
+      final current = api.currentUser;
+      return token != null &&
+          token.isNotEmpty &&
+          api.token == token &&
+          (current?['user_id'] ?? current?['id'])?.toString().trim() ==
+              account &&
+          PermissionHelper.fromString(current?['role']?.toString() ?? '')
+                  .name ==
+              role &&
+          '${AppConfig.environmentName}:${AppConfig.apiUrl}' == environment &&
+          {'admin', 'accountant', 'manager', 'salesperson'}.contains(role) &&
+          account.isNotEmpty;
+    }
+
+    final query = _search.text;
+    final from = _dateRange?.start;
+    final to = _dateRange == null
+        ? null
+        : DateTime(_dateRange!.end.year, _dateRange!.end.month,
+            _dateRange!.end.day, 23, 59, 59);
+    final payment = _paymentFilter == 'all' ? null : _paymentFilter;
+    final status = _statusFilter == 'all' ? null : _statusFilter;
+    final financial = _financialFilter == 'all' ? null : _financialFilter;
+    final seller = _sellerFilter;
+    final customer = _customerFilter;
     setState(() {
       _loading = true;
       _error = null;
+      _storageError = null;
+      _offline = false;
+      _invoices = [];
+      _summary = {};
     });
+    bool active() => mounted && generation == _loadGeneration && authorized();
+    if (!authorized()) {
+      if (mounted && generation == _loadGeneration) {
+        setState(() {
+          _error = 'الجلسة غير صالحة لعرض الفواتير';
+          _loading = false;
+        });
+      }
+      return;
+    }
+    final store = SalesInvoiceStore(
+        environment: environment, userId: account, role: role);
     try {
-      final ancillary = _canFilterAllSales
-          ? await Future.wait([
-              ApiService().sales.getCustomers(),
-              ApiService().sales.getSalespeople(),
-            ])
-          : <dynamic>[];
-      final results = await Future.wait([
-        ApiService().sales.getInvoices(
-              query: _search.text,
-              fromDate: _dateRange?.start.toIso8601String(),
-              toDate: _dateRange == null
-                  ? null
-                  : DateTime(
-                      _dateRange!.end.year,
-                      _dateRange!.end.month,
-                      _dateRange!.end.day,
-                      23,
-                      59,
-                      59,
-                    ).toIso8601String(),
-              paymentMethod: _paymentFilter == 'all' ? null : _paymentFilter,
-              status: _statusFilter == 'all' ? null : _statusFilter,
-              financialStatus:
-                  _financialFilter == 'all' ? null : _financialFilter,
-              sellerId: _sellerFilter,
-              customerId: _customerFilter,
-            ),
-        ApiService().sales.getSummary(
-              fromDate: _dateRange?.start.toIso8601String(),
-              toDate: _dateRange == null
-                  ? null
-                  : DateTime(
-                      _dateRange!.end.year,
-                      _dateRange!.end.month,
-                      _dateRange!.end.day,
-                      23,
-                      59,
-                      59,
-                    ).toIso8601String(),
-              sellerId: _sellerFilter,
-              customerId: _customerFilter,
-            ),
-      ]);
-      final invoiceRows = results[0]['invoices'];
+      final cached = await store.list(
+        query: query,
+        fromDate: from,
+        toDate: to,
+        status: status,
+        financialStatus: financial,
+        paymentMethod: payment,
+        sellerId: seller,
+        customerId: customer,
+      );
+      final choices = _canFilterAllSales ? await store.list() : cached;
+      if (!active()) return;
+      if (cached.isNotEmpty) {
+        setState(() {
+          _invoices = cached;
+          _offline = true;
+          _loading = false;
+          _addOfflineFilterChoices(choices);
+        });
+      }
+    } catch (error) {
+      debugPrint('Invoice cache unavailable: ${error.runtimeType}');
+      if (active()) {
+        setState(() => _storageError = 'تعذرت قراءة الفواتير المحفوظة');
+      }
+    }
+    if (!active()) return;
+    try {
+      final result = await api.sales.getInvoices(
+        query: query,
+        fromDate: from?.toIso8601String(),
+        toDate: to?.toIso8601String(),
+        paymentMethod: payment,
+        status: status,
+        financialStatus: financial,
+        sellerId: seller,
+        customerId: customer,
+      );
+      final invoiceRows = result['invoices'];
       if (invoiceRows is! List) {
         throw StateError('استجابة الفواتير غير صالحة');
       }
-      if (!mounted) return;
+      if (!active()) return;
+      final invoices = invoiceRows
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
       setState(() {
-        _invoices = invoiceRows
-            .whereType<Map>()
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList();
-        _summary = results[1];
-        if (ancillary.isNotEmpty) {
-          _customers = ancillary[0] as List<Map<String, dynamic>>;
-          _salespeople = ancillary[1] as List<Map<String, dynamic>>;
-        }
+        _invoices = invoices;
+        _offline = false;
         _loading = false;
       });
+      try {
+        if (invoices.length != invoiceRows.length) {
+          throw const FormatException('Invalid invoice snapshot');
+        }
+        await store.merge(invoices);
+        if (mounted && active()) {
+          final products = context.read<ProductsProvider>();
+          unawaited(_cacheInvoiceImages(
+            invoices,
+            products,
+            InvoiceProductImages(
+                scope: invoiceImageScope(environment, account, role)),
+            active,
+          ));
+        }
+      } catch (_) {
+        if (active()) {
+          setState(
+              () => _storageError = 'تعذر حفظ الفواتير للاستخدام دون اتصال');
+        }
+      }
+      if (!active()) return;
+      try {
+        final summary = await api.sales.getSummary(
+          fromDate: from?.toIso8601String(),
+          toDate: to?.toIso8601String(),
+          sellerId: seller,
+          customerId: customer,
+        );
+        if (active()) setState(() => _summary = summary);
+      } catch (error) {
+        debugPrint('Invoice summary unavailable: ${error.runtimeType}');
+      }
+      if (_canFilterAllSales && active()) {
+        try {
+          final ancillary = await Future.wait([
+            api.sales.getCustomers(),
+            api.sales.getSalespeople(),
+          ]);
+          if (active()) {
+            setState(() {
+              _customers = ancillary[0];
+              _salespeople = ancillary[1];
+            });
+          }
+        } catch (error) {
+          debugPrint(
+              'Invoice filter choices unavailable: ${error.runtimeType}');
+        }
+      }
     } catch (error) {
-      if (mounted) {
+      if (!active()) return;
+      if (error is ApiException && error.transportFailure) {
+        try {
+          final cached = await store.list(
+            query: query,
+            fromDate: from,
+            toDate: to,
+            status: status,
+            financialStatus: financial,
+            paymentMethod: payment,
+            sellerId: seller,
+            customerId: customer,
+          );
+          final choices = _canFilterAllSales ? await store.list() : cached;
+          if (!active()) return;
+          setState(() {
+            _invoices = cached;
+            _offline = true;
+            _loading = false;
+            _addOfflineFilterChoices(choices);
+          });
+          return;
+        } catch (_) {
+          if (active()) {
+            setState(() => _storageError = 'تعذرت قراءة الفواتير المحفوظة');
+          }
+        }
+      }
+      if (active()) {
         setState(() {
           _error = error.toString();
           _loading = false;
         });
       }
+    }
+  }
+
+  void _addOfflineFilterChoices(List<Map<String, dynamic>> choices) {
+    if (!_canFilterAllSales) return;
+    for (final row in choices) {
+      final sellerId = row['seller_id']?.toString();
+      if (sellerId != null &&
+          sellerId.isNotEmpty &&
+          !_salespeople.any((s) => '${s['user_id']}' == sellerId)) {
+        _salespeople.add({
+          'user_id': sellerId,
+          'full_name': row['seller_name'] ?? sellerId,
+        });
+      }
+      final customerId = row['customer_id']?.toString();
+      if (customerId != null &&
+          customerId.isNotEmpty &&
+          !_customers.any((c) => '${c['customer_id']}' == customerId)) {
+        _customers.add({
+          'customer_id': customerId,
+          'full_name': row['customer_name'] ?? customerId,
+        });
+      }
+    }
+  }
+
+  Future<void> _cacheInvoiceImages(
+    List<Map<String, dynamic>> invoices,
+    ProductsProvider products,
+    InvoiceProductImages imageStore,
+    bool Function() active,
+  ) async {
+    try {
+      if (products.allProducts.isEmpty) await products.fetchProducts();
+      if (!active()) return;
+      final urls = {
+        for (final product in products.allProducts)
+          if (product.imageUrl?.trim().isNotEmpty == true)
+            product.code: product.imageUrl!,
+      };
+      for (final invoice in invoices) {
+        if (!active()) return;
+        final id = invoice['invoice_id']?.toString() ?? '';
+        final items = invoice['items'];
+        if (id.isEmpty || items is! List) continue;
+        final images = <String, String>{};
+        for (final item in items.whereType<Map>()) {
+          final code = item['code']?.toString() ?? '';
+          final url = urls[code];
+          if (url != null) images[code] = url;
+        }
+        await imageStore.cache(id, images);
+      }
+    } catch (error) {
+      debugPrint('Invoice image caching failed: ${error.runtimeType}');
     }
   }
 
@@ -335,10 +538,19 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
           ),
         ),
         actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => SalesInvoicePdfScreen(invoice: invoice),
+              ),
+            ),
+            child: const Text('معاينة PDF'),
+          ),
           if (_canCollectInvoice(invoice))
             TextButton(
-              onPressed: _collectingInvoiceIds
-                      .contains(invoice['invoice_id'].toString())
+              onPressed: _offline ||
+                      _collectingInvoiceIds
+                          .contains(invoice['invoice_id'].toString())
                   ? null
                   : () async {
                       final saved = await _collectInvoice(invoice);
@@ -355,7 +567,7 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
             ),
           if (_canVoidInvoices && invoice['status'] == 'posted')
             TextButton(
-              onPressed: () => _voidInvoice(invoice),
+              onPressed: _offline ? null : () => _voidInvoice(invoice),
               child: const Text('إلغاء موثق'),
             ),
           TextButton(
@@ -389,6 +601,7 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
   }
 
   Future<bool> _collectInvoice(Map<String, dynamic> invoice) async {
+    if (_offline) return false;
     final invoiceId = invoice['invoice_id'].toString();
     final pending = _pendingCollections[invoiceId];
     final pendingPayload = pending?['payload'] as Map<String, dynamic>?;
@@ -706,6 +919,7 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
       const {AppRole.admin, AppRole.accountant}.contains(_role);
 
   Future<void> _voidInvoice(Map<String, dynamic> invoice) async {
+    if (_offline) return;
     final reasonController = TextEditingController();
     final reason = await showDialog<String>(
       context: context,
@@ -822,6 +1036,18 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
           : null,
       body: Column(
         children: [
+          if (_offline)
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text(
+                  'دون اتصال: البيانات المحفوظة قديمة وغير مكتملة، وقد توجد فواتير غير معروضة. التحصيل والإلغاء متوقفان.'),
+            ),
+          if (_storageError != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(_storageError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ),
           if (!_loading && _error == null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
@@ -831,21 +1057,24 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('الفواتير: ${_summary['invoices_count'] ?? 0}'),
-                      Text(
-                        'المحصل ${formatMoneyShort(financial['paid_usd'] ?? 0, currency: 'USD')} · '
-                        'المتبقي ${formatMoneyShort(financial['outstanding_usd'] ?? 0, currency: 'USD')}',
-                      ),
-                      Text(
-                        'جزئية ${financial['partial_count'] ?? 0} · '
-                        'غير مدفوعة ${financial['unpaid_count'] ?? 0}',
-                      ),
-                      ...sales.entries.map(
-                        (entry) => Text(
-                          'مبيعات ${entry.key}: '
-                          '${(entry.value as num).toStringAsFixed(2)}',
+                      if (!_offline && _summary.isNotEmpty) ...[
+                        Text('الفواتير: ${_summary['invoices_count'] ?? 0}'),
+                        Text(
+                          'المحصل ${formatMoneyShort(financial['paid_usd'] ?? 0, currency: 'USD')} · '
+                          'المتبقي ${formatMoneyShort(financial['outstanding_usd'] ?? 0, currency: 'USD')}',
                         ),
-                      ),
+                        Text(
+                          'جزئية ${financial['partial_count'] ?? 0} · '
+                          'غير مدفوعة ${financial['unpaid_count'] ?? 0}',
+                        ),
+                        ...sales.entries.map(
+                          (entry) => Text(
+                            'مبيعات ${entry.key}: '
+                            '${(entry.value as num).toStringAsFixed(2)}',
+                          ),
+                        ),
+                      ] else if (!_offline)
+                        const Text('الملخص غير متاح'),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: LayoutBuilder(
@@ -889,7 +1118,8 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
                                       },
                                     ),
                                   ),
-                                if (_canFilterAllSales)
+                                if (_canFilterAllSales &&
+                                    widget.customerId == null)
                                   SizedBox(
                                     width: width,
                                     child: DropdownButtonFormField<String?>(
@@ -1025,12 +1255,13 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
                           },
                         ),
                       ),
-                      ...receipts.entries.map(
-                        (entry) => Text(
-                          'مقبوض ${entry.key}: '
-                          '${(entry.value as num).toStringAsFixed(2)}',
+                      if (!_offline && _summary.isNotEmpty)
+                        ...receipts.entries.map(
+                          (entry) => Text(
+                            'مقبوض ${entry.key}: '
+                            '${(entry.value as num).toStringAsFixed(2)}',
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -1069,7 +1300,10 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
                         ),
                       )
                     : _invoices.isEmpty
-                        ? const Center(child: Text('لا توجد فواتير بعد'))
+                        ? Center(
+                            child: Text(_offline
+                                ? 'لا توجد فواتير محفوظة تطابق المرشحات؛ قد توجد فواتير أخرى على الخادم.'
+                                : 'لا توجد فواتير بعد'))
                         : ListView.builder(
                             padding: const EdgeInsets.only(bottom: 88),
                             itemCount: _invoices.length,

@@ -9,18 +9,22 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../app_config.dart';
+import '../utils/permissions.dart';
+import 'invoice_template_store.dart';
 
 class ApiException implements Exception {
   final String code;
   final String message;
   final bool retryable;
   final String? requestId;
+  final bool transportFailure;
 
   const ApiException({
     required this.code,
     required this.message,
     this.retryable = false,
     this.requestId,
+    this.transportFailure = false,
   });
 
   @override
@@ -365,8 +369,21 @@ class CustomerApiService {
   CustomerApiService(this._apiService);
 
   /// جلب بيانات العملاء
-  Future<Map<String, dynamic>> getCustomers() async {
-    return _apiService.post({'action': 'getCustomers'});
+  Future<Map<String, dynamic>> getCustomers({
+    int? limit,
+    int offset = 0,
+    String query = '',
+    String status = 'all',
+  }) async {
+    return _apiService.post({
+      'action': 'getCustomers',
+      if (limit != null) ...{
+        'limit': limit,
+        'offset': offset,
+        'query': query,
+        'status': status,
+      },
+    });
   }
 
   /// جلب كشف حساب العميل
@@ -731,6 +748,9 @@ class ApiService {
 
   String? _sessionToken;
   Map<String, dynamic>? _currentUser;
+  InvoiceTemplateStore? _invoiceTemplateStore;
+  int _invoiceTemplateGeneration = 0;
+  StreamSubscription<List<ConnectivityResult>>? _invoiceConnectivity;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   void Function()? onSessionExpired;
   static const Duration _requestTimeout = Duration(seconds: 30);
@@ -756,6 +776,77 @@ class ApiService {
     admin = AdminApiService(this);
     sales = SalesApiService(this);
     notifications = NotificationApiService(this);
+  }
+
+  InvoiceTemplateStore get invoiceTemplateStore =>
+      _invoiceTemplateStore ??= _makeInvoiceTemplateStore();
+
+  InvoiceTemplateStore _makeInvoiceTemplateStore() {
+    final generation = _invoiceTemplateGeneration;
+    final token = _sessionToken;
+    final user = _currentUser;
+    final id = (user?['user_id'] ??
+            user?['id'] ??
+            user?['customer_id'] ??
+            user?['username'])
+        ?.toString()
+        .trim();
+    final identity = id == null || id.isEmpty
+        ? 'ephemeral:${DateTime.now().microsecondsSinceEpoch}:$generation'
+        : id;
+    final scope = jsonEncode([
+      AppConfig.environmentName,
+      AppConfig.apiUrl,
+      identity,
+      user?['role']?.toString() ?? '',
+    ]);
+    bool active() =>
+        token != null &&
+        token == _sessionToken &&
+        generation == _invoiceTemplateGeneration;
+    return InvoiceTemplateStore(
+      scope: scope,
+      isActive: active,
+      fetch: () async {
+        if (!active()) throw StateError('Invoice template session changed');
+        return post({'action': 'invoice_template_get'}, useCache: false);
+      },
+    );
+  }
+
+  void _startInvoiceTemplateRefresh() {
+    _invoiceTemplateGeneration++;
+    _invoiceTemplateStore = _makeInvoiceTemplateStore();
+    if (!_canRefreshInvoiceTemplate) return;
+    _invoiceConnectivity ??= Connectivity().onConnectivityChanged.listen(
+      (results) {
+        if (_canRefreshInvoiceTemplate &&
+            results.any((result) => result != ConnectivityResult.none)) {
+          _refreshInvoiceTemplate();
+        }
+      },
+      onError: (Object error) => debugPrint(
+          'Invoice connectivity monitoring failed: ${error.runtimeType}'),
+    );
+    _refreshInvoiceTemplate();
+  }
+
+  bool get _canRefreshInvoiceTemplate {
+    final role =
+        PermissionHelper.fromString(_currentUser?['role']?.toString() ?? '');
+    return _sessionToken != null &&
+        const {
+          AppRole.admin,
+          AppRole.manager,
+          AppRole.accountant,
+          AppRole.salesperson,
+        }.contains(role);
+  }
+
+  void _refreshInvoiceTemplate() {
+    unawaited(_invoiceTemplateStore!.refresh().catchError((Object error) {
+      debugPrint('Invoice template refresh failed: ${error.runtimeType}');
+    }));
   }
 
   /// تهيئة الجلسة من التخزين المحلي
@@ -793,6 +884,7 @@ class ApiService {
     await prefs.remove('current_user');
     await prefs.remove('saved_pass');
     await prefs.remove('saved_user');
+    _startInvoiceTemplateRefresh();
   }
 
   /// تحديث بيانات الجلسة
@@ -818,6 +910,7 @@ class ApiService {
       _currentUser = sessionUser;
     }
     if (previousToken != _sessionToken) products.clearCachedResponses();
+    _startInvoiceTemplateRefresh();
     await prefs.remove('session_token');
     await prefs.remove('current_user');
     await prefs.remove('saved_pass');
@@ -1006,6 +1099,7 @@ class ApiService {
         code: 'TIMEOUT',
         message: 'انتهت مهلة الاتصال بالخادم',
         retryable: true,
+        transportFailure: true,
       );
     } on SocketException {
       if (kDebugMode) {
@@ -1023,6 +1117,7 @@ class ApiService {
         code: 'NETWORK_ERROR',
         message: 'فشل الاتصال بالخادم، تحقق من شبكة الإنترنت',
         retryable: true,
+        transportFailure: true,
       );
     } on http.ClientException {
       if (kDebugMode) {
@@ -1040,6 +1135,7 @@ class ApiService {
         code: 'NETWORK_ERROR',
         message: 'خطأ في الاتصال بالخادم',
         retryable: true,
+        transportFailure: true,
       );
     } catch (e) {
       rethrow;

@@ -4,20 +4,28 @@ import '../services/api_service.dart';
 import '../order_status_mapper.dart';
 import 'order_details_screen.dart';
 import 'new_order_screen.dart';
+import 'sales_invoice_screen.dart';
 import '../utils/permissions.dart';
 import '../providers/orders_provider.dart';
 import '../widgets/order_skeleton.dart';
 import '../utils/number_utils.dart';
+import '../widgets/app_motion.dart';
 
 class OrdersScreen extends StatefulWidget {
   final Map<String, dynamic> session;
-  const OrdersScreen({super.key, required this.session});
+  final String? customerId;
+  final bool motionVisible;
+  const OrdersScreen(
+      {super.key,
+      required this.session,
+      this.customerId,
+      this.motionVisible = true});
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
 }
 
 class _OrdersScreenState extends State<OrdersScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   String? _selectedCustomerId;
   String _currentStatusFilter = 'all';
   late TabController _tabController;
@@ -35,10 +43,16 @@ class _OrdersScreenState extends State<OrdersScreen>
   final TextEditingController _searchController = TextEditingController();
   List<dynamic> _customers = [];
   DateTime? _lastRefreshNotice;
+  late final AnimationController _entrance = AnimationController(
+    vsync: this,
+    duration: AppMotion.duration + AppMotion.staggerInterval * 3,
+  );
+  bool _entranceScheduled = false;
 
   @override
   void initState() {
     super.initState();
+    _selectedCustomerId = widget.customerId;
     final provider = context.read<OrdersProvider>();
     _currentStatusFilter = provider.currentFilter;
     _searchController.text = provider.searchQuery;
@@ -54,6 +68,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _entrance.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -192,6 +207,10 @@ class _OrdersScreenState extends State<OrdersScreen>
         PermissionHelper.hasPermission(userRole, AppPermission.viewAllOrders);
     final canCreateOrder =
         PermissionHelper.hasPermission(userRole, AppPermission.createOrder);
+    final canCreateInvoice = (userRole == AppRole.admin ||
+            userRole == AppRole.manager ||
+            userRole == AppRole.accountant) &&
+        PermissionHelper.hasPermission(userRole, AppPermission.createCashSale);
     final canViewPrice = PermissionHelper.hasPermission(
             userRole, AppPermission.viewProductPrices) ||
         PermissionHelper.hasPermission(
@@ -201,7 +220,7 @@ class _OrdersScreenState extends State<OrdersScreen>
       appBar: AppBar(
         title: const Text('الطلبات'),
         actions: [
-          if (canViewAll)
+          if (canViewAll && widget.customerId == null)
             IconButton(
               icon: const Icon(Icons.filter_list),
               onPressed: _showCustomerFilterDialog,
@@ -252,24 +271,48 @@ class _OrdersScreenState extends State<OrdersScreen>
           ),
         ),
       ),
-      floatingActionButton: canCreateOrder
-          ? FloatingActionButton.extended(
-              onPressed: () {
-                final ordersProvider = context.read<OrdersProvider>();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => NewOrderScreen(session: widget.session)),
-                ).then((created) {
-                  if (created == true && mounted) {
-                    ordersProvider.syncAfterMutation();
-                  }
-                });
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('طلب جديد'),
-            )
-          : null,
+      floatingActionButton: MediaQuery.viewInsetsOf(context).bottom > 0 ||
+              (!canCreateOrder && !canCreateInvoice)
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (canCreateInvoice) ...[
+                  FloatingActionButton.extended(
+                    heroTag: 'new-sales-invoice',
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SalesInvoiceScreen(),
+                      ),
+                    ),
+                    icon: const Icon(Icons.point_of_sale),
+                    label: const Text('فاتورة جديدة'),
+                  ),
+                  if (canCreateOrder) const SizedBox(height: 12),
+                ],
+                if (canCreateOrder)
+                  FloatingActionButton.extended(
+                    heroTag: 'new-order',
+                    onPressed: () {
+                      final ordersProvider = context.read<OrdersProvider>();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                NewOrderScreen(session: widget.session)),
+                      ).then((created) {
+                        if (created == true && mounted) {
+                          ordersProvider.syncAfterMutation();
+                        }
+                      });
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('طلب جديد'),
+                  ),
+              ],
+            ),
       body: Consumer<OrdersProvider>(
         builder: (context, provider, child) {
           if (provider.isLoading && provider.orders.isEmpty) {
@@ -295,6 +338,15 @@ class _OrdersScreenState extends State<OrdersScreen>
                   .where((o) => o.customerId == _selectedCustomerId)
                   .toList()
               : provider.orders;
+
+          if (widget.motionVisible &&
+              filteredOrders.isNotEmpty &&
+              !_entranceScheduled) {
+            _entranceScheduled = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _entrance.forward();
+            });
+          }
 
           return RefreshIndicator(
             onRefresh: () => _refreshOrders(force: true),
@@ -393,7 +445,8 @@ class _OrdersScreenState extends State<OrdersScreen>
                             child: Icon(Icons.sort),
                           ),
                         ),
-                        if (_selectedCustomerId != null)
+                        if (_selectedCustomerId != null &&
+                            widget.customerId == null)
                           InputChip(
                             label: const Text('زبون محدد'),
                             onDeleted: () =>
@@ -430,7 +483,8 @@ class _OrdersScreenState extends State<OrdersScreen>
                           TextButton(
                             onPressed: () {
                               provider.resetFilters();
-                              setState(() => _selectedCustomerId = null);
+                              setState(() =>
+                                  _selectedCustomerId = widget.customerId);
                               _searchController.clear();
                               _currentStatusFilter = 'all';
                               _tabController.animateTo(0);
@@ -486,125 +540,131 @@ class _OrdersScreenState extends State<OrdersScreen>
                         final order = filteredOrders[index];
                         final isNew = order.isNew;
 
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: () async {
-                              final ordersProvider =
-                                  context.read<OrdersProvider>();
-                              final refresh = await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => OrderDetailsScreen(
-                                    orderId: order.orderId,
-                                    session: widget.session,
+                        return InitialListEntrance(
+                          animation: _entrance,
+                          index: index,
+                          child: Card(
+                            margin: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () async {
+                                final ordersProvider =
+                                    context.read<OrdersProvider>();
+                                final refresh = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => OrderDetailsScreen(
+                                      orderId: order.orderId,
+                                      session: widget.session,
+                                    ),
                                   ),
-                                ),
-                              );
-                              if (!mounted) return;
-                              if (refresh == true) {
-                                await ordersProvider.syncAfterMutation(
-                                  orderId: order.orderId,
-                                  status: 'cancelled',
                                 );
-                              }
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      if (isNew)
-                                        Container(
-                                          width: 10,
-                                          height: 10,
-                                          decoration: const BoxDecoration(
-                                              color: Colors.green,
-                                              shape: BoxShape.circle),
-                                          margin:
-                                              const EdgeInsets.only(left: 8),
-                                        ),
-                                      Expanded(
-                                        child: Text(
-                                          order.orderNumber,
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16),
-                                        ),
-                                      ),
-                                      _buildStatusBadge(order.status),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  if (canViewAll) ...[
+                                if (!mounted) return;
+                                if (refresh == true) {
+                                  await ordersProvider.syncAfterMutation(
+                                    orderId: order.orderId,
+                                    status: 'cancelled',
+                                  );
+                                }
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                                     Row(
                                       children: [
-                                        Icon(Icons.person,
-                                            size: 16,
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .primary),
-                                        const SizedBox(width: 8),
+                                        if (isNew)
+                                          Container(
+                                            width: 10,
+                                            height: 10,
+                                            decoration: const BoxDecoration(
+                                                color: Colors.green,
+                                                shape: BoxShape.circle),
+                                            margin:
+                                                const EdgeInsets.only(left: 8),
+                                          ),
                                         Expanded(
-                                          child: Text(order.customerName,
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                  fontWeight: FontWeight.w600)),
+                                          child: Text(
+                                            order.orderNumber,
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16),
+                                          ),
                                         ),
+                                        _buildStatusBadge(order.status),
                                       ],
                                     ),
-                                    const SizedBox(height: 8),
-                                  ],
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
+                                    const SizedBox(height: 12),
+                                    if (canViewAll) ...[
                                       Row(
                                         children: [
-                                          Icon(Icons.calendar_today,
-                                              size: 14,
+                                          Icon(Icons.person,
+                                              size: 16,
                                               color: Theme.of(context)
                                                   .colorScheme
-                                                  .onSurfaceVariant),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            order.createdAt != null
-                                                ? _formatDate(order.createdAt!)
-                                                : '---',
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant),
+                                                  .primary),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(order.customerName,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w600)),
                                           ),
                                         ],
                                       ),
-                                      if (order.totalAmount != null &&
-                                          canViewPrice)
-                                        Text(
-                                          formatMoneyShort(
-                                            order.totalAmount!,
-                                            currency: order.currency,
-                                          ),
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .primary,
-                                          ),
-                                        ),
+                                      const SizedBox(height: 8),
                                     ],
-                                  ),
-                                ],
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(Icons.calendar_today,
+                                                size: 14,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              order.createdAt != null
+                                                  ? _formatDate(
+                                                      order.createdAt!)
+                                                  : '---',
+                                              style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant),
+                                            ),
+                                          ],
+                                        ),
+                                        if (order.totalAmount != null &&
+                                            canViewPrice)
+                                          Text(
+                                            formatMoneyShort(
+                                              order.totalAmount!,
+                                              currency: order.currency,
+                                            ),
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .primary,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -613,8 +673,9 @@ class _OrdersScreenState extends State<OrdersScreen>
                       childCount: filteredOrders.length,
                     ),
                   ),
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 90),
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                      height: canCreateInvoice && canCreateOrder ? 160 : 90),
                 ),
               ],
             ),

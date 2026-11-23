@@ -2,6 +2,12 @@
 
 A new Flutter project.
 
+## نشر Flutter Web على Firebase
+
+إعداد Firebase Hosting وخطوات النشر من Windows موجودة في [DEPLOY.md](DEPLOY.md).
+يتضمن المشروع ملفات منصة الويب، لكن بناء Web يحتاج أولاً إلى استبدال/تهيئة
+مسار SQLite المحلي بما يتوافق مع المتصفح؛ راجع التنبيه في دليل النشر.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
@@ -15,6 +21,16 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+
+## بناء Android وSQLite
+
+يستخدم التطبيق `sqlite3_flutter_libs` لتضمين مكتبة SQLite في Android لكل
+معمارية مدعومة، ويضبط `pubspec.yaml` مكتبة Dart لتحميل `libsqlite3` المضمّنة
+بدلاً من تنزيل مكتبات منفصلة من GitHub أثناء البناء. في Windows يستخدم
+`winsqlite3.dll` من النظام؛ في الأنظمة الأخرى يلزم توفر مكتبة SQLite كما
+توفرها المنصة أو حزمة Flutter. لا يغيّر هذا الإعداد ملف قاعدة البيانات أو
+المسودات. يحتاج البناء الأول إلى اعتمادات Flutter وGradle، بما فيها مكتبة
+SQLite المنشورة على Maven Central؛ لا يعالج انقطاع تنزيل تلك الاعتمادات.
 
 ## الإعدادات والتنقل
 
@@ -33,6 +49,15 @@ samples, guidance on mobile development, and a full API reference.
   أرقام المستندات أو الأرصدة أو سياسات المخزون من هذه الصفحة.
 - أزرار الرجوع في التبويبات الرئيسية تعود أولاً إلى الرئيسية ثم تطلب تأكيد
   الإغلاق. تغيير الصفحة بالسحب متاح في التبويبات الرئيسية فقط.
+- تتوفر جولات قصيرة للزبون في الرئيسية والمنتجات ومراجعة الطلب والإعدادات،
+  ولأدوار البيع المخولة في الفاتورة. تبدأ بعد جاهزية الصفحة وانتهاء التهيئة
+  الأولية للإشعارات وفحص التحديث، ولا تتداخل مع تحديث إلزامي أو حفظ جارٍ.
+  يُحفظ الإكمال أو التخطي محلياً لكل حساب وجولة وإصدار؛ المقاطعة لا تسجل
+  الإكمال فتُعاد المحاولة في زيارة لاحقة. يمكن إعادة عرض الجولات من
+  الإعدادات، ولا ينفذ الشرح طلباً أو حفظاً.
+- لا يتضمن المشروع ملف حركة نجاح Lottie حالياً. يلزم توفير ملف `success.json`
+  صالح ومرخص وتسجيل مساره في `pubspec.yaml` قبل استخدام `Lottie.asset`؛ تبقى
+  رسائل نجاح الحفظ الحالية معروضة بعد تأكيد العمليات.
 
 ## فهرسة صور Google Drive
 

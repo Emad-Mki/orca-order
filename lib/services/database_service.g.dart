@@ -654,6 +654,12 @@ class $OrderDraftsTable extends OrderDrafts
   late final GeneratedColumn<String> customTitle = GeneratedColumn<String>(
       'custom_title', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _clientRequestIdMeta =
+      const VerificationMeta('clientRequestId');
+  @override
+  late final GeneratedColumn<String> clientRequestId = GeneratedColumn<String>(
+      'client_request_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -666,7 +672,8 @@ class $OrderDraftsTable extends OrderDrafts
         note,
         status,
         currency,
-        customTitle
+        customTitle,
+        clientRequestId
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -737,6 +744,12 @@ class $OrderDraftsTable extends OrderDrafts
           customTitle.isAcceptableOrUnknown(
               data['custom_title']!, _customTitleMeta));
     }
+    if (data.containsKey('client_request_id')) {
+      context.handle(
+          _clientRequestIdMeta,
+          clientRequestId.isAcceptableOrUnknown(
+              data['client_request_id']!, _clientRequestIdMeta));
+    }
     return context;
   }
 
@@ -768,6 +781,8 @@ class $OrderDraftsTable extends OrderDrafts
           .read(DriftSqlType.string, data['${effectivePrefix}currency'])!,
       customTitle: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}custom_title']),
+      clientRequestId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}client_request_id']),
     );
   }
 
@@ -789,6 +804,7 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
   final String status;
   final String currency;
   final String? customTitle;
+  final String? clientRequestId;
   const LocalOrderDraft(
       {required this.id,
       required this.environment,
@@ -800,7 +816,8 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
       this.note,
       required this.status,
       required this.currency,
-      this.customTitle});
+      this.customTitle,
+      this.clientRequestId});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -818,6 +835,9 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
     map['currency'] = Variable<String>(currency);
     if (!nullToAbsent || customTitle != null) {
       map['custom_title'] = Variable<String>(customTitle);
+    }
+    if (!nullToAbsent || clientRequestId != null) {
+      map['client_request_id'] = Variable<String>(clientRequestId);
     }
     return map;
   }
@@ -837,6 +857,9 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
       customTitle: customTitle == null && nullToAbsent
           ? const Value.absent()
           : Value(customTitle),
+      clientRequestId: clientRequestId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(clientRequestId),
     );
   }
 
@@ -855,6 +878,7 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
       status: serializer.fromJson<String>(json['status']),
       currency: serializer.fromJson<String>(json['currency']),
       customTitle: serializer.fromJson<String?>(json['customTitle']),
+      clientRequestId: serializer.fromJson<String?>(json['clientRequestId']),
     );
   }
   @override
@@ -872,6 +896,7 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
       'status': serializer.toJson<String>(status),
       'currency': serializer.toJson<String>(currency),
       'customTitle': serializer.toJson<String?>(customTitle),
+      'clientRequestId': serializer.toJson<String?>(clientRequestId),
     };
   }
 
@@ -886,7 +911,8 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
           Value<String?> note = const Value.absent(),
           String? status,
           String? currency,
-          Value<String?> customTitle = const Value.absent()}) =>
+          Value<String?> customTitle = const Value.absent(),
+          Value<String?> clientRequestId = const Value.absent()}) =>
       LocalOrderDraft(
         id: id ?? this.id,
         environment: environment ?? this.environment,
@@ -899,6 +925,9 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
         status: status ?? this.status,
         currency: currency ?? this.currency,
         customTitle: customTitle.present ? customTitle.value : this.customTitle,
+        clientRequestId: clientRequestId.present
+            ? clientRequestId.value
+            : this.clientRequestId,
       );
   LocalOrderDraft copyWithCompanion(OrderDraftsCompanion data) {
     return LocalOrderDraft(
@@ -918,6 +947,9 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
       currency: data.currency.present ? data.currency.value : this.currency,
       customTitle:
           data.customTitle.present ? data.customTitle.value : this.customTitle,
+      clientRequestId: data.clientRequestId.present
+          ? data.clientRequestId.value
+          : this.clientRequestId,
     );
   }
 
@@ -934,14 +966,26 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
           ..write('note: $note, ')
           ..write('status: $status, ')
           ..write('currency: $currency, ')
-          ..write('customTitle: $customTitle')
+          ..write('customTitle: $customTitle, ')
+          ..write('clientRequestId: $clientRequestId')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, environment, accountId, customerId,
-      customerName, createdAt, updatedAt, note, status, currency, customTitle);
+  int get hashCode => Object.hash(
+      id,
+      environment,
+      accountId,
+      customerId,
+      customerName,
+      createdAt,
+      updatedAt,
+      note,
+      status,
+      currency,
+      customTitle,
+      clientRequestId);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -956,7 +1000,8 @@ class LocalOrderDraft extends DataClass implements Insertable<LocalOrderDraft> {
           other.note == this.note &&
           other.status == this.status &&
           other.currency == this.currency &&
-          other.customTitle == this.customTitle);
+          other.customTitle == this.customTitle &&
+          other.clientRequestId == this.clientRequestId);
 }
 
 class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
@@ -971,6 +1016,7 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
   final Value<String> status;
   final Value<String> currency;
   final Value<String?> customTitle;
+  final Value<String?> clientRequestId;
   const OrderDraftsCompanion({
     this.id = const Value.absent(),
     this.environment = const Value.absent(),
@@ -983,6 +1029,7 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
     this.status = const Value.absent(),
     this.currency = const Value.absent(),
     this.customTitle = const Value.absent(),
+    this.clientRequestId = const Value.absent(),
   });
   OrderDraftsCompanion.insert({
     this.id = const Value.absent(),
@@ -996,6 +1043,7 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
     this.status = const Value.absent(),
     this.currency = const Value.absent(),
     this.customTitle = const Value.absent(),
+    this.clientRequestId = const Value.absent(),
   })  : environment = Value(environment),
         accountId = Value(accountId),
         customerId = Value(customerId),
@@ -1012,6 +1060,7 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
     Expression<String>? status,
     Expression<String>? currency,
     Expression<String>? customTitle,
+    Expression<String>? clientRequestId,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1025,6 +1074,7 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
       if (status != null) 'status': status,
       if (currency != null) 'currency': currency,
       if (customTitle != null) 'custom_title': customTitle,
+      if (clientRequestId != null) 'client_request_id': clientRequestId,
     });
   }
 
@@ -1039,7 +1089,8 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
       Value<String?>? note,
       Value<String>? status,
       Value<String>? currency,
-      Value<String?>? customTitle}) {
+      Value<String?>? customTitle,
+      Value<String?>? clientRequestId}) {
     return OrderDraftsCompanion(
       id: id ?? this.id,
       environment: environment ?? this.environment,
@@ -1052,6 +1103,7 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
       status: status ?? this.status,
       currency: currency ?? this.currency,
       customTitle: customTitle ?? this.customTitle,
+      clientRequestId: clientRequestId ?? this.clientRequestId,
     );
   }
 
@@ -1091,6 +1143,9 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
     if (customTitle.present) {
       map['custom_title'] = Variable<String>(customTitle.value);
     }
+    if (clientRequestId.present) {
+      map['client_request_id'] = Variable<String>(clientRequestId.value);
+    }
     return map;
   }
 
@@ -1107,7 +1162,8 @@ class OrderDraftsCompanion extends UpdateCompanion<LocalOrderDraft> {
           ..write('note: $note, ')
           ..write('status: $status, ')
           ..write('currency: $currency, ')
-          ..write('customTitle: $customTitle')
+          ..write('customTitle: $customTitle, ')
+          ..write('clientRequestId: $clientRequestId')
           ..write(')'))
         .toString();
   }
@@ -3347,6 +3403,7 @@ typedef $$OrderDraftsTableCreateCompanionBuilder = OrderDraftsCompanion
   Value<String> status,
   Value<String> currency,
   Value<String?> customTitle,
+  Value<String?> clientRequestId,
 });
 typedef $$OrderDraftsTableUpdateCompanionBuilder = OrderDraftsCompanion
     Function({
@@ -3361,6 +3418,7 @@ typedef $$OrderDraftsTableUpdateCompanionBuilder = OrderDraftsCompanion
   Value<String> status,
   Value<String> currency,
   Value<String?> customTitle,
+  Value<String?> clientRequestId,
 });
 
 final class $$OrderDraftsTableReferences
@@ -3426,6 +3484,10 @@ class $$OrderDraftsTableFilterComposer
   ColumnFilters<String> get customTitle => $composableBuilder(
       column: $table.customTitle, builder: (column) => ColumnFilters(column));
 
+  ColumnFilters<String> get clientRequestId => $composableBuilder(
+      column: $table.clientRequestId,
+      builder: (column) => ColumnFilters(column));
+
   Expression<bool> orderDraftItemsRefs(
       Expression<bool> Function($$OrderDraftItemsTableFilterComposer f) f) {
     final $$OrderDraftItemsTableFilterComposer composer = $composerBuilder(
@@ -3490,6 +3552,10 @@ class $$OrderDraftsTableOrderingComposer
 
   ColumnOrderings<String> get customTitle => $composableBuilder(
       column: $table.customTitle, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get clientRequestId => $composableBuilder(
+      column: $table.clientRequestId,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$OrderDraftsTableAnnotationComposer
@@ -3533,6 +3599,9 @@ class $$OrderDraftsTableAnnotationComposer
 
   GeneratedColumn<String> get customTitle => $composableBuilder(
       column: $table.customTitle, builder: (column) => column);
+
+  GeneratedColumn<String> get clientRequestId => $composableBuilder(
+      column: $table.clientRequestId, builder: (column) => column);
 
   Expression<T> orderDraftItemsRefs<T extends Object>(
       Expression<T> Function($$OrderDraftItemsTableAnnotationComposer a) f) {
@@ -3590,6 +3659,7 @@ class $$OrderDraftsTableTableManager extends RootTableManager<
             Value<String> status = const Value.absent(),
             Value<String> currency = const Value.absent(),
             Value<String?> customTitle = const Value.absent(),
+            Value<String?> clientRequestId = const Value.absent(),
           }) =>
               OrderDraftsCompanion(
             id: id,
@@ -3603,6 +3673,7 @@ class $$OrderDraftsTableTableManager extends RootTableManager<
             status: status,
             currency: currency,
             customTitle: customTitle,
+            clientRequestId: clientRequestId,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -3616,6 +3687,7 @@ class $$OrderDraftsTableTableManager extends RootTableManager<
             Value<String> status = const Value.absent(),
             Value<String> currency = const Value.absent(),
             Value<String?> customTitle = const Value.absent(),
+            Value<String?> clientRequestId = const Value.absent(),
           }) =>
               OrderDraftsCompanion.insert(
             id: id,
@@ -3629,6 +3701,7 @@ class $$OrderDraftsTableTableManager extends RootTableManager<
             status: status,
             currency: currency,
             customTitle: customTitle,
+            clientRequestId: clientRequestId,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) => (
@@ -3646,17 +3719,19 @@ class $$OrderDraftsTableTableManager extends RootTableManager<
               getPrefetchedDataCallback: (items) async {
                 return [
                   if (orderDraftItemsRefs)
-                    await $_getPrefetchedData<LocalOrderDraft,
-                            $OrderDraftsTable, LocalOrderItem>(
+                    await $_getPrefetchedDataByColumns<
+                            LocalOrderDraft,
+                            $OrderDraftsTable,
+                            LocalOrderItem,
+                            $OrderDraftItemsTable>(
                         currentTable: table,
                         referencedTable: $$OrderDraftsTableReferences
                             ._orderDraftItemsRefsTable(db),
                         managerFromTypedResult: (p0) =>
                             $$OrderDraftsTableReferences(db, table, p0)
                                 .orderDraftItemsRefs,
-                        referencedItemsForCurrentItem: (item,
-                                referencedItems) =>
-                            referencedItems.where((e) => e.draftId == item.id),
+                        currentColumn: 'id',
+                        referencedColumn: 'draft_id',
                         typedResults: items)
                 ];
               },

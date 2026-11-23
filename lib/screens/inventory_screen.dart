@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../models/product.dart';
+import '../widgets/product_image_widget.dart';
+import '../widgets/product_skeleton_widget.dart';
 import 'inventory_movements_screen.dart';
 import 'homepage_screen.dart';
 import '../utils/permissions.dart';
@@ -19,6 +21,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
   String? _error;
   final _search = TextEditingController();
   String _stockFilter = 'all';
+  String? _group;
+  String? _subGroup;
+  Future<void>? _fetchRequest;
 
   @override
   void initState() {
@@ -26,31 +31,52 @@ class _InventoryScreenState extends State<InventoryScreen> {
     _fetchInventory();
   }
 
-  Future<void> _fetchInventory() async {
+  Future<void> _fetchInventory() {
+    if (_fetchRequest != null) return _fetchRequest!;
+    final request = _performFetchInventory();
+    _fetchRequest = request;
+    return request.whenComplete(() => _fetchRequest = null);
+  }
+
+  Future<void> _performFetchInventory() async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
     try {
-      final data = await ApiService().post({
-        'action': 'getProducts',
-        'username': widget.session['username'],
-        'token': widget.session['token'],
-      });
-      var list =
-          data['products'] ?? data['data'] ?? data['items'] ?? data['result'];
+      final token = ApiService().token;
+      final data = await ApiService().products.getProducts(forceRefresh: true);
+      if (token != ApiService().token) {
+        throw StateError('تغير الحساب أثناء تحميل المخزون');
+      }
+      final list = data['products'] ?? data['data'];
+      if (list is! List) {
+        throw const FormatException(
+            'استجابة المنتجات لا تحتوي على قائمة صالحة');
+      }
+      final products = list.map((p) {
+        if (p is! Map) throw const FormatException('بيانات منتج غير صالحة');
+        return Product.fromJson(Map<String, dynamic>.from(p));
+      }).toList();
       if (mounted) {
         setState(() {
-          _products = (list as List).map((p) => Product.fromJson(p)).toList();
+          _products = products;
+          if (!products.any((p) => p.group == _group)) _group = null;
+          if (!products.any((p) =>
+              (_group == null || p.group == _group) &&
+              p.subGroup == _subGroup)) {
+            _subGroup = null;
+          }
           _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = e.toString();
           _isLoading = false;
         });
+      }
     }
   }
 
@@ -64,92 +90,117 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final qtyCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
     bool isAdding = true;
+    bool saving = false;
 
-    showDialog(
+    final route = DialogRoute<void>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('تعديل مخزون: ${p.name}'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('المخزون الحالي: ${p.quantity}'),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: ChoiceChip(
-                      label: const Text('إضافة (+)'),
-                      selected: isAdding,
-                      onSelected: (val) =>
-                          setDialogState(() => isAdding = true),
+        builder: (context, setDialogState) => PopScope(
+          canPop: !saving,
+          child: AlertDialog(
+            title: Text('تعديل مخزون: ${p.name}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('المخزون الحالي: ${p.quantity}'),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('إضافة (+)'),
+                        selected: isAdding,
+                        onSelected: (val) =>
+                            setDialogState(() => isAdding = true),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ChoiceChip(
-                      label: const Text('خصم (-)'),
-                      selected: !isAdding,
-                      onSelected: (val) =>
-                          setDialogState(() => isAdding = false),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('خصم (-)'),
+                        selected: !isAdding,
+                        onSelected: (val) =>
+                            setDialogState(() => isAdding = false),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              TextField(
-                controller: qtyCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'الكمية'),
-              ),
-              TextField(
-                controller: noteCtrl,
-                decoration:
-                    const InputDecoration(labelText: 'ملاحظات (اختياري)'),
+                  ],
+                ),
+                TextField(
+                  controller: qtyCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'الكمية'),
+                ),
+                TextField(
+                  controller: noteCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'ملاحظات (اختياري)'),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                  onPressed: saving ? null : () => Navigator.pop(context),
+                  child: const Text('إلغاء')),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final qty = double.tryParse(qtyCtrl.text);
+                        if (qty == null ||
+                            !qty.isFinite ||
+                            qty <= 0 ||
+                            noteCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(const SnackBar(
+                            content: Text('أدخل كمية موجبة وسبب التسوية'),
+                          ));
+                          return;
+                        }
+                        setDialogState(() => saving = true);
+
+                        final homeState =
+                            context.findAncestorStateOfType<HomePageState>();
+                        final session = homeState?.widget.session;
+                        final scaffoldMessenger = ScaffoldMessenger.of(context);
+                        final navigator = Navigator.of(context);
+
+                        try {
+                          await ApiService().post({
+                            'action': 'adjust_inventory',
+                            'code': p.code,
+                            'quantity': isAdding ? qty : -qty,
+                            'type': isAdding ? 'receipt' : 'adjustment',
+                            'note': noteCtrl.text,
+                            'username': session?['username'],
+                            'token': session?['token'],
+                          });
+
+                          navigator.pop();
+                          await _fetchInventory();
+                          scaffoldMessenger.showSnackBar(const SnackBar(
+                              content: Text('تم تحديث المخزون'),
+                              backgroundColor: Colors.green));
+                        } catch (e) {
+                          if (context.mounted) {
+                            setDialogState(() => saving = false);
+                          }
+                          scaffoldMessenger
+                              .showSnackBar(SnackBar(content: Text('خطأ: $e')));
+                        }
+                      },
+                child: const Text('حفظ'),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء')),
-            FilledButton(
-              onPressed: () async {
-                final qty = double.tryParse(qtyCtrl.text) ?? 0;
-                if (qty <= 0) return;
-
-                final homeState =
-                    context.findAncestorStateOfType<HomePageState>();
-                final session = homeState?.widget.session;
-                final scaffoldMessenger = ScaffoldMessenger.of(context);
-                final navigator = Navigator.of(context);
-
-                try {
-                  await ApiService().post({
-                    'action': 'adjust_inventory',
-                    'code': p.code,
-                    'quantity': isAdding ? qty : -qty,
-                    'type': isAdding ? 'receipt' : 'adjustment',
-                    'note': noteCtrl.text,
-                    'username': session?['username'],
-                    'token': session?['token'],
-                  });
-
-                  navigator.pop();
-                  _fetchInventory();
-                  scaffoldMessenger.showSnackBar(const SnackBar(
-                      content: Text('تم تحديث المخزون'),
-                      backgroundColor: Colors.green));
-                } catch (e) {
-                  scaffoldMessenger
-                      .showSnackBar(SnackBar(content: Text('خطأ: $e')));
-                }
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
         ),
       ),
     );
+    Navigator.of(context, rootNavigator: true).push(route);
+    route.completed.whenComplete(() {
+      qtyCtrl.dispose();
+      noteCtrl.dispose();
+    });
   }
 
   void _showLowStockRequestDialog(Product p) {
@@ -221,6 +272,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
       widget.session['role']?.toString() ?? 'user',
     );
     final canAdjust = role == AppRole.admin;
+    final groups = _products
+        .map((p) => p.group)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final subGroups = _products
+        .where((p) => _group == null || p.group == _group)
+        .map((p) => p.subGroup)
+        .where((g) => g.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
     final query = _search.text.trim().toLowerCase();
     final filtered = _products.where((p) {
       final matchesQuery = query.isEmpty ||
@@ -232,9 +296,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
           (_stockFilter == 'positive' && quantity > 0) ||
           (_stockFilter == 'zero' && quantity == 0) ||
           (_stockFilter == 'negative' && quantity < 0);
-      return matchesQuery && matchesStock;
+      return matchesQuery &&
+          matchesStock &&
+          (_group == null || p.group == _group) &&
+          (_subGroup == null || p.subGroup == _subGroup);
     }).toList();
     return Scaffold(
+      appBar: AppBar(title: const Text('المخزون')),
       body: Column(
         children: [
           Padding(
@@ -269,10 +337,53 @@ class _InventoryScreenState extends State<InventoryScreen> {
               ],
             ),
           ),
+          Wrap(
+            spacing: 12,
+            children: [
+              DropdownButton<String>(
+                value: _group,
+                hint: const Text('المجموعة'),
+                items: groups
+                    .map((group) =>
+                        DropdownMenuItem(value: group, child: Text(group)))
+                    .toList(),
+                onChanged: (value) => setState(() {
+                  _group = value;
+                  _subGroup = null;
+                }),
+              ),
+              DropdownButton<String>(
+                value: _subGroup,
+                hint: const Text('المجموعة الفرعية'),
+                items: subGroups
+                    .map((group) =>
+                        DropdownMenuItem(value: group, child: Text(group)))
+                    .toList(),
+                onChanged: (value) => setState(() => _subGroup = value),
+              ),
+              if (_group != null || _subGroup != null)
+                TextButton(
+                    onPressed: () => setState(() {
+                          _group = null;
+                          _subGroup = null;
+                        }),
+                    child: const Text('مسح')),
+            ],
+          ),
+          if (_isLoading && _products.isNotEmpty)
+            const LinearProgressIndicator(minHeight: 2),
+          if (_error != null && _products.isNotEmpty)
+            MaterialBanner(
+                content: Text('تعذر تحديث المخزون: $_error'),
+                actions: [
+                  TextButton(
+                      onPressed: _fetchInventory,
+                      child: const Text('إعادة المحاولة')),
+                ]),
           Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
+            child: _isLoading && _products.isEmpty
+                ? const ProductSkeletonWidget(isGrid: false)
+                : _error != null && _products.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -303,6 +414,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                     margin: const EdgeInsets.symmetric(
                                         horizontal: 12, vertical: 6),
                                     child: ListTile(
+                                      leading: ProductImageWidget(
+                                        imageUrl: p.imageUrl,
+                                        width: 48,
+                                        height: 48,
+                                      ),
                                       onTap: () => Navigator.push(
                                         context,
                                         MaterialPageRoute(

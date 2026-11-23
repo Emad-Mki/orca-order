@@ -41,6 +41,7 @@ class OrderDrafts extends Table {
   TextColumn get currency =>
       text().withLength(min: 3, max: 3).withDefault(const Constant('USD'))();
   TextColumn get customTitle => text().nullable()();
+  TextColumn get clientRequestId => text().nullable()();
 }
 
 @DataClassName('LocalOrderItem')
@@ -115,7 +116,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -137,6 +138,9 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 5) {
             await m.addColumn(orderDraftItems, orderDraftItems.productDataJson);
+          }
+          if (from < 6) {
+            await m.addColumn(orderDrafts, orderDrafts.clientRequestId);
           }
         },
         beforeOpen: (details) async {

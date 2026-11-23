@@ -1,4 +1,5 @@
 import 'product.dart';
+import 'order_offer.dart';
 
 /// نموذج صنف الطلب
 class OrderItem {
@@ -12,6 +13,7 @@ class OrderItem {
   final double? priceOffer;
   final double? defaultPrice;
   final double? finalPrice;
+  final double? savedLineTotal;
   final String currency;
   final String status;
   final String? customerNote;
@@ -24,6 +26,8 @@ class OrderItem {
   final String? imageUrl;
   final String? imageFileId;
   final String? imageName;
+  final OrderOffer? offer;
+  final double? expectedUnitPrice;
 
   // New fields for multi-unit and historical tracking
   final double?
@@ -52,6 +56,7 @@ class OrderItem {
     required this.priceOffer,
     required this.defaultPrice,
     required this.finalPrice,
+    this.savedLineTotal,
     required this.currency,
     required this.status,
     this.customerNote,
@@ -64,6 +69,8 @@ class OrderItem {
     this.imageUrl,
     this.imageFileId,
     this.imageName,
+    this.offer,
+    this.expectedUnitPrice,
     this.unitFactor,
     this.basePriceSnapshot,
     this.unit1,
@@ -121,6 +128,7 @@ class OrderItem {
           json['price_offer'] ?? json['display_price_snapshot']),
       defaultPrice: parseNullableDouble(json['default_price']),
       finalPrice: parseNullableDouble(json['final_price']),
+      savedLineTotal: parseNullableDouble(json['total_price']),
       currency: textValue(json['currency'], fallback: 'USD'),
       status: textValue(json['status']),
       customerNote: _nullableText(json['customer_note']),
@@ -135,6 +143,30 @@ class OrderItem {
       imageUrl: _nullableText(json['image_url']),
       imageFileId: _nullableText(json['image_file_id']),
       imageName: _nullableText(json['image_name']),
+      offer: json['offer_snapshot'] is Map
+          ? OrderOffer(Map<String, dynamic>.from(json['offer_snapshot']))
+          : identifierValue(json['offer_id']).trim().isNotEmpty
+              ? OrderOffer({
+                  'offer_id': identifierValue(json['offer_id']),
+                  if (json.containsKey('offer_revision'))
+                    'revision': json['offer_revision'],
+                  if (json.containsKey('code')) 'product_code': json['code'],
+                  if (json.containsKey('unit')) 'unit': json['unit'],
+                  if (json.containsKey('currency'))
+                    'currency': json['currency'],
+                  if (json.containsKey('unit_price_snapshot'))
+                    'offer_price': json['unit_price_snapshot'],
+                  if (json.containsKey('offer_old_price'))
+                    'old_price': json['offer_old_price'],
+                  if (json.containsKey('offer_min_quantity'))
+                    'min_quantity': json['offer_min_quantity'],
+                  if (json.containsKey('offer_starts_at'))
+                    'starts_at': json['offer_starts_at'],
+                  if (json.containsKey('offer_ends_at'))
+                    'ends_at': json['offer_ends_at'],
+                })
+              : null,
+      expectedUnitPrice: parseNullableDouble(json['expected_unit_price']),
       unitFactor: parseNullableDouble(json['unit_factor']),
       basePriceSnapshot: parseNullableDouble(json['base_price_snapshot']),
       unit1: _nullableText(json['unit_1']),
@@ -153,7 +185,9 @@ class OrderItem {
       {double quantity = 1.0,
       String? note,
       String? selectedUnit,
-      double? overridePrice}) {
+      double? overridePrice,
+      OrderOffer? offer,
+      double? expectedUnitPrice}) {
     final unit = selectedUnit?.trim().isNotEmpty == true
         ? selectedUnit!.trim()
         : product.unit;
@@ -175,6 +209,8 @@ class OrderItem {
       status: 'pending',
       stockAvailable: product.stock,
       imageUrl: product.imageUrl,
+      offer: offer,
+      expectedUnitPrice: expectedUnitPrice,
       unitFactor: factor,
       basePriceSnapshot: product.price,
       unit1: product.unit,
@@ -191,13 +227,18 @@ class OrderItem {
 
   /// الحصول على السعر الفعلي للعرض
   /// الأولوية: final_price > price_offer > default_price
+  bool get offerBelowMinimum =>
+      offer?.minimum != null && quantity != null && quantity! < offer!.minimum!;
+
   double get displayPrice {
+    if (offerBelowMinimum) return defaultPrice ?? 0;
     return finalPrice ?? priceOffer ?? defaultPrice ?? 0.0;
   }
 
   double get pricedUnitPrice => finalPrice ?? displayPrice;
-  bool get hasConfiguredUnitPrice =>
-      finalPrice != null || priceOffer != null || defaultPrice != null;
+  bool get hasConfiguredUnitPrice => offerBelowMinimum
+      ? defaultPrice != null
+      : finalPrice != null || priceOffer != null || defaultPrice != null;
   bool get hasConfiguredUnitConversion =>
       unitFactor != null && unitFactor!.isFinite && unitFactor! > 0;
 
@@ -212,6 +253,7 @@ class OrderItem {
     final isUnsubmittedCartItem =
         quantity != null && status.toLowerCase() == 'pending';
     final qty = isUnsubmittedCartItem ? quantity! : pricedQuantity;
+    if (offerBelowMinimum) return (defaultPrice ?? 0) * qty;
     if (finalPrice != null) return finalPrice! * qty;
     if (priceOffer != null) return priceOffer! * qty;
     if (defaultPrice != null) return defaultPrice! * qty;
@@ -235,6 +277,7 @@ class OrderItem {
     double? priceOffer,
     double? defaultPrice,
     double? finalPrice,
+    double? savedLineTotal,
     String? currency,
     String? status,
     String? customerNote,
@@ -247,6 +290,8 @@ class OrderItem {
     String? imageUrl,
     String? imageFileId,
     String? imageName,
+    OrderOffer? offer,
+    double? expectedUnitPrice,
     double? unitFactor,
     double? basePriceSnapshot,
     String? unit1,
@@ -270,6 +315,7 @@ class OrderItem {
       priceOffer: priceOffer ?? this.priceOffer,
       defaultPrice: defaultPrice ?? this.defaultPrice,
       finalPrice: finalPrice ?? this.finalPrice,
+      savedLineTotal: savedLineTotal ?? this.savedLineTotal,
       currency: currency ?? this.currency,
       status: status ?? this.status,
       customerNote: customerNote ?? this.customerNote,
@@ -284,6 +330,8 @@ class OrderItem {
       imageUrl: imageUrl ?? this.imageUrl,
       imageFileId: imageFileId ?? this.imageFileId,
       imageName: imageName ?? this.imageName,
+      offer: offer ?? this.offer,
+      expectedUnitPrice: expectedUnitPrice ?? this.expectedUnitPrice,
       unitFactor: unitFactor ?? this.unitFactor,
       basePriceSnapshot: basePriceSnapshot ?? this.basePriceSnapshot,
       unit1: unit1 ?? this.unit1,
@@ -309,6 +357,7 @@ class OrderItem {
         'price_offer': priceOffer,
         'default_price': defaultPrice,
         'final_price': finalPrice,
+        'total_price': savedLineTotal,
         'currency': currency,
         'status': status,
         'customer_note': customerNote,
@@ -321,6 +370,12 @@ class OrderItem {
         'image_url': imageUrl,
         'image_file_id': imageFileId,
         'image_name': imageName,
+        if (offer != null) ...{
+          'offer_id': offer!.id,
+          'offer_revision': offer!.revision,
+          'offer_price': offer!.price,
+        },
+        if (expectedUnitPrice != null) 'expected_unit_price': expectedUnitPrice,
         'unit_factor': unitFactor,
         'base_price_snapshot': basePriceSnapshot,
         'unit_1': unit1,

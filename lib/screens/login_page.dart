@@ -18,11 +18,6 @@ class _LoginPageState extends State<LoginPage> {
   bool _loading = false;
   String? _error;
 
-  @override
-  void initState() {
-    super.initState();
-  }
-
   void _login() async {
     if (_loading) return;
     setState(() {
@@ -45,7 +40,9 @@ class _LoginPageState extends State<LoginPage> {
 
       widget.onLoginSuccess(sessionData);
     } catch (e) {
-      setState(() => _error = e.toString().replaceAll('Exception: ', ''));
+      if (mounted) {
+        setState(() => _error = e.toString().replaceAll('Exception: ', ''));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -102,7 +99,7 @@ class _LoginPageState extends State<LoginPage> {
                         children: [
                           // الشعار
                           Image.asset(
-                            'assets/app_icon.png',
+                            'assets/images/logo.png',
                             width: 100,
                             height: 100,
                             errorBuilder: (context, error, stackTrace) =>

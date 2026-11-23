@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../models/order_offer.dart';
 import 'package:drift/drift.dart';
 import '../models/models.dart';
 import '../services/database_service.dart';
@@ -16,6 +17,8 @@ class LocalRepository {
     final user = _apiService.currentUser;
     return (user?['user_id'] ?? user?['customer_id'] ?? 'anonymous').toString();
   }
+
+  String get draftScope => '$_env\u0000$_accountId';
 
   // Products
   Future<void> saveProducts(List<Product> products) async {
@@ -82,6 +85,7 @@ class LocalRepository {
         updatedAt: Value(DateTime.now()),
         currency: Value(draft.currency),
         customTitle: Value(draft.customTitle),
+        clientRequestId: Value(draft.clientRequestId),
       );
 
       final itemCompanions = draft.items
@@ -92,8 +96,18 @@ class LocalRepository {
                 quantityMicros: Value((item.quantity * 1000000).toInt()),
                 priceMicros: Value((item.price * 1000000).toInt()),
                 note: Value(item.note),
-                productDataJson: Value(item.originalProduct != null
-                    ? jsonEncode(item.originalProduct!.toJson())
+                productDataJson: Value(item.originalProduct != null ||
+                        item.offer != null ||
+                        item.expectedUnitPrice != null
+                    ? jsonEncode({
+                        ...?item.originalProduct?.toJson(),
+                        if (item.originalProduct == null)
+                          '_draft_no_product': true,
+                        if (item.offer != null)
+                          '_draft_offer': item.offer!.data,
+                        if (item.expectedUnitPrice != null)
+                          '_draft_expected_unit_price': item.expectedUnitPrice,
+                      })
                     : null),
               ))
           .toList();
@@ -136,20 +150,31 @@ class LocalRepository {
         updatedAt: row.updatedAt,
         currency: row.currency,
         customTitle: row.customTitle,
-        items: itemRows
-            .map((i) => DraftItem(
-                  id: i.id,
-                  productCode: i.productCode,
-                  productName: i.productName,
-                  unit: i.unit,
-                  quantity: i.quantityMicros / 1000000,
-                  price: i.priceMicros / 1000000,
-                  note: i.note,
-                  originalProduct: i.productDataJson != null
-                      ? Product.fromJson(jsonDecode(i.productDataJson!))
-                      : null,
-                ))
-            .toList(),
+        clientRequestId: row.clientRequestId,
+        items: itemRows.map((i) {
+          final snapshot = i.productDataJson == null
+              ? null
+              : Map<String, dynamic>.from(jsonDecode(i.productDataJson!));
+          return DraftItem(
+            id: i.id,
+            productCode: i.productCode,
+            productName: i.productName,
+            unit: i.unit,
+            quantity: i.quantityMicros / 1000000,
+            price: i.priceMicros / 1000000,
+            note: i.note,
+            originalProduct:
+                snapshot != null && snapshot['_draft_no_product'] != true
+                    ? Product.fromJson(snapshot)
+                    : null,
+            offer: snapshot?['_draft_offer'] is Map
+                ? OrderOffer(
+                    Map<String, dynamic>.from(snapshot!['_draft_offer']))
+                : null,
+            expectedUnitPrice:
+                (snapshot?['_draft_expected_unit_price'] as num?)?.toDouble(),
+          );
+        }).toList(),
       ));
     }
     return drafts;

@@ -91,6 +91,7 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
 
     final statement = _data!['statement'] as List? ?? [];
     final balance = _data!['finalBalance'] ?? 0;
+    final needsReview = _data!['needs_manual_review'] == true;
     final customer = _data!['customer'];
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
@@ -123,26 +124,39 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('الرصيد الحالي',
+                    Text(
+                        needsReview
+                            ? 'الرصيد يحتاج إلى مراجعة'
+                            : 'الرصيد الحالي',
                         style: TextStyle(
                           color: theme.colorScheme.onPrimary.withValues(
                             alpha: 0.8,
                           ),
                           fontSize: 14,
                         )),
-                    Text(
-                        formatMoneyShort(
-                          balance,
-                          currency: _data?['currency']?.toString() ?? 'USD',
-                        ),
-                        style: TextStyle(
-                            color: theme.colorScheme.onPrimary,
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold)),
+                    if (!needsReview)
+                      Text(
+                          formatMoneyShort(
+                            balance,
+                            currency: _data?['currency']?.toString() ?? 'USD',
+                          ),
+                          style: TextStyle(
+                              color: theme.colorScheme.onPrimary,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold)),
                   ],
                 ),
-                Icon(balance > 0 ? Icons.trending_up : Icons.trending_down,
-                    color: balance > 0 ? Colors.redAccent : Colors.greenAccent,
+                Icon(
+                    needsReview
+                        ? Icons.warning_amber
+                        : balance > 0
+                            ? Icons.trending_up
+                            : Icons.trending_down,
+                    color: needsReview
+                        ? theme.colorScheme.onPrimary
+                        : balance > 0
+                            ? Colors.redAccent
+                            : Colors.greenAccent,
                     size: 40),
               ],
             ),
@@ -195,7 +209,7 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                               style: const TextStyle(
                                   fontStyle: FontStyle.italic, fontSize: 12)),
                         Text(
-                            'الرصيد بعد الحركة: ${formatMoneyShort(s['balance'], currency: 'USD')}',
+                            '${needsReview ? 'رصيد جزئي' : 'الرصيد بعد الحركة'}: ${formatMoneyShort(s['balance'], currency: 'USD')}',
                             style: TextStyle(fontSize: 11, color: muted)),
                       ],
                     ),

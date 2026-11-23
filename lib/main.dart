@@ -23,31 +23,96 @@ import 'settings/setting_definitions.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FcmService.instance.registerBackgroundHandler();
+  runApp(const _Startup());
+}
 
-  // تهيئة خدمة API والجلسة
-  await ApiService().init();
+class _Startup extends StatefulWidget {
+  const _Startup();
 
-  // Set preferred orientations
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+  @override
+  State<_Startup> createState() => _StartupState();
+}
 
-  final preferences = await SharedPreferences.getInstance();
-  final savedMode = preferences.getString(SettingDefinitions.theme.key);
-  final initialThemeMode = savedMode == 'dark'
-      ? ThemeMode.dark
-      : savedMode == 'light'
-          ? ThemeMode.light
-          : savedMode == 'system'
-              ? ThemeMode.system
-              : preferences.containsKey('orca_dark_mode')
-                  ? (preferences.getBool('orca_dark_mode')!
-                      ? ThemeMode.dark
-                      : ThemeMode.light)
-                  : ThemeMode.system;
-  runApp(OrcaApp(initialThemeMode: initialThemeMode));
-  unawaited(_initializeFirebaseNotifications());
+class _StartupState extends State<_Startup> {
+  ThemeMode? _theme;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    setState(() => _error = null);
+    try {
+      await ApiService().init();
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      final preferences = await SharedPreferences.getInstance();
+      final savedMode = preferences.getString(SettingDefinitions.theme.key);
+      final theme = savedMode == 'dark'
+          ? ThemeMode.dark
+          : savedMode == 'light'
+              ? ThemeMode.light
+              : savedMode == 'system'
+                  ? ThemeMode.system
+                  : preferences.containsKey('orca_dark_mode')
+                      ? (preferences.getBool('orca_dark_mode')!
+                          ? ThemeMode.dark
+                          : ThemeMode.light)
+                      : ThemeMode.system;
+      if (!mounted) return;
+      setState(() => _theme = theme);
+      unawaited(_initializeFirebaseNotifications());
+    } catch (error, stack) {
+      debugPrint('Startup failed: $error\n$stack');
+      if (mounted) setState(() => _error = error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_theme != null) return OrcaApp(initialThemeMode: _theme!);
+    return MaterialApp(
+      locale: const Locale('ar'),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ar')],
+      home: Scaffold(
+        backgroundColor: const Color(0xFF00658F),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset('assets/app_icon.png', width: 96, height: 96),
+                if (_error != null) ...[
+                  const SizedBox(height: 24),
+                  const Text(
+                    'تعذر بدء التطبيق. تحقق من الجهاز ثم أعد المحاولة.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: _initialize,
+                    child: const Text('إعادة المحاولة'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 Future<void> _initializeFirebaseNotifications() async {
@@ -79,6 +144,7 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
   late final AppDatabase _database;
   late final AppUpdateService _appUpdateService;
   Timer? _autoUpdateCheckTimer;
+  final Completer<void> _updateCheckSettled = Completer<void>();
 
   // Repositories (will be injected into providers)
   late OrderRepository _orderRepository;
@@ -124,20 +190,26 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
   }
 
   Future<void> _startAutomaticUpdateCheck() async {
-    if (!mounted) return;
-    await _appUpdateService.initialize();
-    if (!mounted) return;
-    await _appUpdateService.checkForUpdates();
-    if (!mounted || !_appUpdateService.consumeAutomaticPrompt()) return;
-    final context = DeepLinkService.navigatorKey.currentContext;
-    if (context == null || !context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AppUpdateDialog(
-        requiredUpdate: _appUpdateService.isRequired,
-      ),
-    );
+    try {
+      if (!mounted) return;
+      await _appUpdateService.initialize();
+      if (!mounted) return;
+      await _appUpdateService.checkForUpdates();
+      if (!mounted || !_appUpdateService.consumeAutomaticPrompt()) return;
+      final context = DeepLinkService.navigatorKey.currentContext;
+      if (context == null || !context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AppUpdateDialog(
+          requiredUpdate: _appUpdateService.isRequired,
+        ),
+      );
+    } catch (error, stack) {
+      debugPrint('Automatic update check failed: $error\n$stack');
+    } finally {
+      if (!_updateCheckSettled.isCompleted) _updateCheckSettled.complete();
+    }
   }
 
   @override
@@ -161,6 +233,7 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
     DeepLinkService.clearSession();
     DeepLinkService.navigatorKey.currentState
         ?.popUntil((route) => route.isFirst);
+    DeepLinkService.resetNavigator();
     setState(() {
       _sessionGeneration++;
       _session = null;
@@ -183,6 +256,7 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
 
   Future<void> _saveSession(Map<String, dynamic> session) async {
     if (mounted) {
+      DeepLinkService.resetNavigator();
       setState(() {
         _sessionGeneration++;
         _session = session;
@@ -201,6 +275,7 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
       DeepLinkService.clearSession();
       DeepLinkService.navigatorKey.currentState
           ?.popUntil((route) => route.isFirst);
+      DeepLinkService.resetNavigator();
       setState(() {
         _sessionGeneration++;
         _session = null;
@@ -293,7 +368,11 @@ class OrcaAppState extends State<OrcaApp> with WidgetsBindingObserver {
             ? LoginPage(onLoginSuccess: _saveSession)
             : _mustChangePassword(_session!)
                 ? ForcePasswordChangeScreen(onComplete: _logout)
-                : HomePage(session: _session!, onLogout: _logout),
+                : HomePage(
+                    session: _session!,
+                    onLogout: _logout,
+                    tutorialGate: _updateCheckSettled.future,
+                  ),
       ),
     );
   }

@@ -125,6 +125,45 @@ void main() {
     final drafts = await repository.getAllDrafts();
     expect(drafts.single.items.single.originalProduct?.code, product.code);
   });
+
+  test('version 5 draft migration preserves rows and foreign keys', () async {
+    await database.close();
+    database = AppDatabase(NativeDatabase.memory(setup: (sql) {
+      sql.execute('''
+        CREATE TABLE order_drafts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, environment TEXT NOT NULL,
+          account_id TEXT NOT NULL, customer_id TEXT NOT NULL,
+          customer_name TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL DEFAULT 0, note TEXT,
+          status TEXT NOT NULL DEFAULT 'draft', currency TEXT NOT NULL DEFAULT 'USD',
+          custom_title TEXT
+        )
+      ''');
+      sql.execute('''
+        CREATE TABLE order_draft_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          draft_id INTEGER NOT NULL REFERENCES order_drafts(id) ON DELETE CASCADE,
+          product_code TEXT NOT NULL, product_name TEXT NOT NULL, unit TEXT NOT NULL,
+          quantity_micros INTEGER NOT NULL, price_micros INTEGER NOT NULL,
+          note TEXT, product_data_json TEXT
+        )
+      ''');
+      sql.execute(
+          "INSERT INTO order_drafts (id,environment,account_id,customer_id,customer_name) VALUES (7,'production','user','c','Customer')");
+      sql.execute(
+          "INSERT INTO order_draft_items (draft_id,product_code,product_name,unit,quantity_micros,price_micros) VALUES (7,'A','Item','piece',2000000,3000000)");
+      sql.execute('PRAGMA user_version = 5');
+    }));
+    final rows = await database.select(database.orderDrafts).get();
+    final items = await database.select(database.orderDraftItems).get();
+    expect(rows.single.id, 7);
+    expect(rows.single.clientRequestId, isNull);
+    expect(items.single.draftId, 7);
+    final fk = await database.customSelect('PRAGMA foreign_keys').getSingle();
+    expect(fk.data.values.single, 1);
+    expect(
+        await database.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
+  });
 }
 
 Product _product(String code, {required double price}) => Product(

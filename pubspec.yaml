@@ -33,9 +33,15 @@ dependencies:
   path: ^1.9.0
   flutter_secure_storage: ^11.2.0
   shimmer: ^3.0.0
+  animations: ">=2.0.11 <3.0.0"
+  showcaseview: ^5.1.0
+  mustache_template: ^2.0.0
+  flutter_inappwebview: ^6.1.0+1
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
@@ -45,10 +51,18 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon/app_logo.png"
+  image_path: "assets/app_icon.png"
   adaptive_icon_background: "#00658F"
-  adaptive_icon_foreground: "assets/icon/app_logo.png"
+  adaptive_icon_foreground: "assets/app_icon.png"
   remove_alpha_ios: true
+
+# The Flutter plugin supplies SQLite on Android; avoid downloads during hooks.
+hooks:
+  user_defines:
+    sqlite3:
+      source: system
+      name: sqlite3
+      name_windows: winsqlite3
 
 flutter:
   uses-material-design: true
@@ -57,6 +71,13 @@ flutter:
     - assets/images/
     - assets/icon/
     - assets/app_icon.png
+    - assets/fonts/Amiri-Regular.ttf
+    - assets/fonts/Amiri-Bold.ttf
+    - assets/fonts/calibri.ttf
+    - assets/fonts/calibrib.ttf
+    - assets/fonts/times.ttf
+    - assets/fonts/timesbd.ttf
+    - Invoice.html
 
   # fonts:
   #   - family: Cairo

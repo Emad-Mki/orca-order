@@ -1,15 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:printing/printing.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
+import '../app_config.dart';
 import '../order_status_mapper.dart';
 import '../providers/order_detail_provider.dart';
+import '../providers/orders_provider.dart';
 import '../repositories/order_repository.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
-import '../utils/number_utils.dart';
+import '../services/invoice_product_images.dart';
 import '../utils/permissions.dart';
 import '../utils/order_edit_policy.dart';
 import 'widgets/order_items_list_view.dart';
@@ -19,6 +20,7 @@ import 'widgets/order_empty_state_widget.dart';
 import '../widgets/order_skeleton.dart';
 import 'order_pricing_screen.dart';
 import 'order_edit_screen.dart';
+import 'sales_invoice_pdf_screen.dart';
 
 class OrderDetailsScreen extends StatefulWidget {
   final String orderId;
@@ -70,10 +72,37 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Future<void> _fetchDetails() async {
     if (_provider == null) return;
 
+    _isInitialized = true;
     await _provider!.fetchOrderDetails(widget.orderId);
 
     if (mounted) {
       setState(() => _isInitialized = true);
+      if (!_provider!.isStale && _provider!.currentOrder != null) {
+        unawaited(_cacheOrderImages(_provider!));
+      }
+    }
+  }
+
+  Future<void> _cacheOrderImages(OrderDetailProvider provider) async {
+    final user = ApiService().currentUser;
+    final id =
+        (user?['user_id'] ?? user?['id'] ?? user?['customer_id'])?.toString() ??
+            '';
+    final role =
+        PermissionHelper.fromString(user?['role']?.toString() ?? '').name;
+    if (id.isEmpty) return;
+    final environment = '${AppConfig.environmentName}:${AppConfig.apiUrl}';
+    final store = InvoiceProductImages(
+      scope: invoiceImageScope(environment, id, role),
+    );
+    final urls = <String, String>{
+      for (final item in provider.items)
+        if (item.imageUrl?.trim().isNotEmpty == true) item.code: item.imageUrl!,
+    };
+    try {
+      await store.cache('order-${widget.orderId}', urls);
+    } catch (error) {
+      debugPrint('Order image caching failed: ${error.runtimeType}');
     }
   }
 
@@ -97,6 +126,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (!mounted) return;
 
     if (success) {
+      final orders = context.read<OrdersProvider>();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content:
@@ -104,6 +134,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             backgroundColor: Theme.of(context).colorScheme.primary),
       );
       await _fetchDetails();
+      await orders.syncAfterMutation(
+          orderId: widget.orderId, status: newStatus);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('فشل التحديث: ${_provider!.errorMessage}')),
@@ -131,6 +163,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   'الطلب: ${order.orderNumber.isNotEmpty ? order.orderNumber : order.orderId}\n'
                   'الزبون: ${order.customerName.isNotEmpty ? order.customerName : order.customerId}',
                 ),
+                if (order.totalAmount != null) ...[
+                  const SizedBox(height: 8),
+                  Text('مبلغ العرض: ${order.totalAmount} ${order.currency}'),
+                ],
                 const SizedBox(height: 12),
                 TextField(
                   controller: reasonController,
@@ -526,7 +562,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   onPressed: _fetchDetails,
                   tooltip: 'تحديث',
                 ),
-                if (canPrice)
+                if (canPrice && !provider.isStale && !provider.isLoading)
                   PopupMenuButton<String>(
                     onSelected: (value) {
                       if (value == 'price') _navigateToPricing(provider);
@@ -548,6 +584,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               children: [
                 if (provider.isLoading)
                   const LinearProgressIndicator(minHeight: 2),
+                if (provider.isStale)
+                  const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Text(
+                      'نسخة محفوظة قديمة محتملة؛ إجراءات تعديل الطلب متوقفة حتى التحديث.',
+                    ),
+                  ),
                 if (provider.errorMessage != null)
                   MaterialBanner(
                     content:
@@ -676,7 +719,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               child: OrderActionsWidget(
                 status: status,
                 userRole: userRole,
-                isBusy: provider.isLoading || _isCancelling,
+                isBusy: provider.isLoading || provider.isStale || _isCancelling,
                 onPrice: () => _navigateToPricing(provider),
                 onApprove: () => _updateStatus(
                   userRole == AppRole.customer
@@ -959,95 +1002,64 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<void> _exportOrderPdf(OrderDetailProvider provider) async {
-    final pdf = pw.Document();
-    final font = await PdfGoogleFonts.almaraiRegular();
-    final fontBold = await PdfGoogleFonts.almaraiBold();
     final order = provider.currentOrder;
-    final hasPricing = OrderStatusMapper.hasPricing(order?.status);
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        theme: pw.ThemeData.withFont(base: font, bold: fontBold),
-        build: (pw.Context context) {
-          return pw.Directionality(
-            textDirection: pw.TextDirection.rtl,
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text('فاتورة طلبية',
-                        style: pw.TextStyle(
-                            fontSize: 24, fontWeight: pw.FontWeight.bold)),
-                    pw.Text('ORCA ORDER',
-                        style:
-                            pw.TextStyle(fontSize: 18, color: PdfColors.blue)),
-                  ],
-                ),
-                pw.SizedBox(height: 20),
-                pw.Text('رقم الطلب: ${order?.orderNumber ?? widget.orderId}'),
-                pw.Text(
-                    'التاريخ: ${order?.createdAt?.toString().split(' ')[0] ?? ''}'),
-                pw.Text('الحالة: ${_getStatusText(order?.status ?? '')}'),
-                pw.SizedBox(height: 20),
-                pw.TableHelper.fromTextArray(
-                  headers: [
-                    'الصنف',
-                    hasPricing ? 'الكمية المسعرة' : 'الكمية',
-                    'السعر',
-                    'الإجمالي'
-                  ],
-                  data: provider.items.map((item) {
-                    final qty = hasPricing
-                        ? item.pricedQuantity
-                        : (item.quantityRequested ?? 0);
-                    String qtyStr = '$qty ${item.unit}';
-                    if (item.unitFactor != null && item.unitFactor! != 1.0) {
-                      final baseQty =
-                          (qty * item.unitFactor!).toStringAsFixed(2);
-                      qtyStr += ' ($baseQty ${item.unit1 ?? ''})';
-                    }
-
-                    return [
-                      item.name,
-                      item.isUnavailable && hasPricing ? 'غير متوفر' : qtyStr,
-                      item.isUnavailable && hasPricing
-                          ? '-'
-                          : formatMoneyShort(
-                              hasPricing
-                                  ? item.pricedUnitPrice
-                                  : item.displayPrice,
-                              currency: item.currency,
-                            ),
-                      formatMoneyShort(
-                        hasPricing ? item.pricedLineTotal : item.total,
-                        currency: item.currency,
-                      ),
-                    ];
-                  }).toList(),
-                  headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                  cellAlignment: pw.Alignment.centerRight,
-                ),
-                pw.SizedBox(height: 20),
-                pw.Divider(),
-                pw.Align(
-                  alignment: pw.Alignment.centerLeft,
-                  child: pw.Text(
-                    'الإجمالي: ${formatMoneyShort(order?.totalAmount ?? provider.total, currency: order?.currency ?? 'USD')}',
-                    style: pw.TextStyle(
-                        fontSize: 16, fontWeight: pw.FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+    if (order == null || order.items == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('تعذر التصدير: بنود الطلب المحفوظة غير متوفرة')));
+      }
+      return;
+    }
+    final role = PermissionHelper.fromString(_role ?? '');
+    final canSeeFinancials = PermissionHelper.hasPermission(
+            role, AppPermission.viewProductPrices) ||
+        PermissionHelper.hasPermission(role, AppPermission.viewFinancials) ||
+        PermissionHelper.hasPermission(
+            role, AppPermission.viewSellingPriceOnly);
+    final hasPricing = OrderStatusMapper.hasPricing(order.status);
+    final snapshot = <String, dynamic>{
+      'invoice_id': 'order-${order.orderId}',
+      'invoice_number': order.orderNumber,
+      'kind': 'order',
+      'status': order.status,
+      'status_label': _getStatusText(order.status),
+      'invoice_date': order.createdAt?.toIso8601String(),
+      'customer_name': order.customerName,
+      'currency': order.currency,
+      'discount': canSeeFinancials ? order.discount : null,
+      'shipping_cost': canSeeFinancials ? order.shippingCost : null,
+      'net_total': canSeeFinancials ? order.totalAmount : null,
+      'notes': order.note,
+      'items': provider.items
+          .map((item) => {
+                'code': item.code,
+                'name_snapshot': item.name,
+                'quantity': hasPricing
+                    ? (item.quantityApproved ?? item.quantityRequested)
+                    : item.quantityRequested,
+                'unit': item.unit,
+                'currency': item.currency,
+                'unit_price': !canSeeFinancials || item.isUnavailable
+                    ? null
+                    : (hasPricing
+                        ? (item.finalPrice ??
+                            item.priceOffer ??
+                            item.defaultPrice)
+                        : (item.priceOffer ?? item.defaultPrice)),
+                'line_total':
+                    canSeeFinancials && hasPricing && !item.isUnavailable
+                        ? item.savedLineTotal
+                        : null,
+                'note': item.customerNote,
+              })
+          .toList(),
+    };
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => SalesInvoicePdfScreen(invoice: snapshot),
       ),
     );
-
-    await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdf.save());
   }
 }

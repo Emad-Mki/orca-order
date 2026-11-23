@@ -6,6 +6,8 @@ import '../providers/products_provider.dart';
 import '../services/api_service.dart';
 import '../utils/permissions.dart';
 import '../widgets/product_image_widget.dart';
+import '../widgets/app_motion.dart';
+import '../widgets/offers_section.dart';
 import 'product_detail_screen.dart';
 import 'products_screen.dart';
 
@@ -39,6 +41,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   Map<String, dynamic> _financialSummary = {};
   Future<void>? _loadRequest;
   late final AnimationController _shimmerController;
+  late final AnimationController _entrance = AnimationController(
+    vsync: this,
+    duration: AppMotion.duration + AppMotion.staggerInterval * 3,
+  );
+  bool _entranceScheduled = false;
 
   @override
   void initState() {
@@ -67,6 +74,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void dispose() {
     _shimmerController.dispose();
+    _entrance.dispose();
     super.dispose();
   }
 
@@ -325,6 +333,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             _buildQuickStatsGrid(),
           ],
           const SizedBox(height: 22),
+          OffersSection(session: widget.session, role: widget.userRole),
           _buildSectionHeader(
             'أحدث المنتجات',
             action: TextButton(
@@ -454,6 +463,13 @@ class _DashboardScreenState extends State<DashboardScreen>
       return _buildEmptyState(emptyMessage);
     }
 
+    if (!_entranceScheduled) {
+      _entranceScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _entrance.forward();
+      });
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -464,15 +480,19 @@ class _DashboardScreenState extends State<DashboardScreen>
             scrollDirection: Axis.horizontal,
             itemCount: products.length,
             separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (context, index) => _ProductCard(
-              product: products[index],
-              onTap: () => _openProduct(products[index]),
-              showPrice: PermissionHelper.hasAnyPermission(
-                widget.userRole,
-                {
-                  AppPermission.viewProductPrices,
-                  AppPermission.viewSellingPriceOnly,
-                },
+            itemBuilder: (context, index) => InitialListEntrance(
+              animation: _entrance,
+              index: index,
+              child: _ProductCard(
+                product: products[index],
+                onTap: () => _openProduct(products[index]),
+                showPrice: PermissionHelper.hasAnyPermission(
+                  widget.userRole,
+                  {
+                    AppPermission.viewProductPrices,
+                    AppPermission.viewSellingPriceOnly,
+                  },
+                ),
               ),
             ),
           ),

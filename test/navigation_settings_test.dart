@@ -22,40 +22,45 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('reset ignores notification responses from the previous session',
-      () async {
-    final repository = _PendingNotifications();
-    final provider = NotificationProvider(repository);
-    final request = provider.load();
-    provider.reset();
-    repository.pending.complete([
-      NotificationModel.fromJson({
-        'notification_id': 'old',
-        'title': 'old session',
-      })
-    ]);
-    await request;
-    expect(provider.notifications, isEmpty);
-    expect(provider.isLoading, isFalse);
-    provider.dispose();
-  });
+  test(
+    'reset ignores notification responses from the previous session',
+    () async {
+      final repository = _PendingNotifications();
+      final provider = NotificationProvider(repository);
+      final request = provider.load();
+      provider.reset();
+      repository.pending.complete([
+        NotificationModel.fromJson({
+          'notification_id': 'old',
+          'title': 'old session',
+        }),
+      ]);
+      await request;
+      expect(provider.notifications, isEmpty);
+      expect(provider.isLoading, isFalse);
+      provider.dispose();
+    },
+  );
 
-  test('an in-flight product request can finish after session disposal',
-      () async {
-    SharedPreferences.setMockInitialValues({});
-    final db = AppDatabase(NativeDatabase.memory());
-    final repository = _PendingProducts(db);
-    final provider = ProductsProvider(repository);
-    final request = provider.fetchProducts();
-    await Future<void>.delayed(Duration.zero);
-    provider.dispose();
-    repository.pending.complete([]);
-    await request;
-    await db.close();
-  });
+  test(
+    'an in-flight product request can finish after session disposal',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final db = AppDatabase(NativeDatabase.memory());
+      final repository = _PendingProducts(db);
+      final provider = ProductsProvider(repository);
+      final request = provider.fetchProducts();
+      await Future<void>.delayed(Duration.zero);
+      provider.dispose();
+      repository.pending.complete([]);
+      await request;
+      await db.close();
+    },
+  );
 
-  testWidgets('back closes menu, returns to home, then confirms exit',
-      (tester) async {
+  testWidgets('back closes menu, returns to home, then confirms exit', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     final db = AppDatabase(NativeDatabase.memory());
     final products = ProductsProvider(ProductRepository(db));
@@ -81,6 +86,10 @@ void main() {
       ),
     );
     await tester.pump();
+    expect(
+      find.image(const AssetImage('assets/images/logo.png')),
+      findsOneWidget,
+    );
     await tester.tap(find.text('المزيد'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('المزيد من الخيارات'), findsOneWidget);
@@ -127,8 +136,9 @@ void main() {
     await db.close();
   });
 
-  testWidgets('order edits require confirmation before discarding',
-      (tester) async {
+  testWidgets('order edits require confirmation before discarding', (
+    tester,
+  ) async {
     final order = Order(
       orderId: '1',
       orderNumber: 'ORD-1',
@@ -137,22 +147,24 @@ void main() {
       status: 'pending',
       currency: 'USD',
     );
-    await tester.pumpWidget(MaterialApp(
-      home: Builder(
-        builder: (context) => Scaffold(
-          body: TextButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) =>
-                    OrderEditScreen(order: order, role: AppRole.customer),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      OrderEditScreen(order: order, role: AppRole.customer),
+                ),
               ),
+              child: const Text('open'),
             ),
-            child: const Text('open'),
           ),
         ),
       ),
-    ));
+    );
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'تعديل');
@@ -170,36 +182,40 @@ void main() {
     expect(find.text('open'), findsOneWidget);
   });
 
-  testWidgets('system settings offers only supported entry points',
-      (tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: SystemSettingsScreen(session: {'role': 'admin'}),
-    ));
+  testWidgets('system settings offers only supported entry points', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: SystemSettingsScreen(session: {'role': 'admin'})),
+    );
     expect(find.text('المبيعات والعملات'), findsOneWidget);
     expect(find.text('الجهاز والحساب والمزامنة'), findsOneWidget);
     expect(find.text('تنسيق أرقام الفواتير'), findsNothing);
     expect(find.text('حد الرصيد المسموح للعميل'), findsNothing);
   });
 
-  testWidgets('profile edits are not discarded without confirmation',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Builder(
-        builder: (context) => Scaffold(
-          body: TextButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const ProfileScreen(
-                  session: {'full_name': 'الاسم الأصلي'},
+  testWidgets('profile edits are not discarded without confirmation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ProfileScreen(
+                    session: {'full_name': 'الاسم الأصلي'},
+                  ),
                 ),
               ),
+              child: const Text('open profile'),
             ),
-            child: const Text('open profile'),
           ),
         ),
       ),
-    ));
+    );
     await tester.tap(find.text('open profile'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'اسم جديد');
@@ -222,8 +238,9 @@ class _PendingNotifications extends NotificationRepository {
   final pending = Completer<List<NotificationModel>>();
 
   @override
-  Future<List<NotificationModel>> getNotifications(
-          {bool forceRefresh = false}) =>
+  Future<List<NotificationModel>> getNotifications({
+    bool forceRefresh = false,
+  }) =>
       pending.future;
 }
 

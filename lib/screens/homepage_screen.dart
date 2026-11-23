@@ -9,13 +9,23 @@ import '../services/fcm_service.dart';
 import '../providers/notification_provider.dart';
 import '../widgets/notification_badge.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:showcaseview/showcaseview.dart';
+import '../services/app_update_service.dart';
+import '../services/guide_coordinator.dart';
 import 'screens.dart';
 
 class HomePage extends StatefulWidget {
   final Map<String, dynamic> session;
   final VoidCallback onLogout;
+  final Future<void>? tutorialGate;
 
-  const HomePage({super.key, required this.session, required this.onLogout});
+  const HomePage({
+    super.key,
+    required this.session,
+    required this.onLogout,
+    this.tutorialGate,
+  });
 
   @override
   State<HomePage> createState() => HomePageState();
@@ -28,6 +38,30 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final PageController _pageController;
   bool _confirmingExit = false;
   bool _routeOpen = false;
+  final GlobalKey _productsGuideKey = GlobalKey();
+  final GlobalKey _orderGuideKey = GlobalKey();
+  final GlobalKey _moreGuideKey = GlobalKey();
+  ShowcaseView? _guide;
+  bool _guideStarting = false;
+  bool _notificationsInitialized = false;
+  bool _guideGateOpen = false;
+  int _productsGuideReplay = 0;
+  bool _guideInterrupted = false;
+  late final VoidCallback _interruptGuideCallback = _interruptGuide;
+
+  void _interruptGuide() {
+    final guide = _guide;
+    if (guide == null || !guide.isShowcaseRunning) return;
+    _guideInterrupted = true;
+    guide.dismiss();
+    _guideInterrupted = false;
+  }
+
+  String? get _guideStorageKey {
+    final id = widget.session['user_id']?.toString().trim() ?? '';
+    if (userRole != AppRole.customer || id.isEmpty) return null;
+    return 'guide.home.v1.${Uri.encodeComponent(id)}';
+  }
 
   @override
   void initState() {
@@ -35,13 +69,158 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     final roleString = widget.session['role'] ?? 'user';
     userRole = PermissionHelper.fromString(roleString);
+    if (_guideStorageKey != null) {
+      _guide = ShowcaseView.register(
+        scope: 'customer-home',
+        skipIfTargetNotPresent: true,
+        disableMovingAnimation: true,
+        disableScaleAnimation: true,
+        disableBarrierInteraction: true,
+        semanticEnable: true,
+        globalTooltipActionConfig: const TooltipActionConfig(
+          position: TooltipActionPosition.insideRight,
+          mainAxisSize: MainAxisSize.min,
+        ),
+        globalTooltipActions: const [
+          TooltipActionButton(
+              type: TooltipDefaultActionType.previous, name: 'السابق'),
+          TooltipActionButton(
+              type: TooltipDefaultActionType.next, name: 'التالي'),
+          TooltipActionButton(
+              type: TooltipDefaultActionType.skip, name: 'تخطي'),
+        ],
+        onFinish: () {
+          GuideCoordinator.release(_interruptGuideCallback);
+          unawaited(_recordGuide('completed'));
+        },
+        onDismiss: (_) {
+          GuideCoordinator.release(_interruptGuideCallback);
+          if (!_guideInterrupted) unawaited(_recordGuide('skipped'));
+        },
+      );
+    }
     _setupNavigation();
     _pageController = PageController(initialPage: selectedIndex);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       DeepLinkService.navigationReady = true;
-      _initializeNotifications();
+      unawaited(_prepareNotificationsAndGuide());
     });
+    widget.tutorialGate?.then((_) {
+      _guideGateOpen = true;
+      _updateGuideReadiness();
+      unawaited(_tryStartGuide());
+    });
+  }
+
+  Future<void> _prepareNotificationsAndGuide() async {
+    try {
+      await _initializeNotifications();
+    } catch (error, stack) {
+      debugPrint('Unable to prepare notifications: $error\n$stack');
+      return;
+    }
+    if (!mounted) return;
+    _notificationsInitialized = true;
+    _updateGuideReadiness();
+    await _tryStartGuide();
+  }
+
+  void _updateGuideReadiness() {
+    if (!mounted) return;
+    setState(() {
+      GuideCoordinator.ready = _guideGateOpen && _notificationsInitialized;
+    });
+  }
+
+  Future<void> _recordGuide(String status) async {
+    final key = _guideStorageKey;
+    if (key == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!await prefs.setString(key, status)) {
+        throw StateError('تعذر حفظ حالة الشرح');
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر حفظ حالة الشرح: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _tryStartGuide({bool manual = false}) async {
+    final guide = _guide;
+    final key = _guideStorageKey;
+    if (!mounted ||
+        guide == null ||
+        key == null ||
+        _guideStarting ||
+        guide.isShowcaseRunning ||
+        !_guideGateOpen ||
+        !_notificationsInitialized) {
+      if (manual && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('سيكون الشرح متاحًا بعد اكتمال تهيئة التطبيق.'),
+        ));
+      }
+      return;
+    }
+    _guideStarting = true;
+    try {
+      if (!manual) {
+        final prefs = await SharedPreferences.getInstance();
+        if (prefs.getString(key) != null) return;
+      }
+      if (!mounted ||
+          selectedIndex != 2 ||
+          _routeOpen ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          DeepLinkService.hasPendingNotification ||
+          context.read<AppUpdateService?>()?.isRequired == true ||
+          (WidgetsBinding.instance.lifecycleState != null &&
+              WidgetsBinding.instance.lifecycleState !=
+                  AppLifecycleState.resumed)) {
+        if (manual && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('تعذر عرض الشرح الآن. أعد المحاولة لاحقًا.'),
+          ));
+        }
+        return;
+      }
+      final targets = [_productsGuideKey, _orderGuideKey, _moreGuideKey]
+          .where(guide.isTargetRendered)
+          .toList();
+      if (targets.isNotEmpty &&
+          GuideCoordinator.claim(_interruptGuideCallback)) {
+        guide.startShowCase(targets);
+      }
+    } catch (error) {
+      GuideCoordinator.release(_interruptGuideCallback);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر عرض الشرح: $error')),
+        );
+      }
+    } finally {
+      _guideStarting = false;
+    }
+  }
+
+  Widget _guideTarget(GlobalKey key, String description, Widget child) {
+    if (_guide == null) return child;
+    final colors = Theme.of(context).colorScheme;
+    return Showcase(
+      key: key,
+      scope: 'customer-home',
+      description: description,
+      descriptionTextDirection: TextDirection.rtl,
+      tooltipBackgroundColor: colors.surface,
+      textColor: colors.onSurface,
+      disableDefaultTargetGestures: true,
+      child: child,
+    );
   }
 
   Future<void> _initializeNotifications() async {
@@ -90,9 +269,12 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    GuideCoordinator.ready = false;
     DeepLinkService.navigationReady = false;
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
+    _guide?.unregister();
+    GuideCoordinator.release(_interruptGuideCallback);
     super.dispose();
   }
 
@@ -105,10 +287,17 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         isSalesperson ? 'فواتيري' : 'الطلبات',
         (s) => isSalesperson
             ? SalesInvoicesScreen(session: s)
-            : OrdersScreen(session: s),
+            : OrdersScreen(session: s, motionVisible: selectedIndex == 0),
       ),
       _NavConfig(
-          1, Icons.inventory_2, 'المنتجات', (s) => ProductsScreen(session: s)),
+          1,
+          Icons.inventory_2,
+          'المنتجات',
+          (s) => ProductsScreen(
+                session: s,
+                guideVisible: selectedIndex == 1,
+                guideReplay: _productsGuideReplay,
+              )),
       _NavConfig(2, Icons.home, 'الرئيسية',
           (s) => DashboardScreen(session: s, userRole: userRole)),
       _NavConfig(
@@ -369,6 +558,31 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _openSettings() async {
+    if (_routeOpen) return;
+    _routeOpen = true;
+    Object? replay;
+    try {
+      replay = await Navigator.push<Object?>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SettingsScreen(session: widget.session),
+        ),
+      );
+    } finally {
+      _routeOpen = false;
+    }
+    if (replay == true && mounted) {
+      await _tryStartGuide(manual: true);
+    } else if (replay == 'products' && mounted) {
+      setState(() {
+        _productsGuideReplay++;
+        selectedIndex = 1;
+      });
+      _pageController.jumpToPage(1);
+    }
+  }
+
   void _confirmLogout() {
     Navigator.pop(context);
     showDialog(
@@ -383,16 +597,18 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
               child: const Text('إلغاء')),
           ElevatedButton(
               onPressed: () async {
-                Navigator.pop(context);
                 final navigator = Navigator.of(context);
                 final notificationProvider =
                     context.read<NotificationProvider>();
                 final messenger = ScaffoldMessenger.of(context);
+                navigator.pop();
                 String? logoutError;
-                final deviceId = await FcmService.instance.getDeviceId();
+                String? deviceId;
                 try {
+                  deviceId = await FcmService.instance.getDeviceId();
                   await FcmService.instance.unbindUser();
                 } catch (error) {
+                  FcmService.instance.clearUserSession();
                   logoutError = 'تعذر تعطيل إشعارات هذا الجهاز: $error';
                 }
                 notificationProvider.reset();
@@ -430,14 +646,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         appBar: AppBar(
           centerTitle: true,
           leading: IconButton(
-            onPressed: () =>
-                _pushScreen(SettingsScreen(session: widget.session)),
+            onPressed: _openSettings,
+            tooltip: 'الإعدادات',
             icon: const Icon(Icons.settings),
           ),
           title: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset('assets/app_icon.png',
+              Image.asset('assets/images/logo.png',
                   height: 30,
                   errorBuilder: (_, __, ___) =>
                       const Icon(Icons.shopping_basket)),
@@ -479,18 +695,22 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 12),
                   ],
-                  FloatingActionButton.extended(
-                    heroTag: 'new-order',
-                    onPressed: () => _pushScreen(
-                      userRole == AppRole.salesperson
-                          ? const SalesInvoiceScreen()
-                          : NewOrderScreen(session: widget.session),
-                    ),
-                    icon: const Icon(Icons.add_shopping_cart),
-                    label: Text(
-                      userRole == AppRole.salesperson
-                          ? 'فاتورة نقدية'
-                          : 'إضافة طلب',
+                  _guideTarget(
+                    _orderGuideKey,
+                    'ابدأ طلبًا جديدًا، ثم راجع الكميات قبل الإرسال.',
+                    FloatingActionButton.extended(
+                      heroTag: 'new-order',
+                      onPressed: () => _pushScreen(
+                        userRole == AppRole.salesperson
+                            ? const SalesInvoiceScreen()
+                            : NewOrderScreen(session: widget.session),
+                      ),
+                      icon: const Icon(Icons.add_shopping_cart),
+                      label: Text(
+                        userRole == AppRole.salesperson
+                            ? 'فاتورة نقدية'
+                            : 'إضافة طلب',
+                      ),
                     ),
                   ),
                 ],
@@ -521,7 +741,18 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
               final item = _navItems[i];
               final isSelected = selectedIndex == i;
               if (item.label == 'الرئيسية') return _buildCenterFab(i, item);
-              return _buildNavItem(i, item, isSelected);
+              final child = _buildNavItem(i, item, isSelected);
+              if (item.label == 'المنتجات') {
+                return _guideTarget(
+                    _productsGuideKey,
+                    'تصفح المنتجات وابحث بالاسم أو الرمز، ثم افتح تفاصيل المنتج.',
+                    child);
+              }
+              if (item.label == 'المزيد') {
+                return _guideTarget(_moreGuideKey,
+                    'ستجد هنا المسودات والخيارات المتاحة لحسابك.', child);
+              }
+              return child;
             }),
           ),
         ),

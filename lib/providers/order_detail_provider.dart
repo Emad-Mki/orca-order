@@ -2,6 +2,7 @@ import 'package:provider/provider.dart';
 import '../repositories/order_repository.dart';
 import '../models/order.dart';
 import '../models/order_item.dart';
+import '../services/api_service.dart';
 import 'auth_provider.dart';
 import 'async_session_notifier.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
   Order? _currentOrder;
   List<OrderItem> _items = [];
   bool _isLoading = false;
+  bool _isStale = false;
   String? _errorMessage;
   Map<String, dynamic>? _shipmentData;
   Map<String, dynamic>? _balanceInfo;
@@ -27,6 +29,7 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
   Order? get currentOrder => _currentOrder;
   List<OrderItem> get items => _items;
   bool get isLoading => _isLoading;
+  bool get isStale => _isStale;
   String? get errorMessage => _errorMessage;
   Map<String, dynamic>? get shipmentData => _shipmentData;
   Map<String, dynamic>? get balanceInfo => _balanceInfo;
@@ -64,6 +67,21 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
 
   Future<void> _performFetchOrderDetails(String orderId, int generation) async {
     try {
+      try {
+        final cached = await _orderRepository.getCachedOrderDetails(orderId);
+        if (generation != _fetchGeneration) return;
+        if (cached != null) {
+          _currentOrder = cached;
+          _items = cached.items ?? [];
+          _discount = cached.discount;
+          _shippingCost = cached.shippingCost;
+          _shipmentData = cached.shipmentData;
+          _isStale = true;
+          notifyListeners();
+        }
+      } catch (error) {
+        debugPrint('Order detail cache read failed: ${error.runtimeType}');
+      }
       final order = await _orderRepository.getOrderDetails(orderId);
       if (generation != _fetchGeneration) return;
       if (order != null) {
@@ -72,9 +90,17 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
         _discount = order.discount;
         _shippingCost = order.shippingCost;
         _shipmentData = order.shipmentData;
+        _isStale = _orderRepository.lastDetailFromCache;
+        _errorMessage = _orderRepository.detailCacheError;
       }
     } catch (e) {
-      if (generation == _fetchGeneration) _errorMessage = e.toString();
+      if (generation == _fetchGeneration) {
+        _errorMessage = e.toString();
+        if (e is! ApiException || !e.transportFailure) {
+          _currentOrder = null;
+          _items = [];
+        }
+      }
     } finally {
       if (generation == _fetchGeneration) {
         _isLoading = false;
@@ -171,6 +197,7 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
     double? total,
     String? notes,
     bool submitForCustomer = false,
+    bool confirmOfferPriceOverride = false,
   }) async {
     if (_currentOrder == null) return false;
 
@@ -222,6 +249,9 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
         total: total,
         notes: notes,
         submitForCustomer: submitForCustomer,
+        extraParams: confirmOfferPriceOverride
+            ? {'confirm_offer_price_override': true}
+            : null,
       );
 
       _isLoading = false;
@@ -238,9 +268,10 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
   /// تحديث حالة الطلب
   Future<bool> updateStatus(String newStatus,
       {String? reason, bool proxyForCustomer = false}) async {
-    if (_currentOrder == null) return false;
+    if (_currentOrder == null || _isLoading) return false;
 
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {

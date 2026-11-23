@@ -1,0 +1,52 @@
+{
+  "company_logo_src": "REPLACE_WITH_DATA_URI_FROM_assets/icon/app_logo.png",
+  "font_calibri_regular_src": "REPLACE_WITH_CALIBRI_REGULAR_DATA_URI",
+  "font_calibri_bold_src": "REPLACE_WITH_CALIBRI_BOLD_DATA_URI",
+  "font_times_regular_src": "REPLACE_WITH_TIMES_REGULAR_DATA_URI",
+  "font_times_bold_src": "REPLACE_WITH_TIMES_BOLD_DATA_URI",
+  "invoice_number": "2451",
+  "invoice_date": "2026-11-21",
+  "customer_name": "عمار خميس - الباب",
+  "customer_phone": "0956881958",
+  "invoice_type": "مبيع",
+  "invoice_statement": "",
+  "currency": "$",
+  "payment_method": "آجل",
+  "total_quantity": "50.00",
+  "subtotal": "462.500",
+  "discount": "0.00",
+  "net_total": "462.50",
+  "paid_amount": "0.00",
+  "previous_balance": "0.00",
+  "final_balance": "462.50",
+  "print_date": "2026/11/22",
+  "total_pages": "1",
+  "pages": [
+    {
+      "page_number": "1",
+      "is_last_page": true,
+      "items": [
+        {
+          "index": "1",
+          "image_src": "",
+          "name_parts": [
+            {
+              "text": "رفراف كامل دولاب مفرد ",
+              "is_ltr": false
+            },
+            {
+              "text": "45x196",
+              "is_ltr": true
+            }
+          ],
+          "code": "TR9001",
+          "quantity": "50.0",
+          "unit": "قطعة",
+          "unit_price": "9.25",
+          "line_total": "462.50",
+          "note_parts": []
+        }
+      ]
+    }
+  ]
+}

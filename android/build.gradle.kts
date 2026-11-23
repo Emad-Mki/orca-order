@@ -6,7 +6,6 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:9.0.1")
         if (file("app/google-services.json").isFile) {
             classpath("com.google.gms:google-services:4.4.2")
         }
@@ -35,17 +34,34 @@ subprojects {
 }
 
 subprojects {
-    plugins.withId("com.android.library") {
-        extensions.configure<com.android.build.api.variant.LibraryAndroidComponentsExtension> {
-            finalizeDsl { libraryExtension ->
-                libraryExtension.compileSdk = 37
-            }
-        }
-    }
+    project.evaluationDependsOn(":app")
 }
 
 subprojects {
-    project.evaluationDependsOn(":app")
+    plugins.withId("com.android.library") {
+        val androidExtension =
+            extensions.getByType(com.android.build.gradle.LibraryExtension::class.java)
+        androidExtension.compileSdk = 37
+        androidExtension.buildTypes.configureEach {
+            val configuredProguardFiles = proguardFiles.toList()
+            if (configuredProguardFiles.any {
+                    it.toString().contains("proguard-android.txt")
+                }
+            ) {
+                setProguardFiles(
+                    configuredProguardFiles.map {
+                        if (it.toString().contains("proguard-android.txt")) {
+                            androidExtension.getDefaultProguardFile(
+                                "proguard-android-optimize.txt"
+                            )
+                        } else {
+                            it
+                        }
+                    }
+                )
+            }
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

@@ -9,6 +9,10 @@ import '../services/api_service.dart';
 import '../utils/number_utils.dart';
 import '../utils/guarded_navigation.dart';
 import '../widgets/product_image_widget.dart';
+import '../widgets/sales_customer_form.dart';
+import '../widgets/guided_tour.dart';
+import '../services/guide_coordinator.dart';
+import '../utils/permissions.dart';
 
 class SalesInvoiceScreen extends StatefulWidget {
   const SalesInvoiceScreen({super.key});
@@ -40,6 +44,8 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
   bool _allowPop = false;
   String? _error;
   String? _requestId;
+  SalesCustomerRequest? _pendingCustomer;
+  bool _creatingCustomer = false;
 
   bool get _isSubmissionLocked => _submitting || _requestId != null;
 
@@ -321,56 +327,31 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
   }
 
   Future<void> _createCustomer() async {
-    final name = TextEditingController();
-    final phone = TextEditingController();
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('إضافة زبون تجاري'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'اسم الزبون')),
-            TextField(
-                controller: phone,
-                keyboardType: TextInputType.phone,
-                decoration:
-                    const InputDecoration(labelText: 'الهاتف (اختياري)')),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, {
-              'name': name.text.trim(),
-              'phone': phone.text.trim(),
-            }),
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
-    );
-    name.dispose();
-    phone.dispose();
-    if (result == null || result['name']!.length < 2) return;
+    if (_creatingCustomer) return;
+    setState(() => _creatingCustomer = true);
     try {
-      final response = await ApiService().sales.createCustomer(
-            fullName: result['name']!,
-            phone: result['phone']!,
-            clientRequestId: _newRequestId(),
-          );
-      final customer = Map<String, dynamic>.from(response['customer'] as Map);
+      if (_pendingCustomer == null) {
+        final result = await showSalesCustomerForm(context);
+        if (result == null || !mounted) return;
+        _pendingCustomer = SalesCustomerRequest(
+          name: result['name']!,
+          phone: result['phone']!,
+        );
+      }
+      final customer = await _pendingCustomer!.submit();
       if (!mounted) return;
       setState(() {
+        _pendingCustomer = null;
         _customers = [..._customers, customer];
         _customerId = customer['customer_id'].toString();
       });
     } catch (error) {
-      if (mounted) setState(() => _error = _errorMessage(error));
+      if (mounted) {
+        setState(() => _error =
+            '${_errorMessage(error)}. أعد محاولة إضافة الزبون للعملية نفسها.');
+      }
+    } finally {
+      if (mounted) setState(() => _creatingCustomer = false);
     }
   }
 
@@ -867,384 +848,434 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
             ? theme.colorScheme.error
             : theme.colorScheme.tertiary;
 
-    return Scaffold(
-      appBar: const _InvoiceAppBar(),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-            child: TextField(
-              controller: _search,
-              enabled: !_isSubmissionLocked,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'ابحث بالاسم أو الكود أو OEM',
-                border: OutlineInputBorder(),
+    final session = ApiService().currentUser;
+    final role =
+        PermissionHelper.fromString(session?['role']?.toString() ?? '');
+    final canGuide = const {
+      AppRole.admin,
+      AppRole.manager,
+      AppRole.accountant,
+      AppRole.salesperson,
+    }.contains(role);
+    return GuidedTour(
+      accountId: canGuide
+          ? (session ?? const <String, dynamic>{})['user_id']?.toString()
+          : null,
+      name: 'invoice',
+      targetCount: 4,
+      ready: GuideCoordinator.ready,
+      canStart: () =>
+          !_isSubmissionLocked &&
+          !_creatingCustomer &&
+          _cart.isEmpty &&
+          _customerId == null &&
+          MediaQuery.viewInsetsOf(context).bottom == 0,
+      builder: (context, target) => Scaffold(
+        appBar: const _InvoiceAppBar(),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              child: target(
+                0,
+                'ابحث عن المواد وأضفها للفاتورة قبل مراجعتها.',
+                TextField(
+                    controller: _search,
+                    enabled: !_isSubmissionLocked,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'ابحث بالاسم أو الكود أو OEM',
+                      border: OutlineInputBorder(),
+                    )),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _selectedGroup,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'المجموعة'),
-                    items: [
-                      const DropdownMenuItem(
-                          value: 'all', child: Text('كل المجموعات')),
-                      ...groups.map((v) => DropdownMenuItem(
-                          value: v,
-                          child: Text(v, overflow: TextOverflow.ellipsis))),
-                    ],
-                    onChanged: _isSubmissionLocked
-                        ? null
-                        : (value) => setState(() {
-                              _selectedGroup = value ?? 'all';
-                              _selectedSubGroup = 'all';
-                            }),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _selectedSubGroup,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'الفرعية'),
-                    items: [
-                      const DropdownMenuItem(
-                          value: 'all', child: Text('كل الفرعيات')),
-                      ...subGroups.map((v) => DropdownMenuItem(
-                          value: v,
-                          child: Text(v, overflow: TextOverflow.ellipsis))),
-                    ],
-                    onChanged: _isSubmissionLocked
-                        ? null
-                        : (value) => setState(
-                              () => _selectedSubGroup = value ?? 'all',
-                            ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(
-            height: 170,
-            child: filteredProducts.isEmpty
-                ? const Center(child: Text('لا توجد مواد'))
-                : ListView.builder(
-                    itemCount: filteredProducts.length,
-                    itemBuilder: (context, index) {
-                      final product = filteredProducts[index];
-                      return ListTile(
-                        leading: ProductImageWidget(
-                          imageUrl: product.imageUrl,
-                          width: 42,
-                          height: 42,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        title: Text(product.name),
-                        subtitle: Text(
-                          '${product.code} · ${product.unit} · '
-                          '${product.price} USD · متاح: ${product.quantity}',
-                        ),
-                        trailing: IconButton(
-                          onPressed: _isSubmissionLocked
-                              ? null
-                              : () => _addProduct(product),
-                          icon: const Icon(Icons.add_circle_outline),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-              children: [
-                if (_cart.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(20),
-                    child: Center(child: Text('أضف مادة إلى الفاتورة')),
-                  ),
-                ..._cart.entries.map((entry) {
-                  final code = entry.key;
-                  final line = entry.value;
-                  return Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: ProductImageWidget(
-                                  imageUrl: line.product.imageUrl,
-                                  width: 48,
-                                  height: 48,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  '${line.product.name}\n'
-                                  '${line.product.code} · ${line.product.unit}',
-                                  softWrap: true,
-                                  style: theme.textTheme.titleSmall,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              IconButton(
-                                onPressed: _isSubmissionLocked ||
-                                        line.quantity <= 1
-                                    ? null
-                                    : () => setState(() => _cart[code] = line
-                                        .copyWith(quantity: line.quantity - 1)),
-                                icon: const Icon(Icons.remove_circle_outline),
-                              ),
-                              Text('${line.quantity}'),
-                              IconButton(
-                                onPressed: _isSubmissionLocked
-                                    ? null
-                                    : () => setState(() => _cart[code] = line
-                                        .copyWith(quantity: line.quantity + 1)),
-                                icon: const Icon(Icons.add_circle_outline),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextFormField(
-                                  key: ValueKey('price-$code'),
-                                  initialValue: line.unitPrice.toString(),
-                                  enabled: !_isSubmissionLocked,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  decoration: const InputDecoration(
-                                      labelText: 'سعر الوحدة USD'),
-                                  onChanged: (value) {
-                                    final price = double.tryParse(value);
-                                    if (price != null && price >= 0) {
-                                      setState(() => _cart[code] =
-                                          line.copyWith(unitPrice: price));
-                                    }
-                                  },
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: _isSubmissionLocked
-                                    ? null
-                                    : () => setState(() => _cart.remove(code)),
-                                tooltip: 'إزالة',
-                                icon: const Icon(Icons.delete_outline),
-                              ),
-                            ],
-                          ),
-                          if (line.quantity > line.product.quantity)
-                            Text(
-                              'تنبيه: تجاوز الرصيد المسجل؛ سيسجل الرصيد سالبًا.',
-                              style:
-                                  TextStyle(color: theme.colorScheme.tertiary),
-                            ),
-                          Text(
-                              'إجمالي السطر: ${formatMoneyShort(line.total, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          TextFormField(
-                            key: ValueKey('note-$code'),
-                            initialValue: line.note,
-                            enabled: !_isSubmissionLocked,
-                            minLines: 1,
-                            maxLines: 3,
-                            decoration: const InputDecoration(
-                                labelText: 'ملاحظة المادة'),
-                            onChanged: (value) => setState(
-                                () => _cart[code] = line.copyWith(note: value)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-                DropdownButtonFormField<String>(
-                  initialValue: _customerId ?? 'CUS-SHOP',
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'حساب الزبون'),
-                  items: [
-                    const DropdownMenuItem(
-                        value: 'CUS-SHOP', child: Text('زبائن محل — دون دين')),
-                    ..._customers.map((customer) {
-                      final id = customer['customer_id'].toString();
-                      final name = customer['full_name']?.toString() ?? id;
-                      return DropdownMenuItem(
-                          value: id,
-                          child: Text(name, overflow: TextOverflow.ellipsis));
-                    }),
-                  ],
-                  onChanged: _isSubmissionLocked
-                      ? null
-                      : (value) => setState(
-                            () => _customerId =
-                                value == 'CUS-SHOP' ? null : value,
-                          ),
-                ),
-                Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: TextButton.icon(
-                    onPressed: _isSubmissionLocked ? null : _createCustomer,
-                    icon: const Icon(Icons.person_add_alt_1),
-                    label: const Text('إضافة زبون دون حساب دخول'),
-                  ),
-                ),
-                TextField(
-                  controller: _buyerName,
-                  enabled: !_isSubmissionLocked,
-                  decoration:
-                      const InputDecoration(labelText: 'اسم المشتري (اختياري)'),
-                ),
-                TextField(
-                  controller: _buyerPhone,
-                  enabled: !_isSubmissionLocked,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                      labelText: 'هاتف المشتري (اختياري)'),
-                ),
-                TextField(
-                  controller: _notes,
-                  enabled: !_isSubmissionLocked,
-                  minLines: 1,
-                  maxLines: 4,
-                  decoration: const InputDecoration(labelText: 'ملاحظات'),
-                ),
-                TextField(
-                  controller: _discount,
-                  enabled: !_isSubmissionLocked,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration:
-                      const InputDecoration(labelText: 'الحسم الثابت USD'),
-                  onChanged: (_) => setState(() {}),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('تسوية الفاتورة بالكامل'),
-                  subtitle: const Text(
-                      'استنتاج سعر SYP/USD عند وجود معطيات كافية فقط'),
-                  value: _settleFull,
-                  onChanged: _isSubmissionLocked
-                      ? null
-                      : (value) => setState(() => _settleFull = value),
-                ),
-                _paymentSection('المبالغ المستلمة من الزبون', _received, false),
-                _paymentSection(
-                    'المبالغ المعادة للزبون (باقي دفع)', _refunded, true),
-                if (previewPaid > _netTotal + 0.005)
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('اعتماد الزيادة رصيدًا دائنًا للزبون'),
-                    subtitle: const Text('لن تنشأ زيادة على حساب «زبائن محل».'),
-                    value: _confirmCredit,
-                    onChanged: _customerId == null ||
-                            _customerId == 'CUS-SHOP' ||
-                            _isSubmissionLocked
-                        ? null
-                        : (value) => setState(() => _confirmCredit = value),
-                  ),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                            'إجمالي المواد: ${formatMoneyShort(_subtotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                        Text(
-                            'الحسم: ${formatMoneyShort(_discountValue, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                        Text(
-                            'صافي الفاتورة: ${formatMoneyShort(_netTotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                        Text(
-                            'المستلم مكافئًا: ${formatMoneyShort(_receivedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                        Text(
-                            'المعاد مكافئًا: ${formatMoneyShort(_refundedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                        Text(
-                            'صافي المسدد: ${formatMoneyShort(previewPaid, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                        Text(
-                            'المتبقي: ${formatMoneyShort(max(0, _netTotal - previewPaid), currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                        const SizedBox(height: 4),
-                        Text(
-                          'حالة السداد: $paymentStatus',
-                          style: TextStyle(
-                              color: statusColor, fontWeight: FontWeight.bold),
-                        ),
-                        const Text('حالة تنفيذ الطلب مستقلة عن حالة السداد.'),
-                      ],
-                    ),
-                  ),
-                ),
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(_error!,
-                        style: TextStyle(color: theme.colorScheme.error)),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      'صافي الفاتورة ${formatMoneyShort(_netTotal, currency: 'USD', decimalPlaces: _decimals('USD'))}',
-                      style: theme.textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _selectedGroup,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'المجموعة'),
+                      items: [
+                        const DropdownMenuItem(
+                            value: 'all', child: Text('كل المجموعات')),
+                        ...groups.map((v) => DropdownMenuItem(
+                            value: v,
+                            child: Text(v, overflow: TextOverflow.ellipsis))),
+                      ],
+                      onChanged: _isSubmissionLocked
+                          ? null
+                          : (value) => setState(() {
+                                _selectedGroup = value ?? 'all';
+                                _selectedSubGroup = 'all';
+                              }),
                     ),
                   ),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      _previewNetPaid > _netTotal + 0.005
-                          ? 'رصيد دائن ${formatMoneyShort(_previewNetPaid - _netTotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'
-                          : 'متبقٍ ${formatMoneyShort(max(0, _netTotal - _previewNetPaid), currency: 'USD', decimalPlaces: _decimals('USD'))}',
-                      textAlign: TextAlign.end,
-                      style: theme.textTheme.bodySmall,
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _selectedSubGroup,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'الفرعية'),
+                      items: [
+                        const DropdownMenuItem(
+                            value: 'all', child: Text('كل الفرعيات')),
+                        ...subGroups.map((v) => DropdownMenuItem(
+                            value: v,
+                            child: Text(v, overflow: TextOverflow.ellipsis))),
+                      ],
+                      onChanged: _isSubmissionLocked
+                          ? null
+                          : (value) => setState(
+                                () => _selectedSubGroup = value ?? 'all',
+                              ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _submitting ? null : _reviewAndSubmit,
-                  icon: _submitting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.receipt_long),
-                  label: Text(
-                    _submitting
-                        ? 'جارٍ الحفظ...'
-                        : _requestId == null
-                            ? 'مراجعة وحفظ الفاتورة'
-                            : 'إعادة المحاولة بنفس البيانات',
+            ),
+            SizedBox(
+              height: 170,
+              child: filteredProducts.isEmpty
+                  ? const Center(child: Text('لا توجد مواد'))
+                  : ListView.builder(
+                      itemCount: filteredProducts.length,
+                      itemBuilder: (context, index) {
+                        final product = filteredProducts[index];
+                        return ListTile(
+                          leading: ProductImageWidget(
+                            imageUrl: product.imageUrl,
+                            width: 42,
+                            height: 42,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          title: Text(product.name),
+                          subtitle: Text(
+                            '${product.code} · ${product.unit} · '
+                            '${product.price} USD · متاح: ${product.quantity}',
+                          ),
+                          trailing: IconButton(
+                            onPressed: _isSubmissionLocked
+                                ? null
+                                : () => _addProduct(product),
+                            icon: const Icon(Icons.add_circle_outline),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+                children: [
+                  if (_cart.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Center(child: Text('أضف مادة إلى الفاتورة')),
+                    ),
+                  ..._cart.entries.map((entry) {
+                    final code = entry.key;
+                    final line = entry.value;
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: ProductImageWidget(
+                                    imageUrl: line.product.imageUrl,
+                                    width: 48,
+                                    height: 48,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '${line.product.name}\n'
+                                    '${line.product.code} · ${line.product.unit}',
+                                    softWrap: true,
+                                    style: theme.textTheme.titleSmall,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                IconButton(
+                                  onPressed:
+                                      _isSubmissionLocked || line.quantity <= 1
+                                          ? null
+                                          : () => setState(() => _cart[code] =
+                                              line.copyWith(
+                                                  quantity: line.quantity - 1)),
+                                  icon: const Icon(Icons.remove_circle_outline),
+                                ),
+                                Text('${line.quantity}'),
+                                IconButton(
+                                  onPressed: _isSubmissionLocked
+                                      ? null
+                                      : () => setState(() => _cart[code] =
+                                          line.copyWith(
+                                              quantity: line.quantity + 1)),
+                                  icon: const Icon(Icons.add_circle_outline),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextFormField(
+                                    key: ValueKey('price-$code'),
+                                    initialValue: line.unitPrice.toString(),
+                                    enabled: !_isSubmissionLocked,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    decoration: const InputDecoration(
+                                        labelText: 'سعر الوحدة USD'),
+                                    onChanged: (value) {
+                                      final price = double.tryParse(value);
+                                      if (price != null && price >= 0) {
+                                        setState(() => _cart[code] =
+                                            line.copyWith(unitPrice: price));
+                                      }
+                                    },
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: _isSubmissionLocked
+                                      ? null
+                                      : () =>
+                                          setState(() => _cart.remove(code)),
+                                  tooltip: 'إزالة',
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              ],
+                            ),
+                            if (line.quantity > line.product.quantity)
+                              Text(
+                                'تنبيه: تجاوز الرصيد المسجل؛ سيسجل الرصيد سالبًا.',
+                                style: TextStyle(
+                                    color: theme.colorScheme.tertiary),
+                              ),
+                            Text(
+                                'إجمالي السطر: ${formatMoneyShort(line.total, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                            TextFormField(
+                              key: ValueKey('note-$code'),
+                              initialValue: line.note,
+                              enabled: !_isSubmissionLocked,
+                              minLines: 1,
+                              maxLines: 3,
+                              decoration: const InputDecoration(
+                                  labelText: 'ملاحظة المادة'),
+                              onChanged: (value) => setState(() =>
+                                  _cart[code] = line.copyWith(note: value)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  target(
+                    1,
+                    'اختر حساب الزبون المناسب قبل تسجيل الدفعات.',
+                    DropdownButtonFormField<String>(
+                        initialValue: _customerId ?? 'CUS-SHOP',
+                        isExpanded: true,
+                        decoration:
+                            const InputDecoration(labelText: 'حساب الزبون'),
+                        items: [
+                          const DropdownMenuItem(
+                              value: 'CUS-SHOP',
+                              child: Text('زبائن محل — دون دين')),
+                          ..._customers.map((customer) {
+                            final id = customer['customer_id'].toString();
+                            final name =
+                                customer['full_name']?.toString() ?? id;
+                            return DropdownMenuItem(
+                                value: id,
+                                child: Text(name,
+                                    overflow: TextOverflow.ellipsis));
+                          }),
+                        ],
+                        onChanged: _isSubmissionLocked
+                            ? null
+                            : (value) => setState(
+                                  () => _customerId =
+                                      value == 'CUS-SHOP' ? null : value,
+                                )),
+                  ),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      onPressed: _isSubmissionLocked || _creatingCustomer
+                          ? null
+                          : _createCustomer,
+                      icon: const Icon(Icons.person_add_alt_1),
+                      label: Text(_pendingCustomer == null
+                          ? 'إضافة زبون دون حساب دخول'
+                          : 'إعادة محاولة إضافة الزبون'),
+                    ),
+                  ),
+                  TextField(
+                    controller: _buyerName,
+                    enabled: !_isSubmissionLocked,
+                    decoration: const InputDecoration(
+                        labelText: 'اسم المشتري (اختياري)'),
+                  ),
+                  TextField(
+                    controller: _buyerPhone,
+                    enabled: !_isSubmissionLocked,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                        labelText: 'هاتف المشتري (اختياري)'),
+                  ),
+                  TextField(
+                    controller: _notes,
+                    enabled: !_isSubmissionLocked,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration: const InputDecoration(labelText: 'ملاحظات'),
+                  ),
+                  TextField(
+                    controller: _discount,
+                    enabled: !_isSubmissionLocked,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration:
+                        const InputDecoration(labelText: 'الحسم الثابت USD'),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('تسوية الفاتورة بالكامل'),
+                    subtitle: const Text(
+                        'استنتاج سعر SYP/USD عند وجود معطيات كافية فقط'),
+                    value: _settleFull,
+                    onChanged: _isSubmissionLocked
+                        ? null
+                        : (value) => setState(() => _settleFull = value),
+                  ),
+                  target(
+                      2,
+                      'أدخل وسائل الدفع والمبالغ المستلمة، وراجع المتبقي.',
+                      _paymentSection(
+                          'المبالغ المستلمة من الزبون', _received, false)),
+                  _paymentSection(
+                      'المبالغ المعادة للزبون (باقي دفع)', _refunded, true),
+                  if (previewPaid > _netTotal + 0.005)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('اعتماد الزيادة رصيدًا دائنًا للزبون'),
+                      subtitle:
+                          const Text('لن تنشأ زيادة على حساب «زبائن محل».'),
+                      value: _confirmCredit,
+                      onChanged: _customerId == null ||
+                              _customerId == 'CUS-SHOP' ||
+                              _isSubmissionLocked
+                          ? null
+                          : (value) => setState(() => _confirmCredit = value),
+                    ),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                              'إجمالي المواد: ${formatMoneyShort(_subtotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                          Text(
+                              'الحسم: ${formatMoneyShort(_discountValue, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                          Text(
+                              'صافي الفاتورة: ${formatMoneyShort(_netTotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                          Text(
+                              'المستلم مكافئًا: ${formatMoneyShort(_receivedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                          Text(
+                              'المعاد مكافئًا: ${formatMoneyShort(_refundedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                          Text(
+                              'صافي المسدد: ${formatMoneyShort(previewPaid, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                          Text(
+                              'المتبقي: ${formatMoneyShort(max(0, _netTotal - previewPaid), currency: 'USD', decimalPlaces: _decimals('USD'))}'),
+                          const SizedBox(height: 4),
+                          Text(
+                            'حالة السداد: $paymentStatus',
+                            style: TextStyle(
+                                color: statusColor,
+                                fontWeight: FontWeight.bold),
+                          ),
+                          const Text('حالة تنفيذ الطلب مستقلة عن حالة السداد.'),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(_error!,
+                          style: TextStyle(color: theme.colorScheme.error)),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'صافي الفاتورة ${formatMoneyShort(_netTotal, currency: 'USD', decimalPlaces: _decimals('USD'))}',
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        _previewNetPaid > _netTotal + 0.005
+                            ? 'رصيد دائن ${formatMoneyShort(_previewNetPaid - _netTotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'
+                            : 'متبقٍ ${formatMoneyShort(max(0, _netTotal - _previewNetPaid), currency: 'USD', decimalPlaces: _decimals('USD'))}',
+                        textAlign: TextAlign.end,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: target(
+                    3,
+                    'اختر الزبون وأدخل الدفعات في نموذج الفاتورة، ثم راجعها قبل الحفظ.',
+                    FilledButton.icon(
+                        onPressed: _submitting ? null : _reviewAndSubmit,
+                        icon: _submitting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.receipt_long),
+                        label: Text(
+                          _submitting
+                              ? 'جارٍ الحفظ...'
+                              : _requestId == null
+                                  ? 'مراجعة وحفظ الفاتورة'
+                                  : 'إعادة المحاولة بنفس البيانات',
+                        )),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
