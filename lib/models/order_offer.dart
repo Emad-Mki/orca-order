@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// An offer snapshot is never authoritative until refreshed from the server.
 class OrderOffer {
   final Map<String, dynamic> data;
@@ -11,6 +13,37 @@ class OrderOffer {
   String get revision => (data['revision'] ?? '').toString().trim();
   double? get price => _number(data['offer_price']);
   double? get minimum => _number(data['min_quantity']);
+  List<Map<String, dynamic>> get bundleItems {
+    final value = data['bundle_items'];
+    if (value is! List) return const [];
+    return value.whereType<Map>().map(Map<String, dynamic>.from).toList();
+  }
+
+  bool get isBundle => bundleItems.length > 1;
+
+  double? priceFor(String code, String selectedUnit) {
+    if (!isBundle) {
+      return productCode == code && unit == selectedUnit ? price : null;
+    }
+    for (final item in bundleItems) {
+      if (item['product_code']?.toString() == code &&
+          item['unit']?.toString() == selectedUnit) {
+        return _number(item['offer_price']);
+      }
+    }
+    return null;
+  }
+
+  double? minimumFor(String code, String selectedUnit) {
+    if (!isBundle) return minimum;
+    for (final item in bundleItems) {
+      if (item['product_code']?.toString() == code &&
+          item['unit']?.toString() == selectedUnit) {
+        return _number(item['quantity']);
+      }
+    }
+    return null;
+  }
 
   static double? _number(dynamic value) {
     final number = value is num ? value.toDouble() : double.tryParse('$value');
@@ -32,18 +65,22 @@ class OrderOffer {
     final status = (data['status'] ?? '').toString().trim().toLowerCase();
     final starts = DateTime.tryParse((data['starts_at'] ?? '').toString());
     final ends = DateTime.tryParse((data['ends_at'] ?? '').toString());
+    final itemPrice = priceFor(code, selectedUnit);
+    final componentMinimum = minimumFor(code, selectedUnit);
     return id.isNotEmpty &&
         revision.isNotEmpty &&
-        productCode == code &&
-        unit == selectedUnit &&
+        itemPrice != null &&
+        itemPrice > 0 &&
         currency.toUpperCase() == itemCurrency.toUpperCase() &&
         isEnabled &&
         status == 'active' &&
-        price != null &&
-        price! > 0 &&
-        minimum != null &&
-        minimum! > 0 &&
-        quantity >= minimum! &&
+        componentMinimum != null &&
+        componentMinimum > 0 &&
+        quantity >= componentMinimum &&
+        (!isBundle ||
+            (quantity / componentMinimum).isFinite &&
+                (quantity / componentMinimum) ==
+                    (quantity / componentMinimum).roundToDouble()) &&
         starts != null &&
         ends != null &&
         !serverTime.isBefore(starts) &&
@@ -58,6 +95,7 @@ class OrderOffer {
       currency.toUpperCase() == other.currency.toUpperCase() &&
       price == other.price &&
       minimum == other.minimum &&
+      jsonEncode(bundleItems) == jsonEncode(other.bundleItems) &&
       data['starts_at'] == other.data['starts_at'] &&
       data['ends_at'] == other.data['ends_at'];
 }

@@ -55,4 +55,57 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('shows bundle contents and enables bundle checkout',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          body: OfferCard(
+            product: Product(
+              code: 'P1',
+              name: 'المنتج الأول',
+              category: '',
+              origin: '',
+              unit: 'قطعة',
+              price: 20,
+            ),
+            offer: const {
+              'old_price': 100,
+              'offer_price': 75,
+              'currency': 'USD',
+              'min_quantity': 1,
+              'unit': 'مجموعة',
+              'ends_at': '2030-01-01T10:00:00Z',
+              'bundle_items': [
+                {
+                  'product_code': 'P1',
+                  'product_name': 'المنتج الأول',
+                  'quantity': 5,
+                  'unit': 'قطعة',
+                },
+                {
+                  'product_code': 'P2',
+                  'product_name': 'المنتج الثاني',
+                  'quantity': 3,
+                  'unit': 'علبة',
+                },
+              ],
+            },
+            onOpen: () {},
+          ),
+        ),
+      ),
+    ));
+
+    expect(find.text('عرض مجموعة'), findsOneWidget);
+    expect(find.textContaining('5 × المنتج الأول قطعة'), findsOneWidget);
+    expect(find.textContaining('3 × المنتج الثاني علبة'), findsOneWidget);
+    final checkout = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'اطلب الحزمة'),
+    );
+    expect(checkout.onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
 }

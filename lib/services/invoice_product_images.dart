@@ -117,6 +117,7 @@ class InvoiceProductImages {
     if (invoiceId.isEmpty || scope.isEmpty) {
       throw ArgumentError('Invalid scope');
     }
+    if (kIsWeb) return;
     for (final entry in urls.entries) {
       if (entry.key.isEmpty) continue;
       final url = Uri.tryParse(entry.value);
@@ -163,6 +164,7 @@ class InvoiceProductImages {
 
   Future<Map<String, Uint8List>> read(
       String invoiceId, Iterable<String> codes) async {
+    if (kIsWeb) return {};
     final result = <String, Uint8List>{};
     for (final code in codes.toSet()) {
       final file = await _file(invoiceId, code);

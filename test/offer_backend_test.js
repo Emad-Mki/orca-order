@@ -220,6 +220,31 @@ test('offer validation, strict dates, overlap, lock and product preservation', (
   assert.ok(f.lockCalls > 0);
 });
 
+test('bundle offers accept serialized component arrays and validate each unit', () => {
+  const f = fixture();
+  f.context._add('Products', {
+    code: 'P2', name: 'Second test', unit_1: 'piece', unit_2: '',
+    unit_3: '', factor_2: '', factor_3: '', display_price: 50,
+    price_2: '', price_3: '', currency: 'USD',
+  });
+  const bundleItems = [
+    { product_code: 'P1', unit: 'piece', quantity: 1, old_price: 100, offer_price: 75 },
+    { product_code: 'P2', unit: 'piece', quantity: 1, old_price: 50, offer_price: 40 },
+  ];
+  const result = f.call('offer_save', {
+    offer: f.offer({
+      product_code: 'P1',
+      unit: 'حزمة',
+      bundle_items: JSON.stringify(bundleItems),
+    }),
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.offer.bundle_items.length, 2);
+  assert.equal(result.offer.old_price, 150);
+  assert.equal(result.offer.offer_price, 115);
+});
+
 test('time boundaries are start-inclusive and end-exclusive', () => {
   const f = fixture();
   const offer = f.offer({ starts_at: '2030-01-01T00:00:00Z', ends_at: '2030-01-01T01:00:00Z' });
@@ -434,6 +459,54 @@ test('expected price compares to the offered unit price rather than catalog pric
   assert.equal(f.call('order_create', request('75'), 'customer').ok, true);
 });
 
+test('bundle offers preserve per-unit prices and require every component in equal bundle counts', () => {
+  const f = fixture();
+  f.context._add('Products', {
+    code: 'P2', name: 'Other', unit_1: 'piece', display_price: 30,
+    currency: 'USD', quantity: 50,
+  });
+  const offer = f.call('offer_save', {
+    offer: f.offer({
+      bundle_items: [
+        { product_code: 'P1', unit: 'piece', quantity: 5, old_price: 100, offer_price: 80 },
+        { product_code: 'P2', unit: 'piece', quantity: 3, old_price: 30, offer_price: 25 },
+      ],
+    }),
+  }).offer;
+  assert.equal(offer.old_price, 590);
+  assert.equal(offer.offer_price, 475);
+  assert.deepEqual(JSON.parse(JSON.stringify(offer.bundle_items)).map(item => item.offer_price), [80, 25]);
+
+  const makeRequest = (items, id) => ({
+    client_request_id: id,
+    items: items.map(item => ({
+      ...item,
+      offer_id: offer.offer_id,
+      offer_revision: offer.revision,
+      offer_price: item.code === 'P1' ? 80 : 25,
+    })),
+  });
+  for (const [items, id] of [
+    [[{ code: 'P1', unit: 'piece', quantity: 5 }], 'bundle-incomplete'],
+    [[
+      { code: 'P1', unit: 'piece', quantity: 5 },
+      { code: 'P2', unit: 'piece', quantity: 6 },
+    ], 'bundle-mismatch'],
+  ]) {
+    assert.equal(f.call('order_create', makeRequest(items, id), 'customer').error.code, 'OFFER_CHANGED');
+  }
+  const created = f.call('order_create', makeRequest([
+    { code: 'P1', unit: 'piece', quantity: 10 },
+    { code: 'P2', unit: 'piece', quantity: 6 },
+  ], 'bundle-valid'), 'customer');
+  assert.equal(created.ok, true);
+  const orderItems = f.context._all('Order_Items');
+  assert.equal(orderItems[0].offer_old_price, 100);
+  assert.equal(orderItems[0].unit_price_snapshot, 80);
+  assert.equal(orderItems[1].offer_old_price, 30);
+  assert.equal(orderItems[1].unit_price_snapshot, 25);
+});
+
 function mixedOfferOrder(f) {
   f.context._add('Products', { code: 'P2', name: 'Other', unit_1: 'piece',
     display_price: 30, currency: 'USD', quantity: 50 });
@@ -573,4 +646,3 @@ test('override audit schema and writes are required before order mutations', () 
     confirm_offer_price_override: true }).ok, false);
   assert.equal(JSON.stringify([f.sheets.Orders.rows, f.sheets.Order_Items.rows]), before);
 });
-

@@ -122,7 +122,8 @@ class OrderRepository {
 
   Future<void> _saveDetail(OrderDetailSession session, String orderId,
       Map<String, dynamic> data) async {
-    if (!session.canCache ||
+    if (kIsWeb ||
+        !session.canCache ||
         _containsCredentials(data, session.token!) ||
         (data['items'] is! List && data['order_items'] is! List)) {
       return;
@@ -148,7 +149,7 @@ class OrderRepository {
   }
 
   Future<Order?> _readDetail(OrderDetailSession session, String orderId) async {
-    if (!session.canCache) return null;
+    if (kIsWeb || !session.canCache) return null;
     final file = await _detailFile(session, orderId);
     _checkSession(session);
     if (!await file.exists()) {

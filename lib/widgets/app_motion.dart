@@ -9,6 +9,7 @@ class AppMotion {
 class InitialListEntrance extends StatelessWidget {
   const InitialListEntrance({
     super.key,
+
     required this.animation,
     required this.index,
     required this.child,

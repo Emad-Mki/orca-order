@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "versionName": "1.0.0.02",
+  "buildNumber": 3,
+  "minimumSupportedBuild": 2,
+  "apkUrl": "https://github.com/Emad-Mki/Orca-Order-updates/releases/download/v1.0.0.02/app-release.apk",
+  "sha256": "d213a464c06cf02499e8dc77015893d0e2ea53fba5fff4143363486d1a6a2ec7",
+  "sizeBytes": 79169794,
+  "releaseNotes": "تحسينات وإصلاحات وميزات جديدة.",
+  "publishedAt": "2026-11-24T10:20:45Z",
+  "packageName": "com.orcallc.orca_order"
+}
+
+i  hosting[orca-order]: found 54 files in build/web
++  hosting[orca-order]: file upload complete
+i  hosting[orca-order]: finalizing version...
++  hosting[orca-order]: version finalized
+i  hosting[orca-order]: releasing new version...
++  hosting[orca-order]: release complete
+
++  Deploy complete!
+
+Project Console: https://console.firebase.google.com/project/orca-order/overview
+Hosting URL: https://orca-order.web.app
+PS C:\Users\eMAD\AndroidStudioProjects\orca-order-main\mobile_app>

@@ -72,7 +72,7 @@ void main() {
     });
     final defaults = await first.current();
     expect(fetched, isFalse);
-    expect(defaults.version, 'builtin-1');
+    expect(defaults.version, 'orca-invoice-a4-v1');
     expect(defaults.logoBytes, isNotEmpty);
     await first.refresh();
     final reloaded =
@@ -177,12 +177,12 @@ void main() {
     final a = store(() async => {'template': validTemplate()}, scope: 'a');
     await a.refresh();
     final b = store(() async => throw StateError('offline'), scope: 'b');
-    expect((await b.current()).version, 'builtin-1');
+    expect((await b.current()).version, 'orca-invoice-a4-v1');
     await expectLater(b.refresh(), throwsStateError);
     expect((await a.current()).version, 'v1.2-test');
     final file = directory.listSync().whereType<File>().single;
     await file.writeAsString('{broken');
-    expect((await a.current()).version, 'builtin-1');
+    expect((await a.current()).version, 'orca-invoice-a4-v1');
 
     final pending = Completer<Map<String, dynamic>>();
     var active = true;
@@ -191,7 +191,7 @@ void main() {
     active = false;
     pending.complete({'template': validTemplate()});
     await refresh;
-    expect((await c.current()).version, 'builtin-1');
+    expect((await c.current()).version, 'orca-invoice-a4-v1');
   });
 
   test('concurrent refreshes share one fetch', () async {

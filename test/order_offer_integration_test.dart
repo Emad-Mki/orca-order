@@ -49,6 +49,14 @@ void main() {
     price: 5,
     price2: 40,
   );
+  final bundleProduct = Product(
+    code: 'B',
+    name: 'منتج آخر',
+    category: '',
+    origin: '',
+    unit: 'قطعة',
+    price: 20,
+  );
   Map<String, dynamic> offer({int revision = 1, double price = 30}) => {
         'offer_id': 'O1',
         'product_code': 'A',
@@ -119,7 +127,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     db = AppDatabase(NativeDatabase.memory());
     local = LocalRepository(db);
-    await local.saveProducts([product]);
+    await local.saveProducts([product, bundleProduct]);
     products = ProductsProvider(ProductRepository(db));
     await products.fetchProducts();
     drafts = DraftsProvider(local);
@@ -172,6 +180,45 @@ void main() {
     expect(find.text('إضافة للطلب'), findsNothing);
     expect(find.textContaining('بيانات العرض غير مكتملة'), findsOneWidget);
     expect(orders.requests, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('initial bundle offer opens with all component details',
+      (tester) async {
+    final bundleOffer = {
+      ...offer(),
+      'old_price': 85,
+      'offer_price': 65,
+      'bundle_items': [
+        {
+          'product_code': 'A',
+          'product_name': product.name,
+          'unit': 'قطعة',
+          'quantity': 5,
+          'old_price': 5,
+          'offer_price': 4,
+        },
+        {
+          'product_code': 'B',
+          'product_name': bundleProduct.name,
+          'unit': 'قطعة',
+          'quantity': 3,
+          'old_price': 20,
+          'offer_price': 15,
+        },
+      ],
+    };
+    await tester.pumpWidget(app(
+      () async => {'server_time': serverTime.toIso8601String(), 'offers': []},
+      initialOffer: bundleOffer,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('محتويات الحزمة وأسعار كل قطعة:'), findsOneWidget);
+    expect(find.text('إضافة الحزمة للطلب'), findsOneWidget);
+    await tester.tap(find.text('إضافة الحزمة للطلب'));
+    await wait(tester);
+    expect(find.text('تمت إضافة 1.0 حزمة كاملة إلى الطلب'), findsOneWidget);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 

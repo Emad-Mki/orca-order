@@ -228,7 +228,9 @@ class OrderItem {
   /// الحصول على السعر الفعلي للعرض
   /// الأولوية: final_price > price_offer > default_price
   bool get offerBelowMinimum =>
-      offer?.minimum != null && quantity != null && quantity! < offer!.minimum!;
+      offer?.minimumFor(code, selectedUnit ?? unit) != null &&
+      quantity != null &&
+      quantity! < offer!.minimumFor(code, selectedUnit ?? unit)!;
 
   double get displayPrice {
     if (offerBelowMinimum) return defaultPrice ?? 0;
@@ -373,7 +375,8 @@ class OrderItem {
         if (offer != null) ...{
           'offer_id': offer!.id,
           'offer_revision': offer!.revision,
-          'offer_price': offer!.price,
+          'offer_price': offer!.priceFor(code, selectedUnit ?? unit),
+          'offer_snapshot': offer!.data,
         },
         if (expectedUnitPrice != null) 'expected_unit_price': expectedUnitPrice,
         'unit_factor': unitFactor,

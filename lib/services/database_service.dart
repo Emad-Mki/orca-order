@@ -1,9 +1,6 @@
-import 'dart:io';
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
+import 'database_connection.dart';
 part 'database_service.g.dart';
 
 // Tables definitions
@@ -113,7 +110,8 @@ class LocalCustomers extends Table {
   SyncMetadata
 ])
 class AppDatabase extends _$AppDatabase {
-  AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
+  AppDatabase([QueryExecutor? executor])
+      : super(executor ?? openDatabaseConnection());
 
   @override
   int get schemaVersion => 6;
@@ -227,12 +225,4 @@ class AppDatabase extends _$AppDatabase {
         .write(OrderDraftsCompanion(
             note: Value(note), updatedAt: Value(DateTime.now())));
   }
-}
-
-LazyDatabase _openConnection() {
-  return LazyDatabase(() async {
-    final dbFolder = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dbFolder.path, 'orca_order_v2.sqlite'));
-    return NativeDatabase.createInBackground(file);
-  });
 }

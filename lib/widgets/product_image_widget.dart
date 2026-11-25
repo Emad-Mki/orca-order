@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class ProductImageWidget extends StatelessWidget {
@@ -28,6 +29,20 @@ class ProductImageWidget extends StatelessWidget {
 
     if (url.isEmpty) {
       image = _placeholder(context);
+    } else if (kIsWeb) {
+      // Google Drive لا يضمن CORS؛ استخدم عنصر صورة HTML كخيار احتياطي للويب.
+      image = Image.network(
+        url,
+        width: width,
+        height: height,
+        fit: fit,
+        alignment: Alignment.center,
+        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+        loadingBuilder: (context, child, progress) =>
+            progress == null ? child : _placeholder(context, loading: true),
+        errorBuilder: (context, error, stackTrace) =>
+            _placeholder(context, isError: true),
+      );
     } else {
       image = CachedNetworkImage(
         imageUrl: url,

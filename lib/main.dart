@@ -44,6 +44,7 @@ class _StartupState extends State<_Startup> {
   }
 
   Future<void> _initialize() async {
+    final startupTimer = Stopwatch()..start();
     setState(() => _error = null);
     try {
       await ApiService().init();
@@ -64,11 +65,15 @@ class _StartupState extends State<_Startup> {
                           ? ThemeMode.dark
                           : ThemeMode.light)
                       : ThemeMode.system;
+      final remaining = const Duration(seconds: 4) - startupTimer.elapsed;
+      if (remaining > Duration.zero) await Future<void>.delayed(remaining);
       if (!mounted) return;
       setState(() => _theme = theme);
       unawaited(_initializeFirebaseNotifications());
     } catch (error, stack) {
       debugPrint('Startup failed: $error\n$stack');
+      final remaining = const Duration(seconds: 4) - startupTimer.elapsed;
+      if (remaining > Duration.zero) await Future<void>.delayed(remaining);
       if (mounted) setState(() => _error = error);
     }
   }
@@ -92,7 +97,8 @@ class _StartupState extends State<_Startup> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset('assets/app_icon.png', width: 96, height: 96),
+                Image.asset('assets/icon/app_logo.png',
+                    width: 96, height: 96, fit: BoxFit.contain),
                 if (_error != null) ...[
                   const SizedBox(height: 24),
                   const Text(

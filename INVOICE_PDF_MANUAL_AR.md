@@ -8,10 +8,12 @@
 
 ## الأصول المدمجة
 
-- الشعار الافتراضي: `assets/images/logo.png`.
+- قالب PDF الافتراضي: `Invoice.html`، إصدار `orca-invoice-a4-v1`؛ يستخدم ورق A4 عموديًا وهوامش 12.7 مم المعرفة في CSS فقط، مع فحص وتجميع الصفحات قبل إنشاء PDF.
+- الشعار الافتراضي للفواتير: `assets/icon/app_logo.png`، ويُضمّن كـ Data URI. شعار إعدادات Drive المخصص ما زال يحل محله عند استخدامه.
+- الخطوط: Calibri وTimes New Roman العادي والعريض من `assets/fonts/`، مضمّنة في القالب كـ Data URI.
 - خط Amiri: `assets/fonts/Amiri-Regular.ttf` و`assets/fonts/Amiri-Bold.ttf`؛ الترخيص: `assets/fonts/OFL-Amiri.txt`.
 - صورة المنتج البديلة: `assets/images/product_placeholder.png`.
-- القالب الافتراضي المدمج معرفه `builtin-1`. تغيير هذه الأصول المدمجة نفسها يحتاج بناء التطبيق؛ تغيير الشعار من إعدادات Drive لا يحتاج بناءه.
+- تغيير القالب أو الخطوط أو الشعار المدمج يحتاج بناء التطبيق؛ تغيير الشعار من إعدادات Drive لا يحتاج بناءه.
 
 ## التشغيل والاحتفاظ
 

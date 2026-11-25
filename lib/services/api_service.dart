@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -851,31 +852,62 @@ class ApiService {
 
   /// تهيئة الجلسة من التخزين المحلي
   Future<void> init() async {
+    _sessionToken = null;
+    _currentUser = null;
     final prefs = await SharedPreferences.getInstance();
-    final savedSession = await _secureStorage.read(key: 'orca_session');
+    String? savedSession;
+    var secureStorageAvailable = true;
+    try {
+      savedSession = await _secureStorage.read(key: 'orca_session');
+    } on PlatformException catch (error, stack) {
+      secureStorageAvailable = false;
+      debugPrint(
+        'Stored session could not be read (${error.code}); resetting secure storage.\n$stack',
+      );
+      try {
+        await _secureStorage.deleteAll();
+      } on PlatformException catch (resetError, resetStack) {
+        debugPrint(
+          'Secure storage reset failed (${resetError.code}).\n$resetStack',
+        );
+      }
+    }
+
     if (savedSession != null) {
-      final session = jsonDecode(savedSession);
-      if (session is Map<String, dynamic> &&
-          session['token'] is String &&
-          (session['token'] as String).isNotEmpty &&
-          session['user'] is Map<String, dynamic>) {
-        _sessionToken = session['token'] as String;
-        _currentUser = Map<String, dynamic>.from(session['user'] as Map);
-      } else {
+      try {
+        final session = jsonDecode(savedSession);
+        if (session is Map<String, dynamic> &&
+            session['token'] is String &&
+            (session['token'] as String).isNotEmpty &&
+            session['user'] is Map<String, dynamic>) {
+          _sessionToken = session['token'] as String;
+          _currentUser = Map<String, dynamic>.from(session['user'] as Map);
+        } else {
+          debugPrint('Discarding invalid saved session data.');
+          await _secureStorage.delete(key: 'orca_session');
+        }
+      } on FormatException catch (error) {
+        debugPrint('Discarding malformed saved session: ${error.message}');
         await _secureStorage.delete(key: 'orca_session');
       }
-    } else {
+    } else if (secureStorageAvailable) {
       final legacyToken = prefs.getString('session_token');
       final legacyUser = prefs.getString('current_user');
       if (legacyToken != null && legacyToken.isNotEmpty && legacyUser != null) {
-        final decodedUser = jsonDecode(legacyUser);
-        if (decodedUser is Map<String, dynamic>) {
-          _sessionToken = legacyToken;
-          _currentUser = Map<String, dynamic>.from(decodedUser);
-          await _secureStorage.write(
-            key: 'orca_session',
-            value: jsonEncode({'token': _sessionToken, 'user': _currentUser}),
-          );
+        try {
+          final decodedUser = jsonDecode(legacyUser);
+          if (decodedUser is Map<String, dynamic>) {
+            _sessionToken = legacyToken;
+            _currentUser = Map<String, dynamic>.from(decodedUser);
+            await _secureStorage.write(
+              key: 'orca_session',
+              value: jsonEncode({'token': _sessionToken, 'user': _currentUser}),
+            );
+          } else {
+            debugPrint('Discarding invalid legacy session data.');
+          }
+        } on FormatException catch (error) {
+          debugPrint('Discarding malformed legacy session: ${error.message}');
         }
       }
     }
@@ -1054,7 +1086,9 @@ class ApiService {
           .post(
             uri,
             headers: {
-              'Content-Type': 'application/json',
+              // text/plain طلب بسيط للمتصفح، فلا يرسل OPTIONS إلى Apps Script.
+              'Content-Type':
+                  kIsWeb ? 'text/plain; charset=utf-8' : 'application/json',
               'Accept': 'application/json',
             },
             body: jsonEncode(requestBody),

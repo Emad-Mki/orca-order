@@ -252,9 +252,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title:
             Text(full ? 'إعادة بناء فهرس الصور بالكامل؟' : 'تحديث فهرس الصور؟'),
         content: const Text(
-          'سيبقى الفهرس الحالي متاحاً أثناء التحديث. '
-          'التحديث الاعتيادي يعالج تغييرات Drive فقط؛ إعادة البناء الكاملة '
-          'تفحص ملفات المجلد كلها.',
+          'التحديث الاعتيادي يعالج تغييرات Drive فقط. '
+          'إعادة البناء الكاملة تمسح صفوف الفهرس أولاً ثم تعيد فهرسة ملفات المجلد '
+          'على دفعات؛ قد يظهر الفهرس جزئياً حتى اكتمالها.',
         ),
         actions: [
           TextButton(
@@ -344,7 +344,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('إلغاء مهمة فهرس الصور؟'),
-        content: const Text('سيبقى الفهرس النشط كما هو.'),
+        content: const Text(
+          'سيُوقف الاستكمال، وتبقى الصفوف التي كُتبت حتى الآن في Product_Images.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -872,15 +874,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 'المدة ${(((_imageIndexStatus!['duration_ms'] ?? 0) as num) / 1000).toStringAsFixed(1)} ث',
                                 softWrap: true,
                               ),
-                              if (_imageIndexStatus!['timings'] is Map)
-                                Text(
-                                  'Drive ${(_imageIndexStatus!['timings'] as Map)['drive_fetch_ms'] ?? 0} ms · '
-                                  'قراءة الفهرس ${(_imageIndexStatus!['timings'] as Map)['index_read_ms'] ?? 0} ms · '
-                                  'المطابقة ${(_imageIndexStatus!['timings'] as Map)['match_ms'] ?? 0} ms · '
-                                  'الكتابة ${(_imageIndexStatus!['timings'] as Map)['write_ms'] ?? 0} ms · '
-                                  'انتظار المشغّل ${(_imageIndexStatus!['timings'] as Map)['trigger_wait_ms'] ?? 0} ms',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
                               if (_imageIndexStatus!['last_progress_at'] !=
                                   null)
                                 Text(

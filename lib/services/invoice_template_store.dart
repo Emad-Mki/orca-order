@@ -72,6 +72,7 @@ class InvoiceTemplateStore {
   final Future<Directory> Function() _directoryProvider;
   final bool Function() _isActive;
   Future<void>? _refreshing;
+  InvoiceTemplate? _webTemplate;
   static int _temporarySequence = 0;
   static final Map<String, Future<void>> _commits = {};
 
@@ -85,6 +86,11 @@ class InvoiceTemplateStore {
 
   /// Returns the last valid cached template, or built-in defaults.
   Future<InvoiceTemplate> current() async {
+    if (kIsWeb) {
+      final template = _webTemplate;
+      if (template != null) return template;
+      return _parse(_defaults);
+    }
     try {
       final file = await _cacheFile();
       if (await file.exists() && await file.length() <= _maxCacheBytes) {
@@ -118,6 +124,10 @@ class InvoiceTemplateStore {
     final raw = response['template'] ?? (data is Map ? data['template'] : null);
     final template = await _parse(raw);
     if (!_isActive()) return;
+    if (kIsWeb) {
+      _webTemplate = template;
+      return;
+    }
     final contents = jsonEncode(template.toMap());
     if (utf8.encode(contents).length > _maxCacheBytes) {
       throw const FormatException('Invoice template too large');
@@ -149,7 +159,7 @@ class InvoiceTemplateStore {
 }
 
 const _defaults = <String, dynamic>{
-  'version': 'builtin-1',
+  'version': 'orca-invoice-a4-v1',
   'company_name': AppConfig.companyName,
   'company_details': '',
   'footer': '',
@@ -273,7 +283,7 @@ Future<InvoiceTemplate> _parse(dynamic input) async {
     }
   } else {
     try {
-      final asset = await rootBundle.load('assets/images/logo.png');
+      final asset = await rootBundle.load('assets/icon/app_logo.png');
       bytes =
           asset.buffer.asUint8List(asset.offsetInBytes, asset.lengthInBytes);
     } catch (error) {

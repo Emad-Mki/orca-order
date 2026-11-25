@@ -330,6 +330,8 @@ List<String> _validUnits(Product product) {
 
 void _preview(
     BuildContext context, Map<String, dynamic> offer, Product? product) {
+  final bundleItems = offer['bundle_items'];
+  final isBundle = bundleItems is List && bundleItems.length > 1;
   showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
@@ -340,12 +342,28 @@ void _preview(
               child: ProductImageWidget(
                   imageUrl: product?.imageUrl, width: 120, height: 120)),
           Text('${product?.name ?? ''} (${offer['product_code'] ?? ''})'),
-          Text(
-              'السعر السابق: ${offer['old_price'] ?? '—'} ${offer['currency'] ?? ''} / ${offer['unit'] ?? ''}'),
-          Text(
-              'سعر العرض: ${offer['offer_price'] ?? ''} ${offer['currency'] ?? ''} / ${offer['unit'] ?? ''}'),
-          Text(
-              'الحد الأدنى: ${offer['min_quantity'] ?? ''} ${offer['unit'] ?? ''}'),
+          if (isBundle) ...[
+            const SizedBox(height: 8),
+            const Text('محتويات الحزمة وأسعار القطعة:'),
+            for (final item in bundleItems.whereType<Map>())
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  '${item['quantity']} × ${item['product_name'] ?? item['product_code']} (${item['unit']})\n'
+                  'للقطعة: ${item['old_price']} ← ${item['offer_price']} ${offer['currency']}',
+                ),
+              ),
+            Text(
+              'المجموع: ${offer['old_price']} ← ${offer['offer_price']} ${offer['currency']}',
+            ),
+          ] else ...[
+            Text(
+                'السعر السابق: ${offer['old_price'] ?? '—'} ${offer['currency'] ?? ''} / ${offer['unit'] ?? ''}'),
+            Text(
+                'سعر العرض: ${offer['offer_price'] ?? ''} ${offer['currency'] ?? ''} / ${offer['unit'] ?? ''}'),
+            Text(
+                'الحد الأدنى: ${offer['min_quantity'] ?? ''} ${offer['unit'] ?? ''}'),
+          ],
           Text('من: ${_displayDate(offer['starts_at'])}'),
           Text('إلى: ${_displayDate(offer['ends_at'])}'),
           Text('الحالة: ${_statusLabel(offer['status']?.toString() ?? '')}'),
@@ -361,6 +379,30 @@ void _preview(
       ],
     ),
   );
+}
+
+class _BundleDraftItem {
+  _BundleDraftItem({
+    required this.product,
+    required this.unit,
+    required String quantity,
+    required String oldPrice,
+    String offerPrice = '',
+  })  : quantity = TextEditingController(text: quantity),
+        oldPrice = TextEditingController(text: oldPrice),
+        offerPrice = TextEditingController(text: offerPrice);
+
+  Product product;
+  String? unit;
+  final TextEditingController quantity;
+  final TextEditingController oldPrice;
+  final TextEditingController offerPrice;
+
+  void dispose() {
+    quantity.dispose();
+    oldPrice.dispose();
+    offerPrice.dispose();
+  }
 }
 
 class _OfferEditor extends StatefulWidget {
@@ -383,6 +425,8 @@ class _OfferEditorState extends State<_OfferEditor> {
   Product? _product;
   String? _unit;
   String _currency = 'USD';
+  bool _bundleMode = false;
+  final List<_BundleDraftItem> _bundleItems = [];
   bool _isEnabled = false;
   DateTime? _start;
   DateTime? _end;
@@ -402,13 +446,41 @@ class _OfferEditorState extends State<_OfferEditor> {
     _currency = offer['currency']?.toString().trim() ?? 'USD';
     if (_currency.isEmpty) _currency = 'USD';
     _isEnabled = !widget.duplicate && _enabled(offer['enabled']);
+    final products = context.read<ProductsProvider>().allProducts;
+    final bundleItems = offer['bundle_items'];
+    if (bundleItems is List && bundleItems.length > 1) {
+      _bundleMode = true;
+      for (final raw in bundleItems.whereType<Map>()) {
+        final item = Map<String, dynamic>.from(raw);
+        final product = products.firstWhere(
+          (candidate) => candidate.code == item['product_code']?.toString(),
+          orElse: () => Product(
+            code: item['product_code']?.toString() ?? '',
+            name: item['product_name']?.toString() ?? '',
+            category: '',
+            origin: '',
+            unit: item['unit']?.toString() ?? '',
+            price: 0,
+          ),
+        );
+        _bundleItems.add(_BundleDraftItem(
+          product: product,
+          unit: item['unit']?.toString(),
+          quantity: item['quantity']?.toString() ?? '1',
+          oldPrice: item['old_price']?.toString() ?? '',
+          offerPrice: item['offer_price']?.toString() ?? '',
+        ));
+      }
+      if (_bundleItems.isNotEmpty) {
+        _currency = _bundleItems.first.product.currency;
+      }
+    }
     final start = offer['starts_at']?.toString() ?? '';
     final end = offer['ends_at']?.toString() ?? '';
     _start = DateTime.tryParse(start)?.toLocal();
     _end = DateTime.tryParse(end)?.toLocal();
     _invalidStart = start.isNotEmpty && _start == null;
     _invalidEnd = end.isNotEmpty && _end == null;
-    final products = context.read<ProductsProvider>().allProducts;
     final matches =
         products.where((p) => p.code == offer['product_code']?.toString());
     if (matches.isNotEmpty) {
@@ -430,7 +502,44 @@ class _OfferEditorState extends State<_OfferEditor> {
     ]) {
       controller.dispose();
     }
+    for (final item in _bundleItems) {
+      item.dispose();
+    }
     super.dispose();
+  }
+
+  Future<void> _addBundleItem() async {
+    final product = await showDialog<Product>(
+      context: context,
+      builder: (_) => const _ProductPicker(),
+    );
+    if (product == null || !mounted) return;
+    final units = _validUnits(product);
+    if (units.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('المنتج لا يحتوي وحدة صالحة ذات سعر مضبوط'),
+      ));
+      return;
+    }
+    if (_bundleItems.isNotEmpty &&
+        product.currency.toUpperCase() != _currency.toUpperCase()) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('يجب أن تكون جميع منتجات الحزمة بالعملة نفسها'),
+      ));
+      return;
+    }
+    setState(() {
+      if (_bundleItems.isEmpty) {
+        _currency = product.currency.trim().isEmpty ? 'USD' : product.currency;
+      }
+      final unit = units.first;
+      _bundleItems.add(_BundleDraftItem(
+        product: product,
+        unit: unit,
+        quantity: '1',
+        oldPrice: product.priceForUnit(unit)?.toString() ?? '',
+      ));
+    });
   }
 
   void _selectProduct(Product product) {
@@ -491,31 +600,209 @@ class _OfferEditorState extends State<_OfferEditor> {
     return null;
   }
 
+  Widget _buildBundleItemCard(int index) {
+    final item = _bundleItems[index];
+    final units = _validUnits(item.product);
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                ProductImageWidget(
+                  imageUrl: item.product.imageUrl,
+                  width: 48,
+                  height: 48,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${item.product.name}\n${item.product.code}',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'إزالة المنتج من الحزمة',
+                  onPressed: () => setState(() {
+                    item.dispose();
+                    _bundleItems.removeAt(index);
+                  }),
+                  icon: Icon(Icons.delete_outline, color: colors.error),
+                ),
+              ],
+            ),
+            DropdownButtonFormField<String>(
+              key: ValueKey('bundle-${item.product.code}-${item.unit}'),
+              initialValue: units.contains(item.unit) ? item.unit : null,
+              decoration: const InputDecoration(labelText: 'الوحدة'),
+              items: units
+                  .map((unit) =>
+                      DropdownMenuItem(value: unit, child: Text(unit)))
+                  .toList(),
+              onChanged: (unit) => setState(() {
+                item.unit = unit;
+                item.oldPrice.text = unit == null
+                    ? ''
+                    : (item.product.priceForUnit(unit)?.toString() ?? '');
+              }),
+            ),
+            TextFormField(
+              controller: item.quantity,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: false),
+              decoration: const InputDecoration(
+                labelText: 'عدد القطع في الحزمة',
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: item.oldPrice,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'السعر القديم للقطعة ($_currency)',
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: item.offerPrice,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'سعر العرض للقطعة ($_currency)',
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBundleTotals() {
+    var oldTotal = 0.0;
+    var offerTotal = 0.0;
+    for (final item in _bundleItems) {
+      final quantity = double.tryParse(item.quantity.text) ?? 0;
+      oldTotal += quantity * (double.tryParse(item.oldPrice.text) ?? 0);
+      offerTotal += quantity * (double.tryParse(item.offerPrice.text) ?? 0);
+    }
+    return Card(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const Icon(Icons.calculate_outlined),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'مجموع الحزمة: ${oldTotal.toStringAsFixed(2)} ← '
+                '${offerTotal.toStringAsFixed(2)} $_currency',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Map<String, dynamic>? _buildOffer() {
     if (!_form.currentState!.validate()) return null;
-    if (_product == null ||
-        _unit == null ||
-        _invalidStart ||
+    if (_invalidStart ||
         _invalidEnd ||
         (_start != null && _end != null && !_end!.isAfter(_start!))) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-            'اختر منتجاً ووحدة صالحين وتأكد من صحة الجدول وأن النهاية بعد البداية'),
+        content: Text('تأكد من صحة الجدول وأن النهاية بعد البداية'),
       ));
       return null;
     }
+    List<Map<String, dynamic>> bundleItems = [];
+    if (_bundleMode) {
+      if (_bundleItems.length < 2) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('أضف منتجين على الأقل لإنشاء عرض مجموعة'),
+        ));
+        return null;
+      }
+      final keys = <String>{};
+      for (final item in _bundleItems) {
+        final quantity = double.tryParse(item.quantity.text.trim());
+        final oldPrice = double.tryParse(item.oldPrice.text.trim());
+        final offerPrice = double.tryParse(item.offerPrice.text.trim());
+        final key = '${item.product.code}\u001f${item.unit}';
+        final regularPrice =
+            item.unit == null ? null : item.product.priceForUnit(item.unit!);
+        if (item.unit == null ||
+            quantity == null ||
+            !quantity.isFinite ||
+            quantity <= 0 ||
+            quantity != quantity.roundToDouble() ||
+            oldPrice == null ||
+            !oldPrice.isFinite ||
+            offerPrice == null ||
+            !offerPrice.isFinite ||
+            offerPrice <= 0 ||
+            offerPrice >= oldPrice ||
+            regularPrice == null ||
+            oldPrice > regularPrice ||
+            !keys.add(key)) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('تحقق من كمية وسعر كل منتج في الحزمة'),
+          ));
+          return null;
+        }
+        bundleItems.add({
+          'product_code': item.product.code,
+          'product_name': item.product.name,
+          'unit': item.unit,
+          'quantity': quantity,
+          'old_price': oldPrice,
+          'offer_price': offerPrice,
+        });
+      }
+    } else if (_product == null || _unit == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('اختر منتجاً ووحدة صالحين'),
+      ));
+      return null;
+    }
+    final oldTotal = bundleItems.fold<double>(
+      0,
+      (sum, item) => sum + item['quantity'] * item['old_price'],
+    );
+    final offerTotal = bundleItems.fold<double>(
+      0,
+      (sum, item) => sum + item['quantity'] * item['offer_price'],
+    );
     final result = <String, dynamic>{
       if (widget.offer != null && !widget.duplicate) ...{
         'offer_id': widget.offer!['offer_id'],
         'revision': widget.offer!['revision'],
       },
-      'product_code': _product!.code,
+      'product_code':
+          _bundleMode ? bundleItems.first['product_code'] : _product!.code,
       'title': _title.text.trim(),
-      'unit': _unit,
-      'old_price': double.parse(_oldPrice.text.trim()),
-      'offer_price': double.parse(_offerPrice.text.trim()),
+      'unit': _bundleMode ? 'حزمة' : _unit,
+      'old_price': _bundleMode ? oldTotal : double.parse(_oldPrice.text.trim()),
+      'offer_price':
+          _bundleMode ? offerTotal : double.parse(_offerPrice.text.trim()),
       'currency': _currency,
-      'min_quantity': double.parse(_quantity.text.trim()),
+      'min_quantity': _bundleMode ? 1 : double.parse(_quantity.text.trim()),
+      if (_bundleMode) 'bundle_items': bundleItems,
       'starts_at': _start?.toUtc().toIso8601String(),
       'ends_at': _end?.toUtc().toIso8601String(),
       'note': _note.text.trim(),
@@ -548,63 +835,88 @@ class _OfferEditorState extends State<_OfferEditor> {
             if (widget.duplicate) const Text('تُحفظ النسخة غير مفعّلة.'),
             if (products.errorMessage != null)
               Text('تعذر تحميل المنتجات: ${products.errorMessage}'),
-            ListTile(
+            SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              leading: ProductImageWidget(
-                  imageUrl: _product?.imageUrl, width: 60, height: 60),
-              title: Text(_product?.name ?? 'اختر منتجاً من الكتالوج'),
-              subtitle: Text(_product?.code ??
-                  (widget.offer?['product_code']?.toString() ?? '')),
-              trailing: const Icon(Icons.search),
-              onTap: _pickProduct,
+              title: const Text('عرض مجموعة منتجات'),
+              subtitle: const Text(
+                  'حدد كمية وسعر القطعة السابق وسعرها في العرض لكل منتج'),
+              value: _bundleMode,
+              onChanged: (value) => setState(() => _bundleMode = value),
             ),
-            if (_product != null && _validUnits(_product!).isEmpty)
-              const Text(
-                  'وحدات المنتج غير صالحة أو متعارضة؛ يرجى تحديث الكتالوج.'),
-            DropdownButtonFormField<String>(
-              key: ValueKey('${_product?.code}:$_unit'),
-              initialValue: _unit,
-              decoration: const InputDecoration(labelText: 'الوحدة'),
-              items: (_product == null ? <String>[] : _validUnits(_product!))
-                  .map((unit) =>
-                      DropdownMenuItem(value: unit, child: Text(unit)))
-                  .toList(),
-              onChanged: (unit) => setState(() {
-                _unit = unit;
-                _oldPrice.text = unit == null
-                    ? ''
-                    : (_product?.priceForUnit(unit)?.toString() ?? '');
-              }),
-              validator: (value) => value == null ? 'اختر وحدة' : null,
-            ),
+            if (!_bundleMode) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: ProductImageWidget(
+                    imageUrl: _product?.imageUrl, width: 60, height: 60),
+                title: Text(_product?.name ?? 'اختر منتجاً من الكتالوج'),
+                subtitle: Text(_product?.code ??
+                    (widget.offer?['product_code']?.toString() ?? '')),
+                trailing: const Icon(Icons.search),
+                onTap: _pickProduct,
+              ),
+              if (_product != null && _validUnits(_product!).isEmpty)
+                const Text(
+                    'وحدات المنتج غير صالحة أو متعارضة؛ يرجى تحديث الكتالوج.'),
+              DropdownButtonFormField<String>(
+                key: ValueKey('${_product?.code}:$_unit'),
+                initialValue: _unit,
+                decoration: const InputDecoration(labelText: 'الوحدة'),
+                items: (_product == null ? <String>[] : _validUnits(_product!))
+                    .map((unit) =>
+                        DropdownMenuItem(value: unit, child: Text(unit)))
+                    .toList(),
+                onChanged: (unit) => setState(() {
+                  _unit = unit;
+                  _oldPrice.text = unit == null
+                      ? ''
+                      : (_product?.priceForUnit(unit)?.toString() ?? '');
+                }),
+                validator: (value) => value == null ? 'اختر وحدة' : null,
+              ),
+              TextFormField(
+                  controller: _oldPrice,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                      labelText:
+                          'السعر السابق لكل ${_unit ?? 'وحدة'} ($_currency)',
+                      helperText: 'يُقترح سعر وحدة المنتج ويمكن تعديله'),
+                  validator: _number),
+              TextFormField(
+                  controller: _offerPrice,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                      labelText:
+                          'سعر العرض لكل ${_unit ?? 'وحدة'} ($_currency)'),
+                  validator: _number),
+              TextFormField(
+                  controller: _quantity,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                      labelText: 'الحد الأدنى للكمية (${_unit ?? 'وحدة'})'),
+                  validator: (value) => _number(value, positive: true)),
+            ] else ...[
+              for (var index = 0; index < _bundleItems.length; index++)
+                _buildBundleItemCard(index),
+              OutlinedButton.icon(
+                onPressed: _addBundleItem,
+                icon: const Icon(Icons.add_shopping_cart),
+                label: const Text('إضافة منتج للحزمة'),
+              ),
+              if (_bundleItems.isNotEmpty) _buildBundleTotals(),
+              const SizedBox(height: 8),
+              Text(
+                'السعر القديم وسعر العرض يسجلان لكل قطعة؛ مجموع الحزمة يُحسب تلقائياً من الكميات.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
             TextFormField(
                 controller: _title,
                 decoration: const InputDecoration(labelText: 'عنوان العرض'),
                 validator: (value) =>
                     value?.trim().isNotEmpty == true ? null : 'العنوان مطلوب'),
-            TextFormField(
-                controller: _oldPrice,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                    labelText:
-                        'السعر السابق لكل ${_unit ?? 'وحدة'} ($_currency)',
-                    helperText: 'يُقترح سعر وحدة المنتج ويمكن تعديله'),
-                validator: _number),
-            TextFormField(
-                controller: _offerPrice,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                    labelText: 'سعر العرض لكل ${_unit ?? 'وحدة'} ($_currency)'),
-                validator: _number),
-            TextFormField(
-                controller: _quantity,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                    labelText: 'الحد الأدنى للكمية (${_unit ?? 'وحدة'})'),
-                validator: (value) => _number(value, positive: true)),
             TextFormField(
                 controller: _sort,
                 keyboardType: TextInputType.number,

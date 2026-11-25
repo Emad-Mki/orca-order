@@ -101,5 +101,31 @@ void main() {
               .isNotEmpty,
           isTrue);
     }
+    final oversized = <String, dynamic>{
+      'invoice_id': 'device-oversized',
+      'invoice_number': 'TEST-OVERSIZED',
+      'status': 'posted',
+      'currency': 'USD',
+      'customer_name': 'زبون تجريبي',
+      'invoice_date': '2026-01-01',
+      'subtotal': 200,
+      'net_total': 200,
+      'items': [
+        {
+          'code': 'LONG',
+          'name_snapshot': List.filled(500, 'قطعة').join(' '),
+          'quantity': 1,
+          'unit': 'قطعة',
+          'unit_price': 200,
+          'line_total': 200,
+          'note': List.filled(500, 'ملاحظة').join(' '),
+        }
+      ],
+    };
+    await expectLater(
+      SalesInvoicePdf.build(oversized),
+      throwsA(predicate(
+          (error) => error.toString().contains('الحد الأدنى المقروء'))),
+    );
   });
 }

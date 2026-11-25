@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// Durable, account- and role-scoped snapshots returned by sales_invoice_list.
@@ -88,6 +89,7 @@ class SalesInvoiceStore {
 
   /// Merges a filtered response without deleting snapshots outside that response.
   Future<void> merge(List<Map<String, dynamic>> invoices) async {
+    if (kIsWeb) return;
     final file = await _file();
     final key = file.absolute.path;
     final previous = _writes[key] ?? Future<void>.value();
@@ -133,6 +135,7 @@ class SalesInvoiceStore {
     String? sellerId,
     String? customerId,
   }) async {
+    if (kIsWeb) return [];
     final file = await _file();
     await (_writes[file.absolute.path] ?? Future<void>.value());
     final needle = query.trim().toLowerCase();

@@ -1,7 +1,7 @@
 name: orca_order
 description: Orca Order app
 publish_to: none
-version: 1.0.0+2
+version: 1.0.0+3
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -29,7 +29,7 @@ dependencies:
   provider: ^6.1.1
   intl: ^0.20.2
   drift: ^2.16.0
-  sqlite3_flutter_libs: 0.5.20
+  sqlite3_flutter_libs: ^0.5.42
   path: ^1.9.0
   flutter_secure_storage: ^11.2.0
   shimmer: ^3.0.0
@@ -43,6 +43,7 @@ dev_dependencies:
     sdk: flutter
   integration_test:
     sdk: flutter
+  flutter_secure_storage_platform_interface: ^2.1.1
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
   drift_dev: ^2.20.0

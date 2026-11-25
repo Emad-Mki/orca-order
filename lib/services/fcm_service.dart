@@ -375,14 +375,17 @@ class FcmService {
     await DeepLinkService.openNotification(data);
   }
 
-  Future<bool> _registerTarget(String installationId) async {
+  Future<bool> _registerTarget(
+    String installationId, {
+    String targetType = 'fid',
+  }) async {
     final pendingRegistration = _registrationFuture;
     if (_registeringInstallationId == installationId &&
         pendingRegistration != null) {
       return pendingRegistration;
     }
     _registeringInstallationId = installationId;
-    final registration = _registerTargetImpl(installationId);
+    final registration = _registerTargetImpl(installationId, targetType);
     _registrationFuture = registration;
     try {
       return await registration;
@@ -394,14 +397,18 @@ class FcmService {
     }
   }
 
-  Future<bool> _registerTargetImpl(String installationId) async {
+  Future<bool> _registerTargetImpl(
+    String installationId,
+    String targetType,
+  ) async {
     final session = _session;
     if (session == null || installationId.isEmpty) return false;
     try {
       _deviceId ??= await _getDeviceId();
       final preferences = await SharedPreferences.getInstance();
       final userId = session['user_id']?.toString() ?? '';
-      final targetHash = sha256.convert(utf8.encode(installationId)).toString();
+      final targetHash =
+          sha256.convert(utf8.encode('$targetType:$installationId')).toString();
       if (userId.isNotEmpty &&
           preferences.getString(_registeredUserIdKey) == userId &&
           preferences.getString(_lastTokenHashKey) == targetHash &&
@@ -413,7 +420,7 @@ class FcmService {
         'action': 'user_device_upsert',
         'device_id': _deviceId,
         'fcm_token': installationId,
-        'fcm_target_type': 'fid',
+        'fcm_target_type': targetType,
         'platform': _platformName,
         'app_version': info.version,
       });
@@ -452,17 +459,35 @@ class FcmService {
       }
       final registration = Completer<String>();
       _installationIdCompleter = registration;
+      var registered = false;
       try {
         await FirebaseMessaging.instance.register();
         final installationId = _currentInstallationId ??
-            await registration.future.timeout(const Duration(seconds: 20));
+            await registration.future.timeout(const Duration(seconds: 12));
         _currentInstallationId = installationId;
-        return await _registerTarget(installationId);
+        registered = await _registerTarget(installationId);
+      } catch (error) {
+        debugPrint(
+          '[FCM] installation ID unavailable; trying FCM token: '
+          '${_safeErrorCode(error)}',
+        );
       } finally {
         if (identical(_installationIdCompleter, registration)) {
           _installationIdCompleter = null;
         }
       }
+      if (registered) return true;
+
+      // Older Firebase configurations or devices may not deliver onRegistered.
+      // Keep notifications working through the standard registration-token path.
+      // Fallback for devices where the preferred FID registration event is absent.
+      // ignore: deprecated_member_use
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token == null || token.isEmpty) {
+        await _saveSyncResult('fcm_token_unavailable');
+        return false;
+      }
+      return await _registerTarget(token, targetType: 'token');
     } catch (error) {
       await _saveSyncResult(_safeErrorCode(error));
       debugPrint(

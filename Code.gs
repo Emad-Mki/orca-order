@@ -11,7 +11,7 @@ const H = {
   Users: ['user_id','username','password_hash','salt','full_name','phone','role','customer_id','status','must_change_password','created_at','last_login','city','address','email','customer_type','internal_notes','sales_stock_id','cash_box_id','updated_at','updated_by'],
   Customers: ['customer_id','full_name','company_name','phone','address','province','notes','opening_usd','opening_syp','status','created_at','is_system_record','creation_request_id'],
   Products: ['code','name','image_name','group','origin','unit_1','quantity','minimum_stock','unit_2','factor_2','quantity_2','unit_3','factor_3','quantity_3','display_price','price_2','price_3','currency','notes','updated_at','updated_by','image_file_id','sub_group','oem','availability_status'],
-  Offers: ['offer_id','product_code','title','unit','old_price','offer_price','currency','min_quantity','starts_at','ends_at','note','enabled','sort_order','revision','created_at','created_by','updated_at','updated_by','archived_at','archived_by'],
+  Offers: ['offer_id','product_code','title','unit','old_price','offer_price','currency','min_quantity','starts_at','ends_at','note','enabled','sort_order','revision','created_at','created_by','updated_at','updated_by','archived_at','archived_by','bundle_items'],
   Orders: ['order_id', 'order_number', 'customer_id', 'customer_name', 'status', 'currency', 'note', 'accounting_invoice_no', 'is_read', 'is_new', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at', 'created_by', 'subtotal', 'total', 'priced_by', 'priced_at', 'accountant_notes', 'posting_id', 'posted_at', 'matching_status', 'revision_no', 'client_request_id'],
   Order_Items: ['item_id', 'order_id', 'order_number', 'code', 'name_snapshot', 'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot', 'unit_1', 'unit_2', 'factor_2', 'unit_3', 'factor_3', 'quantity_requested', 'quantity_approved', 'quantity_prepared', 'display_price_snapshot', 'final_price', 'currency', 'status', 'customer_note', 'accountant_note', 'warehouse_note', 'warehouse_package_numbers', 'warehouse_package_type', 'warehouse_custom_package_type', 'total_price', 'offer_id', 'offer_revision', 'offer_old_price', 'offer_min_quantity', 'offer_starts_at', 'offer_ends_at'],
   Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type','payment_method','invoice_currency','invoice_equivalent','exchange_rate','reference','client_request_id','change_amount','change_currency','receipt_id','reversal_of'],
@@ -75,15 +75,19 @@ function _digest(str) {
  * قراءة جميع الصفوف من ورقة مع تحويلها إلى كائنات باستخدام العناوين الفعلية
  */
 function _all(name) {
-  const resolvedName = name === 'Product_Images'
-    ? (PropertiesService.getScriptProperties()
-        .getProperty('PRODUCT_IMAGES_ACTIVE_SHEET') || name)
-    : name;
   const ss = _ss();
-  const sheet = ss.getSheetByName(resolvedName) ||
-    (resolvedName !== name ? ss.getSheetByName(name) : null);
+  const sheet = ss.getSheetByName(name);
   if (!sheet) return [];
-  const values = sheet.getDataRange().getValues();
+  const values = name === 'Product_Images'
+    ? sheet.getLastRow()
+      ? sheet.getRange(
+        1,
+        1,
+        sheet.getLastRow(),
+        Math.min(sheet.getLastColumn(), H.Product_Images.length)
+      ).getValues()
+      : []
+    : sheet.getDataRange().getValues();
   if (values.length === 0) return [];
   const headers = values.shift();
   return values
@@ -712,6 +716,7 @@ function doGet(e) {
 function doPost(e) {
   const requestId = Utilities.getUuid();
   try {
+    // يُقرأ JSON من جسم POST حتى عند إرساله بنوع text/plain من الويب.
     const rawBody = (e && e.postData && e.postData.contents) || '{}';
     const body = JSON.parse(rawBody);
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -1688,6 +1693,20 @@ function _offerStatus_(offer, now) {
 function _offerPublic_(offer, role, now) {
   const result = {};
   H.Offers.forEach(key => { result[key] = offer[key] === undefined ? '' : offer[key]; });
+  let bundleItems = [];
+  if (Array.isArray(offer.bundle_items)) {
+    bundleItems = offer.bundle_items;
+  } else if (String(offer.bundle_items || '').trim()) {
+    try {
+      bundleItems = JSON.parse(offer.bundle_items);
+    } catch (error) {
+      _offerError_('INVALID_OFFER', 'بيانات مكونات الحزمة غير صالحة');
+    }
+  }
+  if (!Array.isArray(bundleItems)) {
+    _offerError_('INVALID_OFFER', 'بيانات مكونات الحزمة غير صالحة');
+  }
+  result.bundle_items = bundleItems;
   result.enabled = _offerBoolean_(offer.enabled);
   ['old_price', 'offer_price', 'min_quantity', 'sort_order', 'revision'].forEach(key => {
     result[key] = Number(offer[key]);
@@ -1699,6 +1718,12 @@ function _offerPublic_(offer, role, now) {
   if (_normalizeRole(role) === 'warehouse') {
     delete result.old_price;
     delete result.offer_price;
+    result.bundle_items = bundleItems.map(item => {
+      const safeItem = Object.assign({}, item);
+      delete safeItem.old_price;
+      delete safeItem.offer_price;
+      return safeItem;
+    });
   }
   return result;
 }
@@ -1739,6 +1764,25 @@ function _offerProductPrice_(product, unit) {
 }
 
 function _offerMatchesProduct_(offer, product) {
+  const bundleItems = _offerBundleItems_(offer);
+  if (bundleItems.length > 1) {
+    return bundleItems.every(item => {
+      const componentProduct = product && String(product.code).trim() ===
+        String(item.product_code).trim()
+        ? product
+        : _all('Products').find(candidate =>
+          String(candidate.code).trim() === String(item.product_code).trim());
+      const normalPrice = _offerProductPrice_(componentProduct, String(item.unit).trim());
+      return normalPrice !== null &&
+        Number.isFinite(Number(item.old_price)) &&
+        Number.isFinite(Number(item.offer_price)) &&
+        Number(item.offer_price) > 0 &&
+        Number(item.offer_price) < Number(item.old_price) &&
+        Number(item.old_price) <= normalPrice &&
+        String(componentProduct.currency || 'USD').trim().toUpperCase() ===
+          String(offer.currency || '').trim().toUpperCase();
+    });
+  }
   const price = _offerProductPrice_(product, String(offer.unit || '').trim());
   const oldPrice = Number(offer.old_price), offerPrice = Number(offer.offer_price);
   return price !== null && Number.isFinite(oldPrice) && Number.isFinite(offerPrice) &&
@@ -1746,28 +1790,135 @@ function _offerMatchesProduct_(offer, product) {
     String(product.currency || 'USD').trim().toUpperCase() === String(offer.currency || '').trim().toUpperCase();
 }
 
+function _offerBundleItems_(offer) {
+  if (Array.isArray(offer.bundle_items)) return offer.bundle_items;
+  const raw = String(offer.bundle_items || '').trim();
+  if (!raw) return [];
+  try {
+    const items = JSON.parse(raw);
+    if (!Array.isArray(items)) _offerError_('INVALID_OFFER', 'بيانات مكونات الحزمة غير صالحة');
+    return items;
+  } catch (error) {
+    _offerError_('INVALID_OFFER', 'بيانات مكونات الحزمة غير صالحة');
+  }
+}
+
+function _offerInputBundleItems_(input) {
+  const value = input.bundle_items;
+  if (value == null || value === '') return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    return _offerBundleItems_({ bundle_items: value });
+  }
+  _offerError_('INVALID_OFFER', 'بيانات مكونات الحزمة غير صالحة');
+}
+
+function _offerOverlapKeys_(offer) {
+  const bundleItems = _offerBundleItems_(offer);
+  if (bundleItems.length > 1) {
+    return bundleItems.map(item =>
+      String(item.product_code).trim() + '\u001f' + String(item.unit).trim());
+  }
+  return [String(offer.product_code).trim() + '\u001f' +
+    String(offer.unit).trim()];
+}
+
+function _offerComponentFor_(offer, code, unit) {
+  const component = _offerBundleItems_(offer).find(item =>
+    String(item.product_code).trim() === String(code || '').trim() &&
+    String(item.unit).trim() === String(unit || '').trim());
+  return component || null;
+}
+
+function _offerComponent_(input, products, currency) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    _offerError_('INVALID_OFFER', 'مكوّن الحزمة غير صالح');
+  }
+  const productCode = _offerText_(input.product_code, true);
+  const product = products.find(candidate =>
+    String(candidate.code).trim() === productCode);
+  if (!product) _offerError_('PRODUCT_NOT_FOUND', 'منتج في الحزمة غير موجود');
+  const unit = _offerText_(input.unit, true);
+  if (![product.unit_1, product.unit_2, product.unit_3]
+      .map(value => String(value || '').trim()).filter(Boolean).includes(unit)) {
+    _offerError_('INVALID_PRODUCT_UNIT', 'وحدة منتج في الحزمة غير معرفة');
+  }
+  if (String(product.currency || 'USD').trim().toUpperCase() !== currency) {
+    _offerError_('INVALID_OFFER', 'يجب توحيد عملة جميع منتجات الحزمة');
+  }
+  const quantity = _offerNumber_(input.quantity, true);
+  if (!Number.isSafeInteger(quantity)) {
+    _offerError_('INVALID_OFFER', 'كمية كل منتج في الحزمة يجب أن تكون عدداً صحيحاً');
+  }
+  const oldPrice = _offerNumber_(input.old_price, true);
+  const offerPrice = _offerNumber_(input.offer_price, true);
+  const regularPrice = _offerProductPrice_(product, unit);
+  if (offerPrice >= oldPrice || regularPrice === null || oldPrice > regularPrice) {
+    _offerError_('INVALID_OFFER', 'سعر مكوّن الحزمة لا يطابق سعر المنتج أو لا يتضمن تخفيضاً');
+  }
+  return {
+    product_code: productCode,
+    product_name: String(product.name || ''),
+    unit: unit,
+    quantity: quantity,
+    old_price: oldPrice,
+    offer_price: offerPrice,
+  };
+}
+
 function _offerValidate_(input, product) {
   const offer = {};
-  offer.product_code = _offerText_(input.product_code, true);
   offer.title = _offerText_(input.title == null ? '' : input.title, false);
   offer.note = _offerText_(input.note == null ? '' : input.note, false);
-  offer.unit = _offerText_(input.unit, true);
   offer.currency = _offerText_(input.currency, true).toUpperCase();
+  const products = _all('Products');
+  const suppliedBundle = _offerInputBundleItems_(input);
+  if (suppliedBundle.length > 1) {
+    const bundleItems = suppliedBundle.map(item =>
+      _offerComponent_(item, products, offer.currency));
+    const keys = new Set();
+    bundleItems.forEach(item => {
+      const key = item.product_code + '\u001f' + item.unit;
+      if (keys.has(key)) _offerError_('INVALID_OFFER', 'لا تكرر المنتج والوحدة ضمن الحزمة');
+      keys.add(key);
+    });
+    offer.bundle_items = JSON.stringify(bundleItems);
+    offer.product_code = bundleItems[0].product_code;
+    offer.unit = 'حزمة';
+    offer.old_price = bundleItems.reduce(
+      (sum, item) => sum + item.quantity * item.old_price, 0);
+    offer.offer_price = bundleItems.reduce(
+      (sum, item) => sum + item.quantity * item.offer_price, 0);
+    offer.min_quantity = 1;
+    const totalOld = bundleItems.reduce(
+      (sum, item) => sum + item.quantity * item.old_price, 0);
+    if (!(offer.offer_price > 0 && offer.offer_price < totalOld)) {
+      _offerError_('INVALID_OFFER', 'سعر الحزمة يجب أن يكون أقل من مجموع أسعارها السابقة');
+    }
+  } else {
+    offer.bundle_items = '';
+    offer.product_code = _offerText_(input.product_code, true);
+    offer.unit = _offerText_(input.unit, true);
+    if (!product) _offerError_('PRODUCT_NOT_FOUND', 'المنتج غير موجود');
+    if (![product.unit_1, product.unit_2, product.unit_3].map(v => String(v || '').trim()).filter(Boolean).includes(offer.unit)) {
+      _offerError_('INVALID_PRODUCT_UNIT', 'الوحدة غير معرفة للمنتج');
+    }
+    const productCurrency = String(product.currency || 'USD').trim().toUpperCase();
+    if (!['USD', 'SYP'].includes(offer.currency) || offer.currency !== productCurrency) {
+      _offerError_('INVALID_OFFER', 'عملة العرض غير مدعومة أو لا تطابق المنتج');
+    }
+    offer.old_price = _offerNumber_(input.old_price, true);
+    offer.offer_price = _offerNumber_(input.offer_price, true);
+    if (offer.offer_price >= offer.old_price) _offerError_('INVALID_OFFER', 'سعر العرض يجب أن يكون أقل من السعر القديم');
+    if (!_offerMatchesProduct_(offer, product)) {
+      _offerError_('INVALID_OFFER', 'أسعار العرض تتجاوز سعر وحدة المنتج المهيأ أو سعر الوحدة غير صالح');
+    }
+    offer.min_quantity = _offerNumber_(input.min_quantity, true);
+  }
+  if (!['USD', 'SYP'].includes(offer.currency)) {
+    _offerError_('INVALID_OFFER', 'عملة العرض غير مدعومة');
+  }
   if (!product) _offerError_('PRODUCT_NOT_FOUND', 'المنتج غير موجود');
-  if (![product.unit_1, product.unit_2, product.unit_3].map(v => String(v || '').trim()).filter(Boolean).includes(offer.unit)) {
-    _offerError_('INVALID_PRODUCT_UNIT', 'الوحدة غير معرفة للمنتج');
-  }
-  const productCurrency = String(product.currency || 'USD').trim().toUpperCase();
-  if (!['USD', 'SYP'].includes(offer.currency) || offer.currency !== productCurrency) {
-    _offerError_('INVALID_OFFER', 'عملة العرض غير مدعومة أو لا تطابق المنتج');
-  }
-  offer.old_price = _offerNumber_(input.old_price, true);
-  offer.offer_price = _offerNumber_(input.offer_price, true);
-  if (offer.offer_price >= offer.old_price) _offerError_('INVALID_OFFER', 'سعر العرض يجب أن يكون أقل من السعر القديم');
-  if (!_offerMatchesProduct_(offer, product)) {
-    _offerError_('INVALID_OFFER', 'أسعار العرض تتجاوز سعر وحدة المنتج المهيأ أو سعر الوحدة غير صالح');
-  }
-  offer.min_quantity = _offerNumber_(input.min_quantity, true);
   offer.sort_order = _offerNumber_(input.sort_order == null ? 0 : input.sort_order, false);
   offer.enabled = _offerBoolean_(input.enabled == null ? true : input.enabled);
   // API timestamps must be strings with an explicit zone, never local sheet dates.
@@ -1854,9 +2005,11 @@ function _handleOfferSave_(body, user) {
     const product = _all('Products').find(p => String(p.code).trim() === code);
     const offer = _offerValidate_(merged, product);
     if (offer.enabled) {
+      const offerKeys = new Set(_offerOverlapKeys_(offer));
       const overlap = offers.some(other => {
-        if (String(other.offer_id) === id || other.archived_at || !_offerBoolean_(other.enabled) ||
-            String(other.product_code).trim() !== offer.product_code || String(other.unit).trim() !== offer.unit) return false;
+        if (String(other.offer_id) === id || other.archived_at ||
+            !_offerBoolean_(other.enabled) ||
+            !_offerOverlapKeys_(other).some(key => offerKeys.has(key))) return false;
         return Date.parse(_offerTime_(other.starts_at)) < Date.parse(offer.ends_at) &&
           Date.parse(offer.starts_at) < Date.parse(_offerTime_(other.ends_at));
       });
@@ -1930,6 +2083,28 @@ function _orderOfferClaim_(item, offers, currency, now) {
   if (!offer) changed();
   try {
     const quantity = Number(item.quantity ?? item.quantity_requested);
+    const bundleItems = _offerBundleItems_(offer);
+    if (bundleItems.length > 1) {
+      const component = bundleItems.find(entry =>
+        String(entry.product_code).trim() === String(item.code || '').trim() &&
+        String(entry.unit).trim() === String(item.unit || '').trim());
+      const bundleCount = component
+        ? quantity / Number(component.quantity)
+        : NaN;
+      if (_offerStatus_(offer, now) !== 'active' ||
+          String(offer.currency).trim().toUpperCase() !== currency ||
+          !component ||
+          !Number.isFinite(quantity) || quantity <= 0 ||
+          !Number.isSafeInteger(bundleCount) || bundleCount < 1 ||
+          Number(item.offer_revision) !== Number(offer.revision) ||
+          Number(item.offer_price) !== Number(component.offer_price) ||
+          !Number.isFinite(Number(component.old_price)) ||
+          Number(component.old_price) <= Number(component.offer_price) ||
+          Date.parse(_offerTime_(offer.ends_at)) <= Date.parse(_offerTime_(offer.starts_at))) {
+        changed();
+      }
+      return offer;
+    }
     if (_offerStatus_(offer, now) !== 'active' ||
         String(offer.product_code).trim() !== String(item.code || '').trim() ||
         String(offer.unit).trim() !== String(item.unit || '').trim() ||
@@ -1946,6 +2121,43 @@ function _orderOfferClaim_(item, offers, currency, now) {
     changed();
   }
   return offer;
+}
+
+function _validateOfferBundles_(validatedItems) {
+  const grouped = new Map();
+  validatedItems.forEach(validated => {
+    if (!validated.offer) return;
+    const components = _offerBundleItems_(validated.offer);
+    if (components.length < 2) return;
+    const group = grouped.get(validated.offer.offer_id) || [];
+    group.push(validated);
+    grouped.set(validated.offer.offer_id, group);
+  });
+  grouped.forEach((lines, offerId) => {
+    const offer = lines[0].offer;
+    const components = _offerBundleItems_(offer);
+    const changed = () => _offerError_('OFFER_CHANGED', 'يجب طلب مكونات الحزمة كاملة وبالكميات المحددة');
+    if (lines.length !== components.length) changed();
+    const bundleCounts = [];
+    const seen = new Set();
+    lines.forEach(line => {
+      const key = line.code + '\u001f' + line.unit;
+      if (seen.has(key)) changed();
+      seen.add(key);
+      const component = components.find(entry =>
+        String(entry.product_code).trim() === line.code &&
+        String(entry.unit).trim() === line.unit);
+      if (!component) changed();
+      const count = line.quantity / Number(component.quantity);
+      if (!Number.isSafeInteger(count) || count < 1) changed();
+      bundleCounts.push(count);
+    });
+    if (bundleCounts.some(count => count !== bundleCounts[0])) changed();
+    if (components.some(component =>
+      !seen.has(String(component.product_code).trim() + '\u001f' +
+        String(component.unit).trim()))) changed();
+    if (String(offer.offer_id) !== offerId) changed();
+  });
 }
 
 function _validateUnchangedOfferItem_(input, previous, partial) {
@@ -2448,357 +2660,303 @@ function _findIndexedProductImage_(product, imageMaps) {
 }
 
 /**
- * Incrementally sync Drive image changes by default; full rebuild is explicit.
+ * The index is stored in one canonical table and keyed by stable Drive file id.
  */
-function rebuildImageIndex(options) {
-  const opts = options || {};
-  const operation = String(opts.operation || 'start').toLowerCase();
-  if (operation === 'status') return _imageIndexJobStatus_();
-  if (operation === 'resume') return resumeImageIndexJob();
-  if (operation === 'cancel') return cancelImageIndexJob();
-  if (operation === 'restart') {
-    if (opts.confirmed !== true && String(opts.confirmed) !== 'true') {
-      throw _apiError('CONFIRMATION_REQUIRED', 'تأكيد إعادة الفهرسة مطلوب', false);
-    }
-    return _startMetadataImageIndexJob_('full', true);
-  }
-  return _startMetadataImageIndexJob_(operation === 'full' ? 'full' : 'update', false);
-}
-
-const IMAGE_INDEX_JOB_PROPERTY_ = 'PRODUCT_IMAGES_INDEX_JOB_V2';
-const IMAGE_INDEX_ACTIVE_PROPERTY_ = 'PRODUCT_IMAGES_ACTIVE_SHEET';
+const IMAGE_INDEX_JOB_PROPERTY_ = 'PRODUCT_IMAGES_INDEX_JOB_V3';
 const IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_ = 'PRODUCT_IMAGES_CHANGES_TOKEN';
+const IMAGE_INDEX_FOLDER_PROPERTY_ = 'PRODUCT_IMAGES_INDEXED_FOLDER_ID';
 const IMAGE_INDEX_SCHEDULED_PROPERTY_ = 'PRODUCT_IMAGES_SCHEDULED';
 const IMAGE_INDEX_TRIGGER_FUNCTION_ = 'continueImageIndexJob';
 const IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_ = 'scheduledImageIndexUpdate';
-const IMAGE_INDEX_DEFAULT_BATCH_SIZE_ = 1000;
-const IMAGE_INDEX_MAX_BATCH_SIZE_ = 1000;
-const IMAGE_INDEX_DEFAULT_BUDGET_MS_ = 180000;
-const IMAGE_INDEX_MAX_SPREADSHEET_CELLS_ = 10000000;
+const IMAGE_INDEX_BATCH_SIZE_ = 200;
+const IMAGE_INDEX_MAX_BATCH_SIZE_ = 500;
 const IMAGE_INDEX_MAX_ERRORS_ = 20;
 
+function rebuildImageIndex(options) {
+  const opts = options || {};
+  const operation = String(opts.operation || 'update').trim().toLowerCase();
+  if (operation === 'status') return _imageIndexJobStatus_();
+  if (operation === 'resume') return resumeImageIndexJob();
+  if (operation === 'cancel') return cancelImageIndexJob();
+  const full = operation === 'full' || operation === 'restart';
+  if (full && opts.confirmed !== true && String(opts.confirmed) !== 'true') {
+    throw _apiError('CONFIRMATION_REQUIRED', 'إعادة بناء الفهرس الكامل تتطلب confirmed=true', false);
+  }
+  return _startImageIndexJob_(full);
+}
+
 function _imageIndexReadJob_() {
-  const raw = PropertiesService.getScriptProperties()
-    .getProperty(IMAGE_INDEX_JOB_PROPERTY_);
+  const raw = PropertiesService.getScriptProperties().getProperty(IMAGE_INDEX_JOB_PROPERTY_);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
   } catch (error) {
-    Logger.log('Image index job state is unreadable: ' + _imageIndexSafeError_(error));
-    throw _apiError('IMAGE_INDEX_STATE_INVALID', 'تعذر قراءة حالة مهمة فهرس الصور', false);
+    Logger.log('Image index state is invalid: ' + _imageIndexSafeError_(error));
+    throw _apiError('IMAGE_INDEX_STATE_INVALID', 'تعذر قراءة حالة فهرسة الصور', false);
   }
 }
 
 function _imageIndexSaveJob_(job) {
   job.last_progress_at = _now();
-  PropertiesService.getScriptProperties()
-    .setProperty(IMAGE_INDEX_JOB_PROPERTY_, JSON.stringify(job));
+  PropertiesService.getScriptProperties().setProperty(IMAGE_INDEX_JOB_PROPERTY_, JSON.stringify(job));
+}
+
+function _imageIndexConfig_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('IMAGE_INDEX_BATCH_SIZE');
+  const configured = raw == null || String(raw).trim() === '' ? NaN : Number(raw);
+  return { batchSize: Number.isInteger(configured) ? Math.max(10, Math.min(IMAGE_INDEX_MAX_BATCH_SIZE_, configured)) : IMAGE_INDEX_BATCH_SIZE_ };
 }
 
 function _imageIndexPublicStatus_(job) {
-  if (!job) {
-    return {
-      success: true,
-      status: 'idle',
-      scheduled_update: _imageIndexScheduleStatus_(),
-      message: 'لا توجد مهمة فهرسة صور حالية',
-    };
-  }
+  if (!job) return {
+    success: true, status: 'idle', scheduled_update: _imageIndexScheduleStatus_(),
+    message: 'لا توجد مهمة فهرسة صور حالية',
+  };
   return {
     success: true,
     jobId: job.job_id,
     status: job.status,
-    files_scanned: job.files_scanned,
-    files_indexed: job.files_indexed,
-    files_skipped: job.files_skipped,
+    mode: job.mode,
+    phase: job.phase || '',
+    files_scanned: job.files_scanned || 0,
+    files_indexed: job.files_indexed || 0,
     files_added: job.files_added || 0,
     files_updated: job.files_updated || 0,
     files_unavailable: job.files_unavailable || 0,
-    name_conflict_count: job.name_conflict_count || 0,
-    duration_ms: (job.completed_at ? Date.parse(job.completed_at) : Date.now()) -
-      Date.parse(job.started_at),
-    timings: job.timings || {},
-    mode: job.mode || 'full',
-    scheduled_update: _imageIndexScheduleStatus_(),
-    token_restarts: job.token_restarts || 0,
-    error_count: job.error_count,
+    files_skipped: job.files_skipped || 0,
+    error_count: job.error_count || 0,
     errors: job.errors || [],
-    last_progress_at: job.last_progress_at,
+    token_restarts: job.token_restarts || 0,
     started_at: job.started_at,
     completed_at: job.completed_at || null,
+    last_progress_at: job.last_progress_at,
     last_error: job.last_error || null,
+    duration_ms: Math.max(0, (job.completed_at ? Date.parse(job.completed_at) : Date.now()) - Date.parse(job.started_at)),
+    scheduled_update: _imageIndexScheduleStatus_(),
     message: _imageIndexStatusMessage_(job),
   };
 }
 
 function _imageIndexStatusMessage_(job) {
   const labels = {
-    pending: 'قيد الانتظار',
-    running: 'جارٍ التنفيذ',
-    continuing: 'جارٍ الاستكمال',
-    publishing: 'جارٍ تفعيل الفهرس الجديد',
-    completed: 'اكتملت الفهرسة',
-    completed_with_errors: 'اكتملت الفهرسة مع أخطاء',
-    failed: 'فشلت المهمة؛ الفهرس السابق ما زال نشطاً',
-    cancelled: 'أُلغيت المهمة؛ الفهرس السابق ما زال نشطاً',
+    pending: 'بانتظار البدء', running: 'قيد الفهرسة', continuing: 'قيد الاستكمال',
+    completed: 'اكتملت الفهرسة', completed_with_errors: 'اكتملت الفهرسة مع أخطاء',
+    failed: 'فشلت المهمة؛ أعد المحاولة أو استأنفها', cancelled: 'أُلغيت المهمة',
   };
   return (labels[job.status] || job.status) +
-    ' — فُحص ' + job.files_scanned +
+    ' — فُحص ' + (job.files_scanned || 0) +
     '، أُضيف ' + (job.files_added || 0) +
     '، عُدّل ' + (job.files_updated || 0) +
     '، غير متاح ' + (job.files_unavailable || 0) +
-    '، تعارض أسماء ' + (job.name_conflict_count || 0) +
-    '، أخطاء ' + job.error_count +
-    '، المدة ' + Math.max(0, Math.round(
-      ((job.completed_at ? Date.parse(job.completed_at) : Date.now()) -
-        Date.parse(job.started_at)) / 1000
-    )) + ' ث';
+    '، أخطاء ' + (job.error_count || 0);
 }
 
 function _imageIndexSafeError_(error) {
-  let message = String(error && error.message ? error.message : error || 'خطأ غير معروف');
-  message = message
-    .replace(/https?:\/\/\S+/gi, '[رابط محذوف]')
-    .replace(/(?:ya29\.[\w.-]+|AIza[\w-]{20,})/g, '[بيانات اعتماد محذوفة]')
+  return String(error && error.message ? error.message : error || 'Unknown error')
+    .replace(/https?:\/\/\S+/gi, '[URL removed]')
+    .replace(/(?:ya29\.[\w.-]+|AIza[\w-]{20,})/g, '[credential removed]')
     .replace(/[\r\n\t]+/g, ' ')
     .slice(0, 240);
-  return message || 'خطأ غير معروف';
 }
 
-function _imageIndexConfig_() {
-  const properties = PropertiesService.getScriptProperties();
-  const batchValue = properties.getProperty('IMAGE_INDEX_BATCH_SIZE');
-  const budgetValue = properties.getProperty('IMAGE_INDEX_BUDGET_MS');
-  const configuredBatch = batchValue == null || String(batchValue).trim() === '' ? NaN : Number(batchValue);
-  const configuredBudget = budgetValue == null || String(budgetValue).trim() === '' ? NaN : Number(budgetValue);
-  return {
-    batchSize: Number.isInteger(configuredBatch)
-      ? Math.max(10, Math.min(IMAGE_INDEX_MAX_BATCH_SIZE_, configuredBatch))
-      : IMAGE_INDEX_DEFAULT_BATCH_SIZE_,
-    budgetMs: Number.isFinite(configuredBudget)
-      ? Math.max(30000, Math.min(IMAGE_INDEX_DEFAULT_BUDGET_MS_, configuredBudget))
-      : IMAGE_INDEX_DEFAULT_BUDGET_MS_,
-  };
-}
-
-function _imageIndexDriveApi_(resource, params) {
-  const query = Object.keys(params || {})
-    .map(key => encodeURIComponent(key) + '=' + encodeURIComponent(params[key]))
-    .join('&');
-  const response = UrlFetchApp.fetch(
-    'https://www.googleapis.com/drive/v3/' + resource +
-      (query ? '?' + query : ''),
-    {
-      method: 'get',
-      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
-      muteHttpExceptions: true,
-    }
-  );
-  const code = response.getResponseCode();
-  const body = response.getContentText();
-  if (code < 200 || code >= 300) {
-    throw new Error('Drive API ' + code + ': ' + body.slice(0, 300));
-  }
-  return JSON.parse(body);
+function _imageIndexSheet_() {
+  const sheet = _ss().getSheetByName('Product_Images');
+  if (!sheet) throw _apiError('IMAGE_INDEX_SHEET_MISSING', 'ورقة Product_Images غير موجودة؛ شغّل setupSystem أولاً', false);
+  return sheet;
 }
 
 function _imageIndexEnsureSchema_(sheet) {
   const headers = H.Product_Images;
-  const lastColumn = sheet.getLastColumn();
-  const existing = lastColumn
-    ? sheet.getRange(1, 1, 1, lastColumn).getValues()[0]
-      .map(value => String(value || '').trim())
-    : [];
-  const missing = headers.filter(header => existing.indexOf(header) < 0);
-  if (missing.length) {
-    const newColumns = sheet.getMaxColumns() < existing.length + missing.length;
-    if (newColumns) {
-      sheet.insertColumnsAfter(
-        sheet.getMaxColumns(),
-        existing.length + missing.length - sheet.getMaxColumns()
-      );
+  const lastColumn = Math.max(sheet.getLastColumn(), headers.length);
+  const allHeaders = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(value => String(value || '').trim());
+  const properties = PropertiesService.getScriptProperties();
+  const activeColumn = Number(properties.getProperty('PRODUCT_IMAGES_ACTIVE_COLUMN') || 1);
+  let sourceColumn = 1;
+  let sourceHeaders = allHeaders.slice(0, headers.length);
+  if (Number.isInteger(activeColumn) && activeColumn > 1 && activeColumn + headers.length - 1 <= lastColumn) {
+    const activeHeaders = sheet.getRange(1, activeColumn, 1, headers.length).getValues()[0].map(value => String(value || '').trim());
+    if (headers.every(header => activeHeaders.indexOf(header) >= 0)) {
+      sourceColumn = activeColumn;
+      sourceHeaders = activeHeaders;
     }
-    const additions = missing.map(header => [header]);
-    sheet.getRange(1, existing.length + 1, 1, additions.length)
-      .setValues([missing]);
   }
-  const actual = sheet.getRange(1, 1, 1, headers.length).getValues()[0]
-    .map(value => String(value || '').trim());
-  if (actual.join('\u001f') !== headers.join('\u001f')) {
-    throw _apiError(
-      'IMAGE_INDEX_SCHEMA',
-      'ترتيب أعمدة فهرس الصور غير متوافق؛ لم تُعدّل بيانات الفهرس',
-      false
-    );
+  const positions = Object.create(null);
+  sourceHeaders.forEach((header, index) => {
+    if (header && positions[header] === undefined) positions[header] = index;
+  });
+  if (!headers.some(header => positions[header] !== undefined)) {
+    throw _apiError('IMAGE_INDEX_SCHEMA', 'تعذر تحديد أعمدة بيانات Product_Images', false);
   }
+  const lastRow = sheet.getLastRow();
+  const sourceRows = lastRow > 1 ? sheet.getRange(2, sourceColumn, lastRow - 1, headers.length).getValues() : [];
+  const rows = sourceRows.filter(row => row.some(value => value !== '' && value != null))
+    .map(row => headers.map(header => positions[header] === undefined ? '' : row[positions[header]]));
+  const currentHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0].map(value => String(value || '').trim());
+  if (sourceColumn !== 1 || currentHeaders.join('\u001f') !== headers.join('\u001f')) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+    _imageIndexEnsureRows_(sheet, rows.length + 1);
+    if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+  const extraColumns = sheet.getMaxColumns() - headers.length;
+  if (extraColumns > 0) sheet.deleteColumns(headers.length + 1, extraColumns);
+  properties.deleteProperty('PRODUCT_IMAGES_ACTIVE_COLUMN');
+  properties.deleteProperty('PRODUCT_IMAGES_ACTIVE_SHEET');
+}
+
+function _imageIndexEnsureRows_(sheet, requiredLastRow) {
+  const current = sheet.getMaxRows();
+  if (requiredLastRow > current) sheet.insertRowsAfter(current, requiredLastRow - current);
+}
+
+function _imageIndexDriveApi_(resource, params) {
+  const query = Object.keys(params || {}).map(key => encodeURIComponent(key) + '=' + encodeURIComponent(params[key])).join('&');
+  const response = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/' + resource + (query ? '?' + query : ''), {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true,
+  });
+  const code = response.getResponseCode();
+  const body = response.getContentText();
+  if (code < 200 || code >= 300) throw new Error('Drive API ' + code + ': ' + body.slice(0, 300));
+  return JSON.parse(body);
+}
+
+function _imageIndexStartToken_() {
+  const response = _imageIndexDriveApi_('changes/startPageToken', { supportsAllDrives: true });
+  const token = String(response.startPageToken || '');
+  if (!token) throw new Error('Drive API did not return a changes token');
+  return token;
 }
 
 function _imageIndexMetadataRow_(file, folderId) {
-  if (!file || !file.mimeType || !Array.isArray(file.parents)) {
-    throw new Error('بيانات مجلد أو نوع ملف Drive غير مكتملة');
+  if (!file || !file.id || !file.name || !file.mimeType || !Array.isArray(file.parents)) {
+    throw new Error('بيانات ملف Drive غير مكتملة');
   }
-  const fileId = String(file && file.id || '').trim();
-  const fileName = String(file && file.name || '').trim();
-  const mimeType = String(file && file.mimeType || '');
-  const modifiedTime = String(file && file.modifiedTime || '');
-  const inFolder = Array.isArray(file && file.parents) &&
-    file.parents.indexOf(folderId) >= 0;
-  if (!fileId || !fileName) throw new Error('بيانات ملف Drive غير مكتملة');
-  if (file.trashed || !inFolder || mimeType.indexOf('image/') !== 0) return null;
+  if (file.trashed || file.parents.indexOf(folderId) < 0 || String(file.mimeType).indexOf('image/') !== 0) return null;
+  const fileId = String(file.id).trim();
+  const fileName = String(file.name).trim();
+  if (!fileId || !fileName) throw new Error('معرف أو اسم ملف Drive فارغ');
+  const modifiedTime = String(file.modifiedTime || '');
   return [
-    fileName,
-    normalizeImageName_(fileName),
-    fileId,
-    'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600&v=' +
-      encodeURIComponent(modifiedTime),
-    mimeType,
-    _now(),
-    'active',
-    modifiedTime,
+    fileName, normalizeImageName_(fileName), fileId,
+    'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600&v=' + encodeURIComponent(modifiedTime),
+    String(file.mimeType), _now(), 'active', modifiedTime,
   ];
 }
 
-function _imageIndexNewJob_(mode, folderId, stageSheet, startPageToken, pageToken) {
-  const now = _now();
+function _imageIndexNewJob_(mode, folderId, startToken) {
   return {
-    engine: 'metadata_v1',
     job_id: Utilities.getUuid(),
     mode: mode,
+    phase: mode === 'update' ? 'changes' : 'files',
     status: 'pending',
     folder_id: folderId,
-    stage_sheet: stageSheet || '',
-    bootstrap_page_token: startPageToken || '',
-    page_token: pageToken || '',
-    files_scanned: 0,
-    files_indexed: 0,
-    files_added: 0,
-    files_updated: 0,
-    files_unavailable: 0,
-    name_conflict_count: 0,
-    files_skipped: 0,
-    error_count: 0,
-    errors: [],
-    timings: {
-      drive_fetch_ms: 0,
-      index_read_ms: 0,
-      match_ms: 0,
-      write_ms: 0,
-      trigger_wait_ms: 0,
-    },
-    started_at: now,
-    last_progress_at: now,
-    completed_at: null,
-    last_error: null,
+    start_token: startToken || '',
+    page_token: mode === 'update' ? startToken : '',
+    files_scanned: 0, files_indexed: 0, files_added: 0, files_updated: 0,
+    files_unavailable: 0, files_skipped: 0, error_count: 0, errors: [],
+    token_restarts: 0, batch_failures: 0, started_at: _now(),
+    last_progress_at: _now(), completed_at: null, last_error: null,
   };
 }
 
-function _startMetadataImageIndexJob_(requestedMode, confirmedRestart) {
+function _imageIndexClearRows_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, H.Product_Images.length).clearContent();
+}
+
+function _startImageIndexJob_(full) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث فهرس الصور؛ حاول مجدداً', true);
-  }
+  if (!lock.tryLock(5000)) throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث فهرس الصور؛ حاول مجدداً', true);
   try {
     const current = _imageIndexReadJob_();
-    if (current && ['pending', 'running', 'continuing', 'publishing'].includes(current.status)) {
-      if (!confirmedRestart) return _imageIndexPublicStatus_(current);
+    if (current && ['pending', 'running', 'continuing'].indexOf(current.status) >= 0) {
+      if (!full) return _imageIndexPublicStatus_(current);
       current.status = 'cancelled';
       current.completed_at = _now();
       _imageIndexSaveJob_(current);
     }
-    const properties = PropertiesService.getScriptProperties();
-    const folderId = properties.getProperty('PRODUCT_IMAGES_FOLDER_ID') ||
-      '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
-    const storedToken = properties.getProperty(IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_);
-    let mode = requestedMode;
-    let startPageToken = '';
-    let pageToken = storedToken || '';
-    let stageName = '';
-    let tokenFetchMs = 0;
-    if (mode === 'full' || !storedToken) {
-      const tokenStarted = Date.now();
-      const tokenResult = _imageIndexDriveApi_('changes/startPageToken', {
-        fields: 'startPageToken',
-      });
-      tokenFetchMs = Date.now() - tokenStarted;
-      startPageToken = String(tokenResult.startPageToken || '');
-      if (!startPageToken) throw new Error('Drive API لم يُرجع رمز بدء التغييرات');
-      mode = requestedMode === 'full' ? 'full' : 'bootstrap';
-      stageName = _imageIndexFindOrCreateStage_(_ss(), Utilities.getUuid()).getName();
+    if (!full && current && current.status === 'failed' &&
+        ['full', 'bootstrap'].indexOf(current.mode) >= 0) {
+      return _imageIndexPublicStatus_(current);
     }
-    const job = _imageIndexNewJob_(mode, folderId, stageName, startPageToken, pageToken);
-    job.timings.drive_fetch_ms += tokenFetchMs;
-    _imageIndexSaveJob_(job);
+    const properties = PropertiesService.getScriptProperties();
+    const folderId = String(properties.getProperty('PRODUCT_IMAGES_FOLDER_ID') || '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds').trim();
+    const indexedFolder = properties.getProperty(IMAGE_INDEX_FOLDER_PROPERTY_);
+    const storedToken = properties.getProperty(IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_) || '';
+    const bootstrap = full || !storedToken || indexedFolder !== folderId;
+    const mode = full ? 'full' : (bootstrap ? 'bootstrap' : 'update');
+    const startToken = bootstrap ? _imageIndexStartToken_() : storedToken;
+    const sheet = _imageIndexSheet_();
+    _imageIndexEnsureSchema_(sheet);
+    if (bootstrap) _imageIndexClearRows_(sheet);
+    _imageIndexSaveJob_(_imageIndexNewJob_(mode, folderId, startToken));
   } finally {
     lock.releaseLock();
   }
   continueImageIndexJob();
-  const status = _imageIndexJobStatus_();
-  if (['pending', 'running', 'continuing', 'publishing'].includes(status.status)) {
+  let status = _imageIndexJobStatus_();
+  if (['pending', 'running', 'continuing'].indexOf(status.status) >= 0) {
     try {
       _imageIndexEnsureTrigger_();
     } catch (error) {
       const job = _imageIndexReadJob_();
       if (job) {
         job.status = 'failed';
-        job.last_error = 'تعذر إنشاء مشغّل الاستكمال؛ وافق على الأذونات ثم أعد المحاولة';
+        job.last_error = 'تعذر إنشاء مشغّل الاستكمال؛ تحقق من أذونات Apps Script';
         _imageIndexSaveJob_(job);
       }
-      Logger.log('Image index trigger creation failed: ' + _imageIndexSafeError_(error));
-      throw _apiError(
-        'IMAGE_INDEX_TRIGGER_FAILED',
-        'تعذر إنشاء مشغّل الاستكمال؛ وافق على الأذونات ثم أعد المحاولة',
-        false
-      );
+      throw _apiError('IMAGE_INDEX_TRIGGER_FAILED', 'تعذر إنشاء مشغّل استكمال فهرسة الصور', false);
     }
+    status = _imageIndexJobStatus_();
   }
-  return _imageIndexJobStatus_();
+  return status;
+}
+
+function _imageIndexAppendError_(job, error) {
+  const message = _imageIndexSafeError_(error);
+  job.error_count++;
+  job.last_error = message;
+  if (job.errors.length < IMAGE_INDEX_MAX_ERRORS_) job.errors.push({ message: message, at: _now() });
+  Logger.log('Image index error: ' + message);
 }
 
 function _imageIndexApplyChanges_(job, changes) {
-  const readStarted = Date.now();
-  const ss = _ss();
-  const sheetName = PropertiesService.getScriptProperties()
-    .getProperty(IMAGE_INDEX_ACTIVE_PROPERTY_) || 'Product_Images';
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) throw _apiError('IMAGE_INDEX_SHEET_MISSING', 'ورقة فهرس الصور غير موجودة', false);
-  _imageIndexEnsureSchema_(sheet);
+  const sheet = _imageIndexSheet_();
   const lastRow = sheet.getLastRow();
-  const existingRows = lastRow > 1
-    ? sheet.getRange(2, 1, lastRow - 1, H.Product_Images.length).getValues()
-    : [];
+  const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, H.Product_Images.length).getValues() : [];
   const byId = Object.create(null);
   existingRows.forEach((row, index) => {
-    const id = String(row[2] || '');
+    const id = String(row[2] || '').trim();
     if (id) byId[id] = { row: index + 2, values: row };
   });
-  job.timings.index_read_ms += Date.now() - readStarted;
-
-  const matchStarted = Date.now();
   const latest = Object.create(null);
   changes.forEach(change => {
-    const id = String(change.fileId || change.file && change.file.id || '');
+    const id = String(change.fileId || change.file && change.file.id || '').trim();
     if (id) latest[id] = change;
   });
   const updates = [];
   const additions = [];
   Object.keys(latest).forEach(id => {
     const change = latest[id];
+    const old = byId[id];
     let row = null;
     if (!change.removed && !change.file) {
-      _imageIndexAppendError_(job, new Error('بيانات التغيير غير متاحة؛ أبقينا سجل الصورة كما هو'));
+      _imageIndexAppendError_(job, new Error('Drive لم يُرجع بيانات الملف المتغير؛ بقيت حالته كما هي'));
       return;
     }
-    try {
-      if (!change.removed && change.file) {
+    if (!change.removed) {
+      try {
         row = _imageIndexMetadataRow_(change.file, job.folder_id);
+      } catch (error) {
+        _imageIndexAppendError_(job, error);
+        return;
       }
-    } catch (error) {
-      _imageIndexAppendError_(job, error);
-      return;
     }
-    const old = byId[id];
+    job.files_scanned++;
     if (!row) {
-      if (old && old.values[6] === 'active') {
+      if (old && String(old.values[6]).toLowerCase() === 'active') {
         const inactive = old.values.slice();
         inactive[5] = _now();
         inactive[6] = 'inactive';
@@ -2807,90 +2965,138 @@ function _imageIndexApplyChanges_(job, changes) {
       } else {
         job.files_skipped++;
       }
-      return;
-    }
-    if (!old) {
+    } else if (!old) {
       additions.push(row);
       job.files_added++;
-      return;
-    }
-    if (old.values[0] !== row[0] ||
-        old.values[4] !== row[4] ||
-        old.values[6] !== row[6] ||
-        String(old.values[7] || '') !== row[7]) {
+    } else if (String(old.values[0]) !== row[0] || String(old.values[4]) !== row[4] ||
+        String(old.values[6]) !== 'active' || String(old.values[7] || '') !== row[7]) {
       updates.push({ row: old.row, values: row });
       job.files_updated++;
     } else {
       job.files_skipped++;
     }
   });
-  job.timings.match_ms += Date.now() - matchStarted;
-
-  const writeStarted = Date.now();
   updates.sort((a, b) => a.row - b.row);
   let group = [];
-  const flushGroup = () => {
+  const flush = () => {
     if (!group.length) return;
-    sheet.getRange(group[0].row, 1, group.length, H.Product_Images.length)
-      .setValues(group.map(item => item.values));
+    sheet.getRange(group[0].row, 1, group.length, H.Product_Images.length).setValues(group.map(item => item.values));
     group = [];
   };
   updates.forEach(item => {
-    if (group.length && item.row !== group[group.length - 1].row + 1) flushGroup();
+    if (group.length && item.row !== group[group.length - 1].row + 1) flush();
     group.push(item);
   });
-  flushGroup();
+  flush();
   if (additions.length) {
-    const firstRow = lastRow + 1;
-    _imageIndexEnsureRows_(ss, sheet, firstRow + additions.length - 1);
-    sheet.getRange(firstRow, 1, additions.length, H.Product_Images.length)
-      .setValues(additions);
+    const startRow = Math.max(2, lastRow + 1);
+    _imageIndexEnsureRows_(sheet, startRow + additions.length - 1);
+    sheet.getRange(startRow, 1, additions.length, H.Product_Images.length).setValues(additions);
   }
-  const resultingRows = existingRows.map(row => row.slice());
-  updates.forEach(item => { resultingRows[item.row - 2] = item.values; });
-  additions.forEach(row => resultingRows.push(row));
-  const nameCounts = Object.create(null);
-  resultingRows.forEach(row => {
-    if (row[6] !== 'active') return;
-    const name = String(row[1] || '');
-    if (name) nameCounts[name] = (nameCounts[name] || 0) + 1;
-  });
-  job.name_conflict_count = Object.keys(nameCounts)
-    .filter(name => nameCounts[name] > 1).length;
-  job.files_indexed += job.files_added + job.files_updated;
-  job.timings.write_ms += Date.now() - writeStarted;
+  job.files_indexed += additions.length + updates.length;
 }
 
-function _imageIndexCompleteJob_(job, token) {
+function _imageIndexRunFilesBatch_(job) {
+  const params = {
+    q: "'" + job.folder_id.replace(/'/g, "\\'") + "' in parents and trashed = false",
+    pageSize: _imageIndexConfig_().batchSize,
+    fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,parents,trashed)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  };
+  if (job.page_token) params.pageToken = job.page_token;
+  const response = _imageIndexDriveApi_('files', params);
+  const rows = [];
+  (response.files || []).forEach(file => {
+    job.files_scanned++;
+    try {
+      const row = _imageIndexMetadataRow_(file, job.folder_id);
+      if (row) rows.push(row);
+      else job.files_skipped++;
+    } catch (error) {
+      _imageIndexAppendError_(job, error);
+    }
+  });
+  if (rows.length) {
+    const sheet = _imageIndexSheet_();
+    const lastRow = sheet.getLastRow();
+    const existingRows = lastRow > 1
+      ? sheet.getRange(2, 1, lastRow - 1, H.Product_Images.length).getValues()
+      : [];
+    const rowById = Object.create(null);
+    existingRows.forEach((old, index) => {
+      const id = String(old[2] || '').trim();
+      if (id) rowById[id] = { row: index + 2, values: old };
+    });
+    const updates = [];
+    const additions = [];
+    rows.forEach(row => {
+      const existing = rowById[String(row[2])];
+      if (!existing) {
+        additions.push(row);
+        job.files_added++;
+      } else {
+        if (existing.values.some((value, index) => String(value || '') !== String(row[index] || ''))) {
+          updates.push({ row: existing.row, values: row });
+          job.files_updated++;
+        } else {
+          job.files_skipped++;
+        }
+      }
+    });
+    updates.forEach(update => {
+      sheet.getRange(update.row, 1, 1, H.Product_Images.length).setValues([update.values]);
+    });
+    if (additions.length) {
+      const firstRow = Math.max(2, lastRow + 1);
+      _imageIndexEnsureRows_(sheet, firstRow + additions.length - 1);
+      sheet.getRange(firstRow, 1, additions.length, H.Product_Images.length).setValues(additions);
+    }
+    job.files_indexed += additions.length + updates.length;
+  }
+  if (response.nextPageToken) {
+    job.page_token = response.nextPageToken;
+  } else {
+    job.phase = 'changes';
+    job.page_token = job.start_token;
+  }
+  job.status = 'continuing';
+}
+
+function _imageIndexRunChangesBatch_(job) {
+  const response = _imageIndexDriveApi_('changes', {
+    pageToken: job.page_token,
+    pageSize: _imageIndexConfig_().batchSize,
+    includeRemoved: true,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    fields: 'nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,modifiedTime,parents,trashed))',
+  });
+  const changes = response.changes || [];
+  if (changes.length) _imageIndexApplyChanges_(job, changes);
+  if (response.nextPageToken) {
+    job.page_token = response.nextPageToken;
+    job.status = 'continuing';
+    return;
+  }
+  if (!response.newStartPageToken) throw new Error('Drive API did not return the next changes token');
   const properties = PropertiesService.getScriptProperties();
-  if (token) properties.setProperty(IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_, token);
+  properties.setProperty(IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_, response.newStartPageToken);
+  properties.setProperty(IMAGE_INDEX_FOLDER_PROPERTY_, job.folder_id);
   job.page_token = '';
   job.status = job.error_count ? 'completed_with_errors' : 'completed';
   job.completed_at = _now();
-  job.continuation_token = null;
-  _imageIndexSaveJob_(job);
-  _imageIndexDeleteTriggers_();
 }
 
-function _imageIndexRestartExpiredToken_(job, error) {
-  const message = _imageIndexSafeError_(error);
-  if (!['update', 'bootstrap', 'full'].includes(job.mode) ||
-      Number(job.token_restarts || 0) >= 2 ||
-      !/Drive API 410|page.?token|start.?page.?token/i.test(message)) {
-    return false;
-  }
-  const tokenResult = _imageIndexDriveApi_('changes/startPageToken', {
-    fields: 'startPageToken',
-  });
-  if (!tokenResult.startPageToken) return false;
-  if (job.mode !== 'full') job.mode = 'bootstrap';
+function _imageIndexRestartAsFull_(job) {
+  const token = _imageIndexStartToken_();
+  const sheet = _imageIndexSheet_();
+  _imageIndexEnsureSchema_(sheet);
+  _imageIndexClearRows_(sheet);
+  job.mode = 'bootstrap';
+  job.phase = 'files';
+  job.start_token = token;
   job.page_token = '';
-  job.bootstrap_page_token = String(tokenResult.startPageToken);
-  job.stage_sheet = _imageIndexFindOrCreateStage_(
-    _ss(),
-    Utilities.getUuid()
-  ).getName();
-  job.token_restarts = Number(job.token_restarts || 0) + 1;
   job.files_scanned = 0;
   job.files_indexed = 0;
   job.files_added = 0;
@@ -2899,432 +3105,22 @@ function _imageIndexRestartExpiredToken_(job, error) {
   job.files_skipped = 0;
   job.error_count = 0;
   job.errors = [];
-  job.name_conflict_count = 0;
   job.batch_failures = 0;
-  job.last_error = 'انتهت صلاحية مؤشر تغييرات Drive؛ بدأ فحص وصفي كامل آمن';
+  job.token_restarts = Number(job.token_restarts || 0) + 1;
+  job.last_error = 'انتهت صلاحية رمز Drive؛ بدأ فحص كامل جديد';
   job.status = 'continuing';
-  _imageIndexSaveJob_(job);
-  return true;
-}
-
-function _continueMetadataImageIndex_(job) {
-  const started = Date.now();
-  const lastRun = Date.parse(job.last_run_at || '');
-  if (Number.isFinite(lastRun) && job.last_run_duration_ms != null) {
-    job.timings.trigger_wait_ms += Math.max(
-      0,
-      started - lastRun - Number(job.last_run_duration_ms)
-    );
-  }
-  job.status = 'running';
-  job.last_run_at = new Date(started).toISOString();
-  const config = _imageIndexConfig_();
-  const pageSize = Math.min(config.batchSize, IMAGE_INDEX_MAX_BATCH_SIZE_);
-  if (job.mode === 'bootstrap' || job.mode === 'full') {
-    while (true) {
-      const fetchStarted = Date.now();
-      const params = {
-        q: "'" + job.folder_id.replace(/'/g, "\\'") + "' in parents and trashed = false",
-        pageSize: pageSize,
-        fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,parents,trashed)',
-        supportsAllDrives: true,
-        includeItemsFromAllDrives: true,
-      };
-      if (job.page_token) params.pageToken = job.page_token;
-      const response = _imageIndexDriveApi_('files', params);
-      job.timings.drive_fetch_ms += Date.now() - fetchStarted;
-      const rows = [];
-      const matchStarted = Date.now();
-      (response.files || []).forEach(file => {
-        job.files_scanned++;
-        try {
-          const row = _imageIndexMetadataRow_(file, job.folder_id);
-          if (row) rows.push(row);
-          else job.files_skipped++;
-        } catch (error) {
-          _imageIndexAppendError_(job, error);
-        }
-      });
-      job.timings.match_ms += Date.now() - matchStarted;
-      if (rows.length) {
-        const writeStarted = Date.now();
-        const ss = _ss();
-        const stage = ss.getSheetByName(job.stage_sheet);
-        if (!stage) throw _apiError('IMAGE_INDEX_STAGE_MISSING', 'ورقة البناء المؤقتة غير موجودة', false);
-        const firstRow = job.files_indexed + 2;
-        _imageIndexEnsureRows_(ss, stage, firstRow + rows.length - 1);
-        stage.getRange(firstRow, 1, rows.length, H.Product_Images.length).setValues(rows);
-        job.timings.write_ms += Date.now() - writeStarted;
-        job.files_indexed += rows.length;
-        job.files_added += rows.length;
-      }
-      if (!response.nextPageToken) {
-        job.status = 'publishing';
-        job.last_run_duration_ms = Date.now() - started;
-        _imageIndexSaveJob_(job);
-        _imageIndexPublish_(job);
-        return;
-      }
-      job.page_token = response.nextPageToken;
-      job.status = 'continuing';
-      job.last_run_duration_ms = Date.now() - started;
-      _imageIndexSaveJob_(job);
-      if (Date.now() - started >= config.budgetMs) return;
-    }
-  }
-
-  while (true) {
-    const fetchStarted = Date.now();
-    const params = {
-      pageToken: job.page_token,
-      pageSize: pageSize,
-      includeRemoved: true,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-      fields: 'nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,modifiedTime,parents,trashed))',
-    };
-    const response = _imageIndexDriveApi_('changes', params);
-    job.timings.drive_fetch_ms += Date.now() - fetchStarted;
-    const changes = response.changes || [];
-    job.files_scanned += changes.length;
-    if (changes.length) _imageIndexApplyChanges_(job, changes);
-    job.batch_failures = 0;
-    job.last_error = null;
-    job.last_run_duration_ms = Date.now() - started;
-    if (response.nextPageToken) {
-      job.page_token = response.nextPageToken;
-      job.status = 'continuing';
-      _imageIndexSaveJob_(job);
-      if (Date.now() - started >= config.budgetMs) return;
-      continue;
-    }
-    if (!response.newStartPageToken) {
-      throw new Error('Drive API لم يُرجع رمز الاستئناف بعد اكتمال التغييرات');
-    }
-    _imageIndexCompleteJob_(job, response.newStartPageToken);
-    return;
-  }
-}
-
-function _imageIndexScheduleStatus_() {
-  return PropertiesService.getScriptProperties()
-    .getProperty(IMAGE_INDEX_SCHEDULED_PROPERTY_) === 'true';
-}
-
-function _imageIndexSetSchedule_(enabled) {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
-  }
-  try {
-    const triggers = ScriptApp.getProjectTriggers();
-    const matching = triggers.filter(trigger =>
-      trigger.getHandlerFunction() === IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_
-    );
-    if (enabled && !matching.length) {
-      ScriptApp.newTrigger(IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_)
-        .timeBased()
-        .everyHours(6)
-        .create();
-    } else if (!enabled) {
-      matching.forEach(trigger => ScriptApp.deleteTrigger(trigger));
-    }
-    PropertiesService.getScriptProperties()
-      .setProperty(IMAGE_INDEX_SCHEDULED_PROPERTY_, enabled ? 'true' : 'false');
-    return { success: true, scheduled_update: enabled };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function scheduledImageIndexUpdate() {
-  return _startMetadataImageIndexJob_('update', false);
-}
-
-function _imageIndexFindOrCreateStage_(ss, jobId) {
-  const activeSheet = PropertiesService.getScriptProperties()
-    .getProperty(IMAGE_INDEX_ACTIVE_PROPERTY_) || 'Product_Images';
-  const reusableStages = ss.getSheets().filter(current =>
-    current.getName().indexOf('Product_Images_Build_') === 0 &&
-    current.getName() !== activeSheet
-  );
-  for (const candidate of reusableStages) {
-    try {
-      if (candidate.getLastRow() > 0) {
-        const headers = candidate.getRange(1, 1, 1, H.Product_Images.length)
-          .getValues()[0].map(value => String(value || '').trim());
-        if (headers.join('\u001f') !== H.Product_Images.join('\u001f')) continue;
-        const lastRow = candidate.getLastRow();
-        if (lastRow > 1) {
-          candidate.getRange(2, 1, lastRow - 1, H.Product_Images.length)
-            .clearContent();
-        }
-      }
-      return candidate;
-    } catch (error) {
-      Logger.log('Image index staging sheet is not writable; trying a fresh sheet.');
-    }
-  }
-  const sheetName = 'Product_Images_Build_' + jobId.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
-  let sheet = ss.getSheetByName(sheetName);
-  if (!sheet) {
-    const requiredCells = 1000 * 26;
-    const usedCells = ss.getSheets().reduce(
-      (sum, current) => sum + current.getMaxRows() * current.getMaxColumns(), 0
-    );
-    if (usedCells + requiredCells > IMAGE_INDEX_MAX_SPREADSHEET_CELLS_) {
-      throw _apiError('SHEET_CELL_LIMIT', 'لا توجد سعة كافية لإنشاء مساحة بناء مؤقتة', false);
-    }
-    sheet = ss.insertSheet(sheetName);
-  }
-  const headers = H.Product_Images;
-  if (sheet.getMaxColumns() < headers.length) {
-    sheet.insertColumnsAfter(
-      sheet.getMaxColumns(),
-      headers.length - sheet.getMaxColumns()
-    );
-  }
-  if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    const active = ss.getSheetByName(activeSheet);
-    if (active && active.getLastColumn() >= headers.length) {
-      active.getRange(1, 1, 1, headers.length).copyTo(
-        sheet.getRange(1, 1, 1, headers.length),
-        SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
-        false
-      );
-    }
-  } else {
-    const actual = sheet.getRange(1, 1, 1, headers.length).getValues()[0]
-      .map(value => String(value || '').trim());
-    if (actual.join('\u001f') !== headers.join('\u001f')) {
-      throw _apiError('IMAGE_INDEX_STAGE_SCHEMA', 'مخطط ورقة البناء المؤقتة غير صالح', false);
-    }
-    const lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
-    }
-  }
-  return sheet;
-}
-
-function _imageIndexEnsureRows_(ss, sheet, requiredLastRow) {
-  const currentRows = sheet.getMaxRows();
-  if (requiredLastRow <= currentRows) return;
-  const missing = requiredLastRow - currentRows;
-  const usedCells = ss.getSheets().reduce(
-    (sum, current) => sum + current.getMaxRows() * current.getMaxColumns(), 0
-  );
-  if (usedCells + missing * sheet.getMaxColumns() >
-      IMAGE_INDEX_MAX_SPREADSHEET_CELLS_) {
-    throw _apiError('SHEET_CELL_LIMIT', 'بلغت ورقة البيانات الحد الآمن لحجمها', false);
-  }
-  sheet.insertRowsAfter(currentRows, missing);
 }
 
 function _imageIndexEnsureTrigger_() {
-  const triggers = ScriptApp.getProjectTriggers();
-  if (triggers.some(trigger =>
-    trigger.getHandlerFunction() === IMAGE_INDEX_TRIGGER_FUNCTION_
-  )) return;
-  ScriptApp.newTrigger(IMAGE_INDEX_TRIGGER_FUNCTION_)
-    .timeBased()
-    .everyMinutes(1)
-    .create();
+  const exists = ScriptApp.getProjectTriggers().some(trigger =>
+    trigger.getHandlerFunction() === IMAGE_INDEX_TRIGGER_FUNCTION_);
+  if (!exists) ScriptApp.newTrigger(IMAGE_INDEX_TRIGGER_FUNCTION_).timeBased().everyMinutes(1).create();
 }
 
 function _imageIndexDeleteTriggers_() {
   ScriptApp.getProjectTriggers().forEach(trigger => {
-    if (trigger.getHandlerFunction() === IMAGE_INDEX_TRIGGER_FUNCTION_) {
-      ScriptApp.deleteTrigger(trigger);
-    }
+    if (trigger.getHandlerFunction() === IMAGE_INDEX_TRIGGER_FUNCTION_) ScriptApp.deleteTrigger(trigger);
   });
-}
-
-function _startImageIndexJob_(confirmedRestart) {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
-  }
-  try {
-    const current = _imageIndexReadJob_();
-    if (current && ['pending', 'running', 'continuing', 'publishing'].includes(current.status)) {
-      if (!confirmedRestart) return _imageIndexPublicStatus_(current);
-      current.status = 'cancelled';
-      current.completed_at = _now();
-      _imageIndexSaveJob_(current);
-    }
-    const properties = PropertiesService.getScriptProperties();
-    const folderId = properties.getProperty('PRODUCT_IMAGES_FOLDER_ID') ||
-      '1H9KGBPTnZYE8bQHOWUih39zUwB0Hk9ds';
-    const jobId = Utilities.getUuid();
-    const stage = _imageIndexFindOrCreateStage_(_ss(), jobId);
-    const job = {
-      job_id: jobId,
-      status: 'pending',
-      folder_id: folderId,
-      stage_sheet: stage.getName(),
-      continuation_token: null,
-      files_scanned: 0,
-      files_indexed: 0,
-      files_skipped: 0,
-      error_count: 0,
-      errors: [],
-      retry_file_id: null,
-      retry_attempts: 0,
-      batch_failures: 0,
-      token_restarts: 0,
-      started_at: _now(),
-      last_progress_at: _now(),
-      completed_at: null,
-      last_error: null,
-    };
-    _imageIndexSaveJob_(job);
-    try {
-      _imageIndexEnsureTrigger_();
-    } catch (error) {
-      job.status = 'failed';
-      job.last_error = 'تعذر إنشاء مشغّل الاستكمال؛ وافق على الأذونات ثم أعد المحاولة';
-      _imageIndexSaveJob_(job);
-      Logger.log('Image index trigger creation failed: ' + _imageIndexSafeError_(error));
-      throw _apiError('IMAGE_INDEX_TRIGGER_FAILED', job.last_error, false);
-    }
-    return _imageIndexPublicStatus_(job);
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function _imageIndexAppendError_(job, error) {
-  job.error_count++;
-  const safe = _imageIndexSafeError_(error);
-  job.last_error = safe;
-  if (job.errors.length < IMAGE_INDEX_MAX_ERRORS_) {
-    job.errors.push({ message: safe, at: _now() });
-  }
-  Logger.log('Image index file error: ' + safe);
-}
-
-function _imageIndexFileRow_(file) {
-  const mimeType = String(file.getMimeType() || '');
-  if (mimeType.indexOf('image/') !== 0) return null;
-  const fileId = String(file.getId() || '');
-  const fileName = String(file.getName() || '');
-  const modifiedTime = file.getLastUpdated
-    ? file.getLastUpdated().toISOString()
-    : '';
-  if (!fileId || !fileName) throw new Error('بيانات ملف الصورة غير مكتملة');
-  return [
-    fileName,
-    normalizeImageName_(fileName),
-    fileId,
-    'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w600&v=' +
-      encodeURIComponent(modifiedTime),
-    mimeType,
-    _now(),
-    'active',
-    modifiedTime,
-  ];
-}
-
-function _imageIndexResetExpiredToken_(job, error) {
-  if (job.token_restarts >= 2) return false;
-  const stage = _ss().getSheetByName(job.stage_sheet);
-  if (!stage) return false;
-  const lastRow = stage.getLastRow();
-  if (lastRow > 1) stage.getRange(2, 1, lastRow - 1, H.Product_Images.length).clearContent();
-  job.continuation_token = null;
-  job.files_scanned = 0;
-  job.files_indexed = 0;
-  job.files_skipped = 0;
-  job.error_count = 0;
-  job.errors = [];
-  job.retry_file_id = null;
-  job.retry_attempts = 0;
-  job.token_restarts++;
-  job.batch_failures = 0;
-  job.status = 'continuing';
-  job.last_error = 'انتهت صلاحية رمز الاستئناف؛ أُعيد البناء في مساحة مؤقتة';
-  Logger.log('Image index continuation token expired; restarting staging build.');
-  _imageIndexSaveJob_(job);
-  return true;
-}
-
-function _imageIndexPublish_(job) {
-  const indexReadStarted = Date.now();
-  const stage = _ss().getSheetByName(job.stage_sheet);
-  if (!stage) throw _apiError('IMAGE_INDEX_STAGE_MISSING', 'ورقة البناء المؤقتة غير موجودة', false);
-  const headers = stage.getRange(1, 1, 1, H.Product_Images.length).getValues()[0]
-    .map(value => String(value || '').trim());
-  if (headers.join('\u001f') !== H.Product_Images.join('\u001f')) {
-    throw _apiError('IMAGE_INDEX_STAGE_SCHEMA', 'فشل التحقق من مخطط الفهرس الجديد', false);
-  }
-  const expectedRows = job.files_indexed;
-  if (stage.getLastRow() !== expectedRows + 1) {
-    throw _apiError('IMAGE_INDEX_STAGE_COUNT', 'عدد صفوف الفهرس المؤقت لا يطابق العداد', false);
-  }
-  const stagedIds = Object.create(null);
-  if (expectedRows > 0) {
-    const rows = stage.getRange(2, 1, expectedRows, H.Product_Images.length).getValues();
-    const ids = Object.create(null);
-    const names = Object.create(null);
-    for (let index = 0; index < rows.length; index++) {
-      const fileId = String(rows[index][2] || '');
-      if (!fileId || ids[fileId] || !String(rows[index][3] || '').startsWith('https://drive.google.com/thumbnail?id=')) {
-        throw _apiError('IMAGE_INDEX_VALIDATION_FAILED', 'تعذر التحقق من سجلات الفهرس المؤقتة', false);
-      }
-      ids[fileId] = true;
-      stagedIds[fileId] = true;
-      const normalizedName = String(rows[index][1] || '');
-      if (normalizedName) names[normalizedName] = (names[normalizedName] || 0) + 1;
-    }
-    job.name_conflict_count = Object.keys(names).filter(name => names[name] > 1).length;
-  }
-  const activeName = PropertiesService.getScriptProperties()
-    .getProperty(IMAGE_INDEX_ACTIVE_PROPERTY_) || 'Product_Images';
-  const activeSheet = _ss().getSheetByName(activeName);
-  if (activeSheet && activeSheet.getLastRow() > 1) {
-    const activeRows = activeSheet.getRange(
-      2,
-      1,
-      activeSheet.getLastRow() - 1,
-      Math.max(7, activeSheet.getLastColumn())
-    ).getValues();
-    job.files_unavailable += activeRows.filter(row =>
-      row[6] === 'active' && row[2] && !stagedIds[String(row[2])]
-    ).length;
-  }
-  job.timings = job.timings || {
-    drive_fetch_ms: 0,
-    index_read_ms: 0,
-    match_ms: 0,
-    write_ms: 0,
-    trigger_wait_ms: 0,
-  };
-  job.timings.index_read_ms += Date.now() - indexReadStarted;
-  if (job.error_count > 0) {
-    job.status = 'completed_with_errors';
-    job.completed_at = _now();
-    job.last_error = 'لم يُفعّل البناء بسبب أخطاء ملفات؛ بقي الفهرس السابق نشطاً';
-    _imageIndexSaveJob_(job);
-    _imageIndexDeleteTriggers_();
-    return;
-  }
-  job.status = 'publishing';
-  _imageIndexSaveJob_(job);
-  const properties = PropertiesService.getScriptProperties();
-  properties.setProperty(IMAGE_INDEX_ACTIVE_PROPERTY_, job.stage_sheet);
-  if (job.bootstrap_page_token) {
-    properties.setProperty(
-      IMAGE_INDEX_CHANGES_TOKEN_PROPERTY_,
-      job.bootstrap_page_token
-    );
-  }
-  job.status = job.error_count > 0 ? 'completed_with_errors' : 'completed';
-  job.completed_at = _now();
-  job.continuation_token = null;
-  _imageIndexSaveJob_(job);
-  _imageIndexDeleteTriggers_();
 }
 
 function continueImageIndexJob() {
@@ -3332,169 +3128,36 @@ function continueImageIndexJob() {
   if (!lock.tryLock(1000)) return;
   try {
     const job = _imageIndexReadJob_();
-    if (!job || !['pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
+    if (!job || !['pending', 'running', 'continuing'].includes(job.status)) {
       _imageIndexDeleteTriggers_();
       return;
     }
-    if (job.engine === 'metadata_v1') {
-      _continueMetadataImageIndex_(job);
-      return;
-    }
-    if (job.status === 'publishing') {
-      _imageIndexPublish_(job);
-      return;
-    }
-    job.status = job.files_scanned === 0 ? 'running' : 'continuing';
+    job.status = 'running';
     job.last_error = null;
-    const ss = _ss();
-    const stage = ss.getSheetByName(job.stage_sheet);
-    if (!stage) throw _apiError('IMAGE_INDEX_STAGE_MISSING', 'ورقة البناء المؤقتة غير موجودة', false);
-    _imageIndexEnsureSchema_(stage);
-    const folder = DriveApp.getFolderById(job.folder_id);
-    let iterator;
     try {
-      iterator = job.continuation_token
-        ? DriveApp.continueFileIterator(job.continuation_token)
-        : folder.getFiles();
+      if (job.phase === 'files') _imageIndexRunFilesBatch_(job);
+      else _imageIndexRunChangesBatch_(job);
+      job.batch_failures = 0;
     } catch (error) {
-      const safe = _imageIndexSafeError_(error);
-      if (job.continuation_token &&
-          /continuation|token|expired|استئناف|صلاحية/i.test(safe) &&
-          _imageIndexResetExpiredToken_(job, error)) {
-        return;
-      }
-      throw error;
-    }
-
-    const config = _imageIndexConfig_();
-    const started = Date.now();
-    let processedThisBatch = 0;
-    const stagedRows = [];
-    const batchIds = {};
-
-    if (job.retry_file_id) {
-      try {
-        const retryFile = DriveApp.getFileById(job.retry_file_id);
-        const row = _imageIndexFileRow_(retryFile);
-        job.files_scanned++;
-        if (row) {
-          if (!batchIds[row[2]]) {
-            batchIds[row[2]] = true;
-            stagedRows.push(row);
-          } else {
-            job.files_skipped++;
-          }
-        } else {
-          job.files_skipped++;
-        }
-        job.retry_file_id = null;
-        job.retry_attempts = 0;
-        processedThisBatch++;
-      } catch (error) {
-        job.retry_attempts++;
-        if (job.retry_attempts >= 3) {
-          job.files_scanned++;
-          job.files_skipped++;
-          _imageIndexAppendError_(job, error);
-          job.retry_file_id = null;
-          job.retry_attempts = 0;
-          processedThisBatch++;
+      const message = _imageIndexSafeError_(error);
+      if (/Drive API 410|page.?token|start.?page.?token/i.test(message) &&
+          Number(job.token_restarts || 0) < 2) {
+        _imageIndexRestartAsFull_(job);
+      } else {
+        job.batch_failures = Number(job.batch_failures || 0) + 1;
+        job.last_error = message;
+        if (job.batch_failures >= 3) {
+          job.status = 'failed';
+          job.completed_at = _now();
         } else {
           job.status = 'continuing';
-          job.last_error = 'تعذرت قراءة ملف؛ ستتم إعادة المحاولة';
-          _imageIndexSaveJob_(job);
-          return;
         }
-      }
-    }
-
-    while (processedThisBatch < config.batchSize &&
-        Date.now() - started < config.budgetMs &&
-        iterator.hasNext()) {
-      const file = iterator.next();
-      let fileId = '';
-      try {
-        fileId = String(file.getId() || '');
-        const row = _imageIndexFileRow_(file);
-        job.files_scanned++;
-        if (row) {
-          if (batchIds[fileId]) {
-            job.files_skipped++;
-          } else {
-            batchIds[fileId] = true;
-            stagedRows.push(row);
-          }
-        } else {
-          job.files_skipped++;
-        }
-      } catch (error) {
-        if (fileId && job.retry_attempts < 2) {
-          if (stagedRows.length) {
-            const firstRow = job.files_indexed + 2;
-            _imageIndexEnsureRows_(ss, stage, firstRow + stagedRows.length - 1);
-            stage.getRange(firstRow, 1, stagedRows.length, H.Product_Images.length)
-              .setValues(stagedRows);
-            job.files_indexed += stagedRows.length;
-          }
-          job.retry_file_id = fileId;
-          job.retry_attempts++;
-          job.continuation_token = iterator.getContinuationToken();
-          job.status = 'continuing';
-          job.last_error = 'تعذرت قراءة ملف؛ ستتم إعادة المحاولة';
-          _imageIndexSaveJob_(job);
-          return;
-        }
-        job.files_scanned++;
-        job.files_skipped++;
         _imageIndexAppendError_(job, error);
       }
-      processedThisBatch++;
     }
-
-    if (stagedRows.length) {
-      const firstRow = job.files_indexed + 2;
-      _imageIndexEnsureRows_(ss, stage, firstRow + stagedRows.length - 1);
-      stage.getRange(firstRow, 1, stagedRows.length, H.Product_Images.length)
-        .setValues(stagedRows);
-      job.files_indexed += stagedRows.length;
-    }
-
-    if (job.retry_file_id) {
-      job.continuation_token = iterator.getContinuationToken();
-    } else if (iterator.hasNext()) {
-      job.continuation_token = iterator.getContinuationToken();
-    } else {
-      job.continuation_token = null;
-      _imageIndexPublish_(job);
-      return;
-    }
-
-    job.status = 'continuing';
-    job.batch_failures = 0;
     _imageIndexSaveJob_(job);
-  } catch (error) {
-    const job = _imageIndexReadJob_();
-    if (job && ['pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
-      const safe = _imageIndexSafeError_(error);
-      if (_imageIndexRestartExpiredToken_(job, error)) return;
-      if (job.continuation_token &&
-          /continuation|token|expired|استئناف|صلاحية/i.test(safe) &&
-          _imageIndexResetExpiredToken_(job, error)) {
-        return;
-      }
-      job.batch_failures = Number(job.batch_failures || 0) + 1;
-      job.last_error = safe;
-      Logger.log('Image index batch failed: ' + safe);
-      if (job.batch_failures <= 2) {
-        job.status = 'continuing';
-      } else {
-        job.status = 'failed';
-        job.completed_at = _now();
-        _imageIndexDeleteTriggers_();
-      }
-      _imageIndexSaveJob_(job);
-    } else {
-      Logger.log('Image index batch failed without active state: ' + _imageIndexSafeError_(error));
+    if (['completed', 'completed_with_errors', 'failed', 'cancelled'].includes(job.status)) {
+      _imageIndexDeleteTriggers_();
     }
   } finally {
     lock.releaseLock();
@@ -3507,20 +3170,16 @@ function _imageIndexJobStatus_() {
 
 function resumeImageIndexJob() {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
-  }
+  if (!lock.tryLock(5000)) throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
   try {
     const job = _imageIndexReadJob_();
-    if (!job || !['failed', 'pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
+    if (!job || !['failed', 'pending', 'running', 'continuing'].includes(job.status)) {
       throw _apiError('IMAGE_INDEX_NOT_RESUMABLE', 'لا توجد مهمة قابلة للاستكمال', false);
     }
-    if (job.status === 'failed') {
-      job.status = job.continuation_token ? 'continuing' : 'pending';
-      job.batch_failures = 0;
-      job.last_error = null;
-      _imageIndexSaveJob_(job);
-    }
+    job.status = 'continuing';
+    job.batch_failures = 0;
+    job.last_error = null;
+    _imageIndexSaveJob_(job);
     _imageIndexEnsureTrigger_();
     return _imageIndexPublicStatus_(job);
   } finally {
@@ -3530,23 +3189,44 @@ function resumeImageIndexJob() {
 
 function cancelImageIndexJob() {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
-  }
+  if (!lock.tryLock(5000)) throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
   try {
     const job = _imageIndexReadJob_();
-    if (!job || !['pending', 'running', 'continuing', 'publishing'].includes(job.status)) {
-      return _imageIndexPublicStatus_(job);
-    }
+    if (!job || !['pending', 'running', 'continuing'].includes(job.status)) return _imageIndexPublicStatus_(job);
     job.status = 'cancelled';
     job.completed_at = _now();
-    job.last_error = null;
     _imageIndexSaveJob_(job);
     _imageIndexDeleteTriggers_();
     return _imageIndexPublicStatus_(job);
   } finally {
     lock.releaseLock();
   }
+}
+
+function _imageIndexScheduleStatus_() {
+  return PropertiesService.getScriptProperties().getProperty(IMAGE_INDEX_SCHEDULED_PROPERTY_) === 'true';
+}
+
+function _imageIndexSetSchedule_(enabled) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw _apiError('IMAGE_INDEX_BUSY', 'يتم تحديث حالة فهرس الصور؛ حاول مجدداً', true);
+  try {
+    const matching = ScriptApp.getProjectTriggers().filter(trigger =>
+      trigger.getHandlerFunction() === IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_);
+    if (enabled && !matching.length) {
+      ScriptApp.newTrigger(IMAGE_INDEX_SCHEDULE_TRIGGER_FUNCTION_).timeBased().everyHours(6).create();
+    } else if (!enabled) {
+      matching.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+    }
+    PropertiesService.getScriptProperties().setProperty(IMAGE_INDEX_SCHEDULED_PROPERTY_, enabled ? 'true' : 'false');
+    return { success: true, scheduled_update: enabled };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function scheduledImageIndexUpdate() {
+  return rebuildImageIndex({ operation: 'update' });
 }
 
 // ============================================================
@@ -4117,7 +3797,10 @@ function _handleCreateOrder(body, user) {
         }
         throw _apiError('UNIT_PRICE_REQUIRED', 'سعر الوحدة غير مضبوط للمنتج ' + code, false);
       }
-      const authoritativePrice = offer ? Number(offer.offer_price) : Number(unitPrice);
+      const offerComponent = offer ? _offerComponentFor_(offer, code, unit) : null;
+      const authoritativePrice = offer
+        ? Number(offerComponent ? offerComponent.offer_price : offer.offer_price)
+        : Number(unitPrice);
       if (Object.prototype.hasOwnProperty.call(item, 'expected_unit_price') &&
           (!['number', 'string'].includes(typeof item.expected_unit_price) ||
            String(item.expected_unit_price).trim() === '' ||
@@ -4128,6 +3811,7 @@ function _handleCreateOrder(body, user) {
       return { item: item, product: product, code: code, unit: unit, quantity: qty, factor: factor,
         unitPrice: authoritativePrice, offer: offer };
     });
+    _validateOfferBundles_(validatedItems);
 
     _requireColumns_('Orders', [
       'order_id', 'order_number', 'customer_id', 'status', 'created_at',
@@ -4191,8 +3875,13 @@ function _handleCreateOrder(body, user) {
         display_price_snapshot: validated.unitPrice,
         offer_id: validated.offer ? validated.offer.offer_id : '',
         offer_revision: validated.offer ? Number(validated.offer.revision) : '',
-        offer_old_price: validated.offer ? Number(validated.offer.old_price) : '',
-        offer_min_quantity: validated.offer ? Number(validated.offer.min_quantity) : '',
+        offer_old_price: validated.offer
+          ? Number((_offerComponentFor_(validated.offer, validated.code, validated.unit) || validated.offer).old_price)
+          : '',
+        offer_min_quantity: validated.offer
+          ? Number((_offerComponentFor_(validated.offer, validated.code, validated.unit) || validated.offer).quantity ??
+            validated.offer.min_quantity)
+          : '',
         offer_starts_at: validated.offer ? _offerTime_(validated.offer.starts_at) : '',
         offer_ends_at: validated.offer ? _offerTime_(validated.offer.ends_at) : '',
         currency: orderObj.currency,

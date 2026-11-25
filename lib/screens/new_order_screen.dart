@@ -149,10 +149,14 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     if (widget.initialProduct != null && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _showAddItemDialog(widget.initialProduct!,
-              offer: widget.initialOffer == null
-                  ? null
-                  : OrderOffer(widget.initialOffer!));
+          final initialOffer = widget.initialOffer == null
+              ? null
+              : OrderOffer(widget.initialOffer!);
+          if (initialOffer?.isBundle == true) {
+            _showAddBundleDialog(initialOffer!);
+          } else {
+            _showAddItemDialog(widget.initialProduct!, offer: initialOffer);
+          }
         }
       });
     }
@@ -718,6 +722,10 @@ class _NewOrderScreenState extends State<NewOrderScreen>
 
   void _showAddItemDialog(Product product, {OrderOffer? offer}) {
     if (_pendingSubmission || _isSubmitting) return;
+    if (offer?.isBundle == true) {
+      _showAddBundleDialog(offer!);
+      return;
+    }
     if (_cart.any((item) =>
         item.currency.toUpperCase() != product.currency.toUpperCase())) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1011,6 +1019,187 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     });
   }
 
+  void _showAddBundleDialog(OrderOffer offer) {
+    if (_pendingSubmission || _isSubmitting) return;
+    final controller = TextEditingController(text: '1');
+    final components = <({
+      Product product,
+      String unit,
+      double quantity,
+      double oldPrice,
+      double offerPrice
+    })>[];
+    for (final item in offer.bundleItems) {
+      final code = item['product_code']?.toString() ?? '';
+      final unit = item['unit']?.toString() ?? '';
+      final product = _allProducts.cast<Product?>().firstWhere(
+            (candidate) => candidate?.code == code,
+            orElse: () => null,
+          );
+      final quantity = double.tryParse('${item['quantity']}');
+      final oldPrice = double.tryParse('${item['old_price']}');
+      final offerPrice = double.tryParse('${item['offer_price']}');
+      if (product == null ||
+          !product.availableUnits.contains(unit) ||
+          product.factorForUnit(unit) == null ||
+          quantity == null ||
+          quantity <= 0 ||
+          oldPrice == null ||
+          offerPrice == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تعذر تحميل بيانات أحد منتجات الحزمة'),
+        ));
+        controller.dispose();
+        return;
+      }
+      components.add((
+        product: product,
+        unit: unit,
+        quantity: quantity,
+        oldPrice: oldPrice,
+        offerPrice: offerPrice,
+      ));
+    }
+    if (components.length < 2) {
+      controller.dispose();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('بيانات مكونات الحزمة غير مكتملة'),
+      ));
+      return;
+    }
+    if (_cart.any((item) =>
+        item.currency.toUpperCase() != offer.currency.toUpperCase())) {
+      controller.dispose();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('لا يمكن جمع عملات مختلفة في الطلب نفسه'),
+      ));
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(offer.data['title']?.toString().trim().isNotEmpty == true
+              ? offer.data['title'].toString()
+              : 'عرض مجموعة منتجات'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('محتويات الحزمة وأسعار كل قطعة:'),
+                  const SizedBox(height: 8),
+                  for (final component in components)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Row(
+                          children: [
+                            ProductImageWidget(
+                              imageUrl: component.product.imageUrl,
+                              height: 48,
+                              width: 48,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '${component.quantity} × ${component.product.name} (${component.unit})\n'
+                                '${component.oldPrice} ← ${component.offerPrice} ${offer.currency} للقطعة',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  TextField(
+                    controller: controller,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: false,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'عدد الحزم',
+                      helperText: 'ستُضاف جميع المكونات بالكميات المحددة',
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'السعر الإجمالي للحزمة: ${offer.price} ${offer.currency}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final count = double.tryParse(controller.text.trim());
+                if (count == null ||
+                    !count.isFinite ||
+                    count <= 0 ||
+                    count != count.roundToDouble()) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(
+                      content: Text('أدخل عدداً صحيحاً من الحزم'),
+                    ),
+                  );
+                  return;
+                }
+                _resetClientRequestId();
+                setState(() {
+                  for (final component in components) {
+                    final quantity = component.quantity * count;
+                    final price = offer.priceFor(
+                      component.product.code,
+                      component.unit,
+                    )!;
+                    final existingIndex = _cart.indexWhere((item) =>
+                        item.offer?.id == offer.id &&
+                        item.code == component.product.code &&
+                        (item.selectedUnit ?? item.unit) == component.unit);
+                    if (existingIndex >= 0) {
+                      final existing = _cart[existingIndex];
+                      _cart[existingIndex] = existing.copyWith(
+                        quantity: (existing.quantity ?? 0) + quantity,
+                        quantityRequested: (existing.quantity ?? 0) + quantity,
+                      );
+                    } else {
+                      _cart.add(OrderItem.fromProduct(
+                        component.product,
+                        quantity: quantity,
+                        selectedUnit: component.unit,
+                        overridePrice: price,
+                        offer: offer,
+                      ));
+                    }
+                  }
+                });
+                _saveToDraft(immediate: true);
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(
+                    content: Text('تمت إضافة $count حزمة كاملة إلى الطلب'),
+                  ),
+                );
+              },
+              child: const Text('إضافة الحزمة للطلب'),
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
   Future<bool> _refreshOffersForSubmission({required bool pending}) async {
     final hasOffers = _cart.any((item) => item.offer != null);
     final hasExpected = _cart.any((item) => item.expectedUnitPrice != null);
@@ -1037,6 +1226,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
     }
     final replacements = <int, OrderItem>{};
     final messages = <String>[];
+    final checkedBundleOffers = <String>{};
     List<Product>? freshProducts;
     Future<void> loadFreshProducts() async {
       if (freshProducts == null) {
@@ -1102,6 +1292,92 @@ class _NewOrderScreenState extends State<NewOrderScreen>
         continue;
       }
       final current = offers[previous.id];
+      if (previous.isBundle) {
+        if (!checkedBundleOffers.add(previous.id)) continue;
+        final indices = <int>[];
+        for (var candidate = 0; candidate < _cart.length; candidate++) {
+          if (_cart[candidate].offer?.id == previous.id) indices.add(candidate);
+        }
+        final currentComponents = current?.bundleItems ?? const [];
+        final validCurrent = current != null &&
+            current.isBundle &&
+            indices.length == previous.bundleItems.length &&
+            indices.every((lineIndex) {
+              final line = _cart[lineIndex];
+              return current.usableFor(
+                code: line.code,
+                selectedUnit: line.selectedUnit ?? line.unit,
+                itemCurrency: line.currency,
+                quantity: line.quantity ?? 0,
+                serverTime: serverTime!,
+              );
+            }) &&
+            currentComponents.length == previous.bundleItems.length &&
+            indices
+                    .map((lineIndex) =>
+                        '${_cart[lineIndex].code}\u001f${_cart[lineIndex].selectedUnit ?? _cart[lineIndex].unit}')
+                    .toSet()
+                    .length ==
+                currentComponents.length &&
+            indices
+                    .map((lineIndex) {
+                      final line = _cart[lineIndex];
+                      final component = current.bundleItems.firstWhere(
+                        (entry) =>
+                            entry['product_code']?.toString() == line.code &&
+                            entry['unit']?.toString() ==
+                                (line.selectedUnit ?? line.unit),
+                        orElse: () => const <String, dynamic>{},
+                      );
+                      final componentQuantity =
+                          double.tryParse('${component['quantity']}');
+                      return componentQuantity == null ||
+                              componentQuantity <= 0 ||
+                              (line.quantity ?? 0) % componentQuantity != 0
+                          ? -1
+                          : ((line.quantity ?? 0) / componentQuantity).round();
+                    })
+                    .toSet()
+                    .length ==
+                1 &&
+            !indices.any((lineIndex) {
+              final line = _cart[lineIndex];
+              return !current.bundleItems.any(
+                (entry) =>
+                    entry['product_code']?.toString() == line.code &&
+                    entry['unit']?.toString() ==
+                        (line.selectedUnit ?? line.unit),
+              );
+            });
+        if (validCurrent) {
+          for (final lineIndex in indices) {
+            final line = _cart[lineIndex];
+            final unit = line.selectedUnit ?? line.unit;
+            final price = current.priceFor(line.code, unit)!;
+            replacements[lineIndex] =
+                line.copyWith(offer: current, priceOffer: price);
+          }
+          messages.add(previous.sameTerms(current)
+              ? '${previous.data['title'] ?? 'الحزمة'}: السعر الحالي للحزمة ${current.price} ${current.currency}.'
+              : '${previous.data['title'] ?? 'الحزمة'}: تغيرت شروط الحزمة؛ السعر الجديد ${current.price} ${current.currency}.');
+        } else {
+          for (final lineIndex in indices) {
+            final line = _cart[lineIndex];
+            final unit = line.selectedUnit ?? line.unit;
+            final product = await freshProduct(line, unit);
+            final regularPrice = product.priceForUnit(unit)!;
+            replacements[lineIndex] = OrderItem.fromProduct(product,
+                quantity: line.quantity ?? 0,
+                selectedUnit: unit,
+                note: line.note,
+                overridePrice: regularPrice,
+                expectedUnitPrice: regularPrice);
+          }
+          messages.add(
+              '${previous.data['title'] ?? 'الحزمة'}: العرض لم يعد صالحاً أو اكتملت شروطه؛ تم اقتراح السعر العادي لكل المكونات.');
+        }
+        continue;
+      }
       if (current != null &&
           current.usableFor(
             code: item.code,
@@ -1456,11 +1732,34 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                           onRemoveItem: (item) {
                             if (_pendingSubmission || _isSubmitting) return;
                             _resetClientRequestId();
-                            setState(() => _cart.remove(item));
+                            setState(() {
+                              if (item.offer?.isBundle == true) {
+                                _cart.removeWhere((entry) =>
+                                    entry.offer?.id == item.offer!.id);
+                              } else {
+                                _cart.remove(item);
+                              }
+                            });
                             _saveToDraft(immediate: false);
+                            if (item.offer?.isBundle == true && mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('تم حذف الحزمة بجميع مكوناتها'),
+                                ),
+                              );
+                            }
                           },
                           onUpdateItem: (item, quantity, unit) {
                             if (_pendingSubmission || _isSubmitting) return;
+                            if (item.offer?.isBundle == true) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'مكونات الحزمة وكمياتها مرتبطة؛ احذف الحزمة كاملة وأضفها من جديد لتغيير العدد.'),
+                                ),
+                              );
+                              return;
+                            }
                             final product = item.product;
                             if (product == null) return;
                             if (unit != (item.selectedUnit ?? item.unit) &&

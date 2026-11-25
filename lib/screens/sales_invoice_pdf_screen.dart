@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
@@ -41,6 +40,7 @@ class _SalesInvoicePdfScreenState extends State<SalesInvoicePdfScreen> {
     final roleName = PermissionHelper.fromString(role).name;
     final imageStore = InvoiceProductImages(
         scope: invoiceImageScope(environment, userId, roleName));
+    final exportedAt = DateTime.now();
     final items = widget.invoice['items'];
     if (items is! List) throw StateError('بنود الفاتورة غير متوفرة');
     final codes = items
@@ -51,18 +51,25 @@ class _SalesInvoicePdfScreenState extends State<SalesInvoicePdfScreen> {
     final bytes = await SalesInvoicePdf.build(widget.invoice,
         template: template.toMap(),
         logoBytes: template.logoBytes,
-        productImages: images);
+        productImages: images,
+        exportedAt: exportedAt);
     if (api.token != token) {
       throw StateError('تغيرت جلسة المستخدم أثناء التصدير');
     }
-    final archive = InvoicePdfArchive(
-      environment: environment,
-      userId: userId,
-      role: role,
-    );
-    await archive.save(
-        bytes: bytes, invoiceId: invoiceId, templateVersion: template.version);
-    return _GeneratedInvoice(bytes, template.version, archive, invoiceId);
+    final archive = kIsWeb
+        ? null
+        : InvoicePdfArchive(
+            environment: environment,
+            userId: userId,
+            role: role,
+          );
+    final version = SalesInvoicePdf.templateVersion;
+    final fileName = SalesInvoicePdf.exportFileName(widget.invoice, exportedAt);
+    if (archive != null) {
+      await archive.save(
+          bytes: bytes, invoiceId: invoiceId, templateVersion: version);
+    }
+    return _GeneratedInvoice(bytes, version, archive, invoiceId, fileName);
   }
 
   @override
@@ -81,21 +88,22 @@ class _SalesInvoicePdfScreenState extends State<SalesInvoicePdfScreen> {
             final document = snapshot.data!;
             return Column(
               children: [
-                ListTile(
-                  dense: true,
-                  title: Text('تم حفظ نسخة خاصة · قالب ${document.version}'),
-                  trailing: TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => InvoicePdfArchiveScreen(
-                            archive: document.archive,
-                            invoiceId: document.invoiceId),
+                if (document.archive != null)
+                  ListTile(
+                    dense: true,
+                    title: Text('تم حفظ نسخة خاصة · قالب ${document.version}'),
+                    trailing: TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => InvoicePdfArchiveScreen(
+                              archive: document.archive!,
+                              invoiceId: document.invoiceId),
+                        ),
                       ),
+                      child: const Text('النسخ المؤرشفة'),
                     ),
-                    child: const Text('النسخ المؤرشفة'),
                   ),
-                ),
                 Expanded(
                   child: PdfPreview(
                     build: (_) async => document.bytes,
@@ -103,7 +111,7 @@ class _SalesInvoicePdfScreenState extends State<SalesInvoicePdfScreen> {
                     canChangePageFormat: false,
                     canChangeOrientation: false,
                     canDebug: false,
-                    pdfFileName: 'invoice-${document.version}.pdf',
+                    pdfFileName: document.fileName,
                   ),
                 ),
               ],
@@ -115,9 +123,10 @@ class _SalesInvoicePdfScreenState extends State<SalesInvoicePdfScreen> {
 
 class _GeneratedInvoice {
   const _GeneratedInvoice(
-      this.bytes, this.version, this.archive, this.invoiceId);
+      this.bytes, this.version, this.archive, this.invoiceId, this.fileName);
   final Uint8List bytes;
   final String version;
-  final InvoicePdfArchive archive;
+  final InvoicePdfArchive? archive;
   final String invoiceId;
+  final String fileName;
 }
