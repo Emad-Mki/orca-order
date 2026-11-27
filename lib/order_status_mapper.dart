@@ -73,6 +73,15 @@ class OrderStatusMapper {
         normalized == completed;
   }
 
+  static bool isVisibleToWarehouse(String? status) {
+    return const {
+      approved,
+      preparing,
+      readyForShipping,
+      completed,
+    }.contains(normalizeStatus(status));
+  }
+
   // الحصول على الاسم العربي للحالة
   static String getArabicStatus(String? status) {
     if (status?.trim().toLowerCase() == 'customer_confirmed') {

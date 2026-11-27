@@ -3,6 +3,7 @@ import 'async_session_notifier.dart';
 import '../models/order.dart';
 import '../order_status_mapper.dart';
 import '../repositories/order_repository.dart';
+import '../utils/smart_product_search.dart';
 
 enum OrderSortOption { newest, oldest, valueHighToLow, valueLowToHigh }
 
@@ -71,12 +72,16 @@ class OrdersProvider extends ChangeNotifier with AsyncSessionNotifier {
       }).toList();
     }
 
-    final query = _searchQuery.trim().toLowerCase();
+    final query = SmartProductSearchIndex.normalize(_searchQuery);
     if (query.isNotEmpty) {
       filtered = filtered.where((order) {
-        return order.orderNumber.toLowerCase().contains(query) ||
-            order.orderId.toLowerCase().contains(query) ||
-            order.customerName.toLowerCase().contains(query);
+        return [
+          order.orderNumber,
+          order.orderId,
+          order.customerName,
+          order.accountingInvoiceNo ?? '',
+        ].any((value) =>
+            SmartProductSearchIndex.normalize(value).contains(query));
       }).toList();
     }
 

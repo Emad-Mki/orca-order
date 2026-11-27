@@ -403,6 +403,10 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
                             '${creatorRole.isEmpty ? '' : ' · ${PermissionHelper.getRoleNameAr(PermissionHelper.fromString(creatorRole))}'}',
                           ),
                         Text('مرجع داخلي: ${invoice['invoice_id']}'),
+                        if ((invoice['shipment_summary'] ?? '')
+                            .toString()
+                            .isNotEmpty)
+                          Text('الطرود: ${invoice['shipment_summary']}'),
                       ],
                     ),
                   ),

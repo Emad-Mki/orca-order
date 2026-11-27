@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils/shipment_summary.dart';
 
 /// ويدجت معلومات الشحن والتجهيز
 class OrderShippingWidget extends StatelessWidget {
@@ -14,6 +15,13 @@ class OrderShippingWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final rawShipments = shipmentData['all_shipments'];
+    final shipments = rawShipments is List
+        ? rawShipments
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList()
+        : <Map<String, dynamic>>[shipmentData];
     return Card(
       color: theme.colorScheme.surfaceContainerHighest,
       margin: const EdgeInsets.only(top: 16),
@@ -30,31 +38,56 @@ class OrderShippingWidget extends StatelessWidget {
               ),
             ),
             const Divider(),
-            if (shipmentData['warehouse_note']?.toString().isNotEmpty == true)
+            for (var index = 0; index < shipments.length; index++) ...[
+              if (shipments.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Text(
+                    'شحنة ${index + 1} ${shipments[index]['shipment_id'] == null ? '' : '#${shipments[index]['shipment_id']}'}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                ),
+              if (shipments[index]['warehouse_note']?.toString().isNotEmpty ==
+                  true)
+                _buildInfoRow(
+                  'ملاحظات المستودع',
+                  shipments[index]['warehouse_note'].toString(),
+                ),
               _buildInfoRow(
-                'ملاحظات المستودع',
-                shipmentData['warehouse_note'].toString(),
+                'طريقة الاستلام',
+                shipments[index]['delivery_method']?.toString() ?? 'غير محدد',
               ),
-            _buildInfoRow('طريقة الاستلام',
-                shipmentData['delivery_method'] ?? 'غير محدد'),
-            if (shipmentData['carrier']?.toString().isNotEmpty == true)
-              _buildInfoRow('شركة الشحن', shipmentData['carrier']),
-            if (shipmentData['province']?.toString().isNotEmpty == true)
-              _buildInfoRow('الوجهة', shipmentData['province']),
-            _buildInfoRow(
-              'الطرود',
-              '${shipmentData['package_count']} (كراتين: ${shipmentData['carton_count']}, أكياس: ${shipmentData['bag_count']})',
-            ),
-            if (role == 'admin' &&
-                shipmentData['shipping_cost_internal'] != null)
-              _buildInfoRow(
-                'تكلفة الشحن الداخلية',
-                '\$${shipmentData['shipping_cost_internal']}',
-                valueColor: theme.colorScheme.error,
-              ),
-            if (shipmentData['tracking_no']?.toString().isNotEmpty == true)
-              _buildInfoRow('رقم التتبع', shipmentData['tracking_no'],
-                  isBold: true),
+              if (shipments[index]['carrier']?.toString().isNotEmpty == true)
+                _buildInfoRow(
+                    'شركة الشحن', shipments[index]['carrier'].toString()),
+              if (shipments[index]['province']?.toString().isNotEmpty == true)
+                _buildInfoRow(
+                    'الوجهة', shipments[index]['province'].toString()),
+              _buildInfoRow('الطرود', ShipmentSummary.format(shipments[index])),
+              if (shipments[index]['weight_kg']?.toString().isNotEmpty == true)
+                _buildInfoRow('الوزن', '${shipments[index]['weight_kg']} كغ'),
+              if (shipments[index]['dimensions']?.toString().isNotEmpty == true)
+                _buildInfoRow(
+                    'الحجم', shipments[index]['dimensions'].toString()),
+              if (role == 'admin' &&
+                  shipments[index]['shipping_cost_internal'] != null)
+                _buildInfoRow(
+                  'تكلفة الشحن الداخلية',
+                  '\$${shipments[index]['shipping_cost_internal']}',
+                  valueColor: theme.colorScheme.error,
+                ),
+              if (shipments[index]['tracking_no']?.toString().isNotEmpty ==
+                  true)
+                _buildInfoRow(
+                  'رقم التتبع',
+                  shipments[index]['tracking_no'].toString(),
+                  isBold: true,
+                ),
+              if (index < shipments.length - 1) const Divider(),
+            ],
           ],
         ),
       ),

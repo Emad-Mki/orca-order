@@ -1,15 +1,20 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/order_detail_provider.dart';
 import '../models/order_item.dart';
 import '../utils/number_utils.dart';
 import '../utils/guarded_navigation.dart';
+import '../utils/smart_product_search.dart';
 import '../repositories/product_repository.dart';
 import '../models/product.dart';
 import '../models/order.dart';
 import '../widgets/product_image_widget.dart';
+import '../services/api_service.dart';
+import '../utils/order_discount.dart';
 
 import '../services/database_service.dart';
 
@@ -87,7 +92,8 @@ class PricingItem {
   }
 
   double get effectivePrice => unitPrice ?? initialPriceOffer ?? 0.0;
-  double get lineTotal => available ? quantity * effectivePrice : 0;
+  double get lineTotal =>
+      available ? roundOrderAmount(quantity * effectivePrice) : 0;
   bool get isPriceSuggested => unitPrice == null && initialPriceOffer != null;
 
   factory PricingItem.fromModel(OrderItem item, {Product? product}) {
@@ -129,8 +135,9 @@ class PricingItem {
     else {
       units = [item.unit];
       factors = {item.unit: 1.0};
-      if (bPrice == 0)
+      if (bPrice == 0) {
         bPrice = item.finalPrice ?? item.priceOffer ?? item.defaultPrice ?? 0.0;
+      }
     }
 
     return PricingItem(
@@ -176,18 +183,36 @@ class OrderPricingScreen extends StatefulWidget {
 
 class _OrderPricingScreenState extends State<OrderPricingScreen> {
   final TextEditingController _noteController = TextEditingController();
+  final TextEditingController _discountController = TextEditingController();
+  final TextEditingController _discountReasonController =
+      TextEditingController();
+  final TextEditingController _accountingInvoiceController =
+      TextEditingController();
   List<PricingItem> _pricingItems = [];
   bool _isLoading = true;
   bool _isSaving = false;
   bool _allowPop = false;
+  bool _draftReady = false;
+  Timer? _draftSaveDebounce;
   String? _error;
   String? _initialValues;
 
   String _currentValues() => jsonEncode({
         'note': _noteController.text,
+        'discount': _discountController.text,
+        'discount_reason': _discountReasonController.text,
+        'accounting_invoice_no': _accountingInvoiceController.text,
         'items': _pricingItems
             .map((item) => {
                   ...item.toJson(),
+                  'product_name': item.productName,
+                  'image_url': item.imageUrl,
+                  'requested_quantity': item.requestedQuantity,
+                  'initial_price_offer': item.initialPriceOffer,
+                  'stock_available': item.stockAvailable,
+                  'available_units': item.availableUnits,
+                  'unit_factors': item.unitFactors,
+                  'base_price_snapshot': item.basePriceSnapshot,
                   'quantity_input': item.quantityController.text,
                   'price_input': item.priceController.text,
                 })
@@ -204,24 +229,50 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
       popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
       return;
     }
-    final discard = await showDialog<bool>(
+    final choice = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('تسعير غير محفوظ'),
-        content: const Text('احفظ التسعير كمسودة أولاً أو تجاهل التعديلات.'),
+        content: const Text(
+            'يمكن حفظ مسودة التسعير على هذا الجهاز أو متابعة التحرير.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context, 'continue'),
             child: const Text('متابعة التحرير'),
           ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context, 'save'),
+            child: const Text('حفظ المسودة والخروج'),
+          ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(context, 'discard'),
             child: const Text('تجاهل التعديلات'),
           ),
         ],
       ),
     );
-    if (discard == true && mounted) {
+    if (choice == 'save') {
+      final saved = await _saveLocalDraft();
+      if (!saved && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تعذر حفظ المسودة على هذا الجهاز'),
+        ));
+        return;
+      }
+    }
+    if (choice == 'discard') {
+      try {
+        await (await SharedPreferences.getInstance()).remove(_localDraftKey);
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('تعذر حذف مسودة التسعير: $error'),
+          ));
+        }
+        return;
+      }
+    }
+    if ((choice == 'save' || choice == 'discard') && mounted) {
       popAfterGuard(context, allowPop: () => setState(() => _allowPop = true));
     }
   }
@@ -232,12 +283,20 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
       item.dispose();
     }
     _noteController.dispose();
+    _discountController.dispose();
+    _discountReasonController.dispose();
+    _accountingInvoiceController.dispose();
+    _draftSaveDebounce?.cancel();
     super.dispose();
   }
 
   @override
   void initState() {
     super.initState();
+    _noteController.addListener(_scheduleLocalDraftSave);
+    _discountController.addListener(_scheduleLocalDraftSave);
+    _discountReasonController.addListener(_scheduleLocalDraftSave);
+    _accountingInvoiceController.addListener(_scheduleLocalDraftSave);
     _loadData();
   }
 
@@ -271,8 +330,21 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
             return PricingItem.fromModel(item, product: productMap[item.code]);
           }).toList();
           _noteController.text = provider.currentOrder?.accountantNotes ?? '';
+          final currentOrder = provider.currentOrder;
+          _discountController.text = currentOrder?.discountInput ??
+              (currentOrder?.discount?.toString() ?? '');
+          _discountReasonController.text = currentOrder?.discountReason ?? '';
+          _accountingInvoiceController.text =
+              currentOrder?.accountingInvoiceNo ?? '';
           _initialValues = _currentValues();
         });
+        await _restoreLocalDraft();
+        if (!mounted) return;
+        _draftReady = true;
+        for (final item in _pricingItems) {
+          item.quantityController.addListener(_scheduleLocalDraftSave);
+          item.priceController.addListener(_scheduleLocalDraftSave);
+        }
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -281,8 +353,127 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
     }
   }
 
+  String get _localDraftKey => 'order_pricing_draft_${widget.order.orderId}';
+
+  void _scheduleLocalDraftSave() {
+    if (!_draftReady) return;
+    _draftSaveDebounce?.cancel();
+    _draftSaveDebounce = Timer(const Duration(milliseconds: 300), () {
+      _saveLocalDraft();
+    });
+  }
+
+  Future<bool> _saveLocalDraft() async {
+    if (!_draftReady) return false;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      return await preferences.setString(_localDraftKey, _currentValues());
+    } catch (error) {
+      debugPrint('Pricing draft save failed: ${error.runtimeType}');
+      return false;
+    }
+  }
+
+  Future<void> _restoreLocalDraft() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final saved = preferences.getString(_localDraftKey);
+    if (saved == null || saved.isEmpty) return;
+    try {
+      final decoded = jsonDecode(saved);
+      if (decoded is! Map || decoded['items'] is! List) {
+        throw const FormatException('مسودة التسعير المحلية غير صالحة');
+      }
+      final restored = <PricingItem>[];
+      for (final value in decoded['items'] as List) {
+        if (value is! Map) {
+          throw const FormatException('أحد بنود مسودة التسعير غير صالح');
+        }
+        final item = Map<String, dynamic>.from(value);
+        double number(dynamic value, {double fallback = 0}) {
+          if (value is num) return value.toDouble();
+          return double.tryParse(value?.toString() ?? '') ?? fallback;
+        }
+
+        final availableUnits = (item['available_units'] as List? ?? const [])
+            .map((unit) => unit.toString())
+            .toList();
+        final factorsValue = item['unit_factors'];
+        final unitFactors = <String, double>{};
+        if (factorsValue is Map) {
+          factorsValue.forEach((key, factor) {
+            unitFactors[key.toString()] = number(factor, fallback: 1);
+          });
+        }
+        final quantityText = item['quantity_input']?.toString() ?? '0';
+        final priceText = item['price_input']?.toString() ?? '';
+        final quantity = double.tryParse(quantityText);
+        final price = priceText.isEmpty ? null : double.tryParse(priceText);
+        if (quantity == null || (priceText.isNotEmpty && price == null)) {
+          throw const FormatException(
+              'تعذر استعادة كمية أو سعر من مسودة التسعير');
+        }
+        final unit = item['unit']?.toString() ?? '';
+        final code = item['code']?.toString() ?? '';
+        if (code.isEmpty) {
+          throw const FormatException('رمز منتج مفقود في مسودة التسعير');
+        }
+        restored.add(PricingItem(
+          productId: code,
+          productCode: code,
+          productName: item['product_name']?.toString() ?? '',
+          imageUrl: item['image_url']?.toString() ?? '',
+          requestedQuantity: number(item['requested_quantity']),
+          quantity: quantity,
+          unit: unit,
+          stockAvailable: number(item['stock_available']).toInt(),
+          unitPrice: price,
+          initialPriceOffer: item['initial_price_offer'] == null
+              ? null
+              : number(item['initial_price_offer']),
+          available: item['status'] != 'unavailable',
+          note: item['accountant_note']?.toString() ?? '',
+          isNewlyAdded: item['is_newly_added'] == true,
+          availableUnits: availableUnits.isEmpty ? [unit] : availableUnits,
+          unitFactors: unitFactors.isEmpty ? {unit: 1} : unitFactors,
+          basePriceSnapshot: number(item['base_price_snapshot']),
+        ));
+      }
+      for (final item in _pricingItems) {
+        item.dispose();
+      }
+      setState(() {
+        _pricingItems = restored;
+        _noteController.text = decoded['note']?.toString() ?? '';
+        _discountController.text = decoded['discount']?.toString() ?? '';
+        _discountReasonController.text =
+            decoded['discount_reason']?.toString() ?? '';
+        _accountingInvoiceController.text =
+            decoded['accounting_invoice_no']?.toString() ?? '';
+      });
+    } on FormatException catch (error) {
+      await preferences.remove(_localDraftKey);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('تعذر استعادة مسودة التسعير: ${error.message}'),
+        ));
+      }
+    }
+  }
+
   double get _subtotal =>
       _pricingItems.fold(0, (sum, item) => sum + item.lineTotal);
+
+  OrderDiscountCalculation? get _discountCalculation {
+    try {
+      return calculateOrderDiscount(
+        input: _discountController.text,
+        subtotal: _subtotal,
+      );
+    } on FormatException {
+      return null;
+    }
+  }
 
   void _showAddProductDialog() async {
     final productRepository =
@@ -291,17 +482,15 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
 
     if (!mounted) return;
 
+    final searchIndex = SmartProductSearchIndex(products);
+    var visibleQuery = '';
+    Timer? searchDebounce;
     showDialog(
       context: context,
       builder: (context) {
-        String query = '';
         return StatefulBuilder(
           builder: (context, setState) {
-            final filtered = products
-                .where((p) =>
-                    (p.name.toLowerCase().contains(query.toLowerCase())) ||
-                    (p.code.toLowerCase().contains(query.toLowerCase())))
-                .toList();
+            final filtered = searchIndex.search(visibleQuery);
 
             return AlertDialog(
               title: const Text('إضافة منتج للطلب'),
@@ -315,7 +504,13 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                         hintText: 'بحث عن منتج...',
                         prefixIcon: Icon(Icons.search),
                       ),
-                      onChanged: (value) => setState(() => query = value),
+                      onChanged: (value) {
+                        searchDebounce?.cancel();
+                        searchDebounce = Timer(
+                          const Duration(milliseconds: 220),
+                          () => setState(() => visibleQuery = value),
+                        );
+                      },
                     ),
                     const SizedBox(height: 8),
                     Expanded(
@@ -327,28 +522,35 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                             title: Text(p.name),
                             subtitle: Text('${p.code} - ${p.price} \$'),
                             onTap: () {
+                              final pricingItem = PricingItem(
+                                productId: p.code,
+                                productCode: p.code,
+                                productName: p.name,
+                                imageUrl: p.imageUrl ?? '',
+                                requestedQuantity: 0,
+                                quantity: 1,
+                                unit: p.unit,
+                                stockAvailable: p.stock,
+                                unitPrice: p.price,
+                                availableUnits: p.units ?? [p.unit],
+                                unitFactors: {
+                                  p.unit: 1.0,
+                                  if (p.unit2 != null && p.unit2!.isNotEmpty)
+                                    p.unit2!: p.factor2 ?? 1.0,
+                                  if (p.unit3 != null && p.unit3!.isNotEmpty)
+                                    p.unit3!: p.factor3 ?? 1.0,
+                                },
+                                basePriceSnapshot: p.price,
+                                isNewlyAdded: true,
+                              );
+                              if (_draftReady) {
+                                pricingItem.quantityController
+                                    .addListener(_scheduleLocalDraftSave);
+                                pricingItem.priceController
+                                    .addListener(_scheduleLocalDraftSave);
+                              }
                               this.setState(() {
-                                _pricingItems.add(PricingItem(
-                                  productId: p.code,
-                                  productCode: p.code,
-                                  productName: p.name,
-                                  imageUrl: p.imageUrl ?? '',
-                                  requestedQuantity: 0,
-                                  quantity: 1,
-                                  unit: p.unit,
-                                  stockAvailable: p.stock,
-                                  unitPrice: p.price,
-                                  availableUnits: p.units ?? [p.unit],
-                                  unitFactors: {
-                                    p.unit: 1.0,
-                                    if (p.unit2 != null && p.unit2!.isNotEmpty)
-                                      p.unit2!: p.factor2 ?? 1.0,
-                                    if (p.unit3 != null && p.unit3!.isNotEmpty)
-                                      p.unit3!: p.factor3 ?? 1.0,
-                                  },
-                                  basePriceSnapshot: p.price,
-                                  isNewlyAdded: true,
-                                ));
+                                _pricingItems.add(pricingItem);
                               });
                               Navigator.pop(context);
                             },
@@ -363,11 +565,38 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
           },
         );
       },
-    );
+    ).whenComplete(() => searchDebounce?.cancel());
   }
 
   Future<void> _submitPricing({required bool submitForCustomer}) async {
     if (_isSaving) return;
+
+    final discountCalculation = _discountCalculation;
+    if (discountCalculation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'قيمة الحسم غير صالحة. استخدم مبلغاً مثل 25.50 أو نسبة مثل 10%.'),
+      ));
+      return;
+    }
+    final currentOrder =
+        Provider.of<OrderDetailProvider>(context, listen: false).currentOrder;
+    final oldDiscountType = currentOrder?.discountType ??
+        ((currentOrder?.discount ?? 0) > 0 ? 'amount' : 'none');
+    final oldDiscountInput = currentOrder?.discountInput ??
+        ((currentOrder?.discount ?? 0) > 0
+            ? currentOrder!.discount!.toString()
+            : '');
+    final discountChanged =
+        (currentOrder?.discount ?? 0) != discountCalculation.amount ||
+            oldDiscountType != discountCalculation.type ||
+            oldDiscountInput != discountCalculation.input;
+    if (discountChanged && _discountReasonController.text.trim().length < 3) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('أدخل سبباً مختصراً لتعديل الحسم'),
+      ));
+      return;
+    }
 
     setState(() => _isSaving = true);
 
@@ -394,6 +623,23 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
           ),
         );
         if (confirmed != true || !mounted) return;
+      }
+
+      final nextAccountingInvoice = _accountingInvoiceController.text
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      if (nextAccountingInvoice !=
+          (provider.currentOrder?.accountingInvoiceNo ?? '').trim()) {
+        final response =
+            await ApiService().orders.updateAccountingInvoiceNumber(
+                  orderId: widget.order.orderId,
+                  invoiceNumber: nextAccountingInvoice,
+                );
+        if (response['ok'] != true && response['success'] != true) {
+          throw Exception(
+              response['error'] ?? 'تعذر حفظ رقم الفاتورة المحاسبي');
+        }
+        if (!mounted) return;
       }
 
       // Map local pricing items back to OrderItem models for the provider
@@ -469,10 +715,13 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
       // Update the provider's items list
       provider.setItems(updatedOrderItems);
 
+      if (!mounted) return;
       final success = await provider.savePricing(
         context: context,
         subtotal: _subtotal,
-        total: _subtotal, // Currently no extra discount logic shown in UI
+        total: discountCalculation.netTotal,
+        discountInput: _discountController.text,
+        discountReason: _discountReasonController.text.trim(),
         notes: _noteController.text,
         submitForCustomer: submitForCustomer,
         confirmOfferPriceOverride: overridesOffer,
@@ -481,6 +730,13 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
       if (!mounted) return;
 
       if (success) {
+        _draftReady = false;
+        try {
+          await (await SharedPreferences.getInstance()).remove(_localDraftKey);
+        } catch (error) {
+          debugPrint('Pricing draft cleanup failed: ${error.runtimeType}');
+        }
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(submitForCustomer
@@ -495,6 +751,7 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
         throw Exception(provider.errorMessage ?? 'فشل حفظ التسعير');
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('خطأ: $e'),
@@ -1022,7 +1279,21 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
 
   Widget _buildSummarySection() {
     final double previousBalance = widget.order.previousBalance ?? 0.0;
-    final double totalWithBalance = previousBalance + _subtotal;
+    final discountCalculation = _discountCalculation;
+    final netTotal = discountCalculation?.netTotal ?? _subtotal;
+    final double totalWithBalance = previousBalance + netTotal;
+    final currentOrder =
+        Provider.of<OrderDetailProvider>(context, listen: false).currentOrder;
+    final oldDiscountType = currentOrder?.discountType ??
+        ((currentOrder?.discount ?? 0) > 0 ? 'amount' : 'none');
+    final oldDiscountInput = currentOrder?.discountInput ??
+        ((currentOrder?.discount ?? 0) > 0
+            ? currentOrder!.discount!.toString()
+            : '');
+    final discountChangedForPreview = discountCalculation != null &&
+        ((currentOrder?.discount ?? 0) != discountCalculation.amount ||
+            oldDiscountType != discountCalculation.type ||
+            oldDiscountInput != discountCalculation.input);
     final colors = Theme.of(context).colorScheme;
 
     return Container(
@@ -1040,13 +1311,63 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
       ),
       child: Column(
         children: [
-          _buildSummaryRow('إجمالي البنود:', _subtotal, isBold: true),
+          _buildSummaryRow('إجمالي البنود:', _subtotal,
+              isBold: true, currency: widget.order.currency),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _discountController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'حسم إجمالي الفاتورة',
+              hintText: '10% أو 25.50',
+              helperText:
+                  'النسبة من إجمالي البنود قبل الحسم، والمبلغ بعملة ${widget.order.currency}. تدخل أسعار العروض وخصومات البنود ضمن الإجمالي؛ والحسم العام يطبق يدوياً بعد ذلك.',
+              errorText: discountCalculation == null &&
+                      _discountController.text.isNotEmpty
+                  ? 'أدخل مبلغاً أو نسبة صحيحة غير سالبة، ولا تتجاوز قيمة الحسم الإجمالي'
+                  : null,
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          if (discountCalculation != null && discountCalculation.amount > 0)
+            _buildSummaryRow('الحسم:', -discountCalculation.amount,
+                color: colors.error, currency: widget.order.currency),
+          _buildSummaryRow('صافي الفاتورة:', netTotal,
+              isBold: true,
+              color: colors.primary,
+              currency: widget.order.currency),
+          if (discountChangedForPreview)
+            TextField(
+              controller: _discountReasonController,
+              decoration: const InputDecoration(
+                labelText: 'سبب الحسم أو تعديله',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              maxLength: 200,
+            ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _accountingInvoiceController,
+            maxLength: 64,
+            decoration: const InputDecoration(
+              labelText: 'رقم الفاتورة الأصلي في البرنامج المحاسبي (اختياري)',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
           if (previousBalance != 0)
             _buildSummaryRow('الرصيد السابق:', previousBalance,
-                color: previousBalance > 0 ? colors.error : colors.primary),
+                color: previousBalance > 0 ? colors.error : colors.primary,
+                currency: widget.order.currency),
           const Divider(height: 16),
           _buildSummaryRow('الإجمالي النهائي:', totalWithBalance,
-              isBold: true, fontSize: 18, color: colors.primary),
+              isBold: true,
+              fontSize: 18,
+              color: colors.primary,
+              currency: widget.order.currency),
           const SizedBox(height: 12),
           TextField(
             controller: _noteController,
@@ -1065,7 +1386,10 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
   }
 
   Widget _buildSummaryRow(String label, double amount,
-      {bool isBold = false, double fontSize = 14, Color? color}) {
+      {bool isBold = false,
+      double fontSize = 14,
+      Color? color,
+      String currency = 'USD'}) {
     final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1077,7 +1401,7 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                 fontSize: fontSize,
                 fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
               )),
-          Text(formatMoneyShort(amount),
+          Text(formatMoneyShort(amount, currency: currency),
               style: TextStyle(
                 fontSize: fontSize + 2,
                 fontWeight: FontWeight.bold,

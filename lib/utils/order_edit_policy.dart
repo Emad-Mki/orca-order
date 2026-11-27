@@ -25,7 +25,7 @@ class OrderEditPolicy {
           'approved',
         }.contains(normalizedStatus);
       case AppRole.warehouse:
-        return normalizedStatus == 'preparing';
+        return const {'approved', 'preparing'}.contains(normalizedStatus);
       case AppRole.salesperson:
       case AppRole.user:
         return false;

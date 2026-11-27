@@ -132,6 +132,28 @@ Apps Script ولم تُختبر أي عملية كتابة على بيانات �
   استخدام API وعدم التعديل بالتزامن مباشرة على الورقة. النشر واختبار
   Google Sheets الحقيقي مطلوبان؛ الاختبارات المحلية تستخدم محاكاة.
 
+## تسعير الطلبات والحسم
+
+- يقبل `order_price` الحقول الاختيارية `discount_input` و`discount_reason`.
+  يحسب الخادم الإجمالي من البنود المسعرة المحفوظة ويتجاهل إجمالي الواجهة؛
+  يخزن `subtotal`, `discount_type`, `discount_input`, `discount`,
+  `discount_reason`, و`total` الصافي.
+- يقبل الحسم مبلغاً أو نسبة من 0 إلى 100%، والأرقام العربية، والنقطة أو
+  الفاصلة العشرية حتى منزلتين. ترفض القيم السالبة وفواصل الآلاف والقيم
+  الملتبسة. التقريب المالي للطلبات إلى منزلتين؛ المبلغ بعملة الطلب، والنسبة
+  من الإجمالي قبل الحسم. يتطلب كل تغيير سبباً ويسجل القيمة السابقة والجديدة
+  والنوع والفاعل والوقت في `Audit_Log`.
+- أسعار العروض وخصومات البنود المضمنة في أسعار البنود تدخل ضمن إجمالي البنود؛
+  لا يضيف الخادم حسم عرض تلقائياً، ويطبق الحسم العام المدخل صراحةً بعد ذلك.
+  يعرض التطبيق هذه القاعدة قبل الحفظ.
+- رقم الفاتورة المحاسبي المخزن في `accounting_invoice_no` متاح حصراً لـ
+  `admin`, `manager`, `accountant`. يقبل حتى 64 حرفاً، ويمنع تكراره، ويسجل
+  آخر محرر ووقت التعديل في `accounting_invoice_no_updated_by` و
+  `accounting_invoice_no_updated_at`، مع سجل تغيير في `Audit_Log`.
+- تتطلب التغييرات تشغيل `setupSystem` بعد نشر `Code.gs`؛ يضيف الأعمدة
+  الناقصة إلى `Orders` دون حذف أو إعادة كتابة البيانات الحالية. الطلبات
+  القديمة التي لا تحتوي قيم الحسم تستمر بإجماليها المحفوظ.
+
 ## الأدوار وحدود البيانات
 
 | الدور | حدود الخادم المهمة |
@@ -169,6 +191,7 @@ Apps Script ولم تُختبر أي عملية كتابة على بيانات �
 | `createOrder`, `create_order` | `order_create` |
 | `updateOrderStatus`, `update_order_status` | `order_status_update` |
 | `price_order`, `updateOrderPricing` | `order_price` |
+| `order_accounting_invoice_update` | `order_accounting_invoice_update` |
 | `cancelOrder`, `cancel_order` | `order_cancel` |
 | `confirmWarehousePrep` | `confirmWarehousePrep` |
 | `getCustomers` | `customer_list` |
@@ -185,6 +208,24 @@ Apps Script ولم تُختبر أي عملية كتابة على بيانات �
 | `getDashboardStats` | `dashboard_stats` |
 | `getReports` | `reports` |
 | `change_password` | `user_update` |
+
+## الشحن والطرود
+
+- `shipment_save` ينشئ شحنة أو يعدّل شحنة موجودة عند إرسال `shipment_id`.
+  يقبل `order_id` كمعرّف الطلب أو رقمه أو رقم فاتورته، أو `invoice_id`/رقم
+  فاتورة المبيعات. يظل ربط الشحنة بالطلب أو الفاتورة مطلوبًا.
+- أنواع الطرود ترسل في `package_types` كقائمة `{type, label, count}`؛ القيم
+  المدعومة `carton` و`bag` و`custom`. الخادم يتحقق من الأعداد الصحيحة غير
+  السالبة ومن اسم النوع المخصص، ويحسب `package_count` وملخص العرض؛ لا يُوثق
+  بملخص نصي مرسل من التطبيق. `weight_kg` و`dimensions` اختياريان.
+- بيانات الشحن الإضافية تحفظ في الأعمدة الاختيارية `invoice_id`,
+  `package_types_json`, `weight_kg`, `dimensions`, و`client_request_id`.
+  تشغيل `setupSystem` يضيف الأعمدة الناقصة إلى `Shipments` دون حذف أو إعادة
+  كتابة الصفوف الموجودة. تبقى قراءة `package_count` وعدادات الكرتون/الأكياس
+  القديمة مدعومة.
+- صلاحيات الإنشاء والتعديل هي الأدوار الحالية (`admin`, `manager`,
+  `accountant`, `warehouse`). الشحنات المسلّمة أو المقفلة لا تعدّل إلا من
+  `admin`، كما يتحقق الخادم من الحالة والمدخلات.
 
 ## بيانات الصفحة الرئيسية والتحديث
 

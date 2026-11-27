@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import '../widgets/sales_customer_form.dart';
 import '../widgets/guided_tour.dart';
 import '../services/guide_coordinator.dart';
 import '../utils/permissions.dart';
+import '../utils/smart_product_search.dart';
 
 class SalesInvoiceScreen extends StatefulWidget {
   const SalesInvoiceScreen({super.key});
@@ -32,6 +34,10 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
   final List<_PaymentLine> _refunded = [];
 
   List<Product> _products = [];
+  SmartProductSearchIndex _productSearchIndex =
+      SmartProductSearchIndex(const []);
+  Timer? _searchDebounce;
+  String _debouncedSearch = '';
   List<Map<String, dynamic>> _customers = [];
   Map<String, dynamic>? _config;
   String? _customerId;
@@ -110,6 +116,7 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
   @override
   void dispose() {
     _search.dispose();
+    _searchDebounce?.cancel();
     _discount.dispose();
     _buyerName.dispose();
     _buyerPhone.dispose();
@@ -153,6 +160,7 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
         _config = config;
         _customers = customers;
         _products = provider.allProducts;
+        _productSearchIndex = SmartProductSearchIndex(_products);
         _loading = false;
       });
     } catch (error) {
@@ -688,7 +696,17 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
                                 decimal: true),
                             decoration: InputDecoration(
                                 labelText: 'المبلغ ${line.currency}'),
-                            onChanged: (_) => setState(() {}),
+                            onChanged: (value) {
+                              _searchDebounce?.cancel();
+                              _searchDebounce = Timer(
+                                const Duration(milliseconds: 220),
+                                () {
+                                  if (mounted) {
+                                    setState(() => _debouncedSearch = value);
+                                  }
+                                },
+                              );
+                            },
                           ),
                         ),
                         IconButton(
@@ -811,7 +829,7 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
         ),
       );
     }
-    final query = _search.text.trim().toLowerCase();
+    final query = _debouncedSearch;
     final groups = _products
         .map((p) => p.group.trim())
         .where((v) => v.isNotEmpty)
@@ -825,15 +843,12 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
         .toSet()
         .toList()
       ..sort();
-    final filteredProducts = _products
+    final filteredProducts = _productSearchIndex
+        .search(query)
         .where((product) =>
             (_selectedGroup == 'all' || product.group == _selectedGroup) &&
             (_selectedSubGroup == 'all' ||
-                product.subGroup == _selectedSubGroup) &&
-            (query.isEmpty ||
-                product.name.toLowerCase().contains(query) ||
-                product.code.toLowerCase().contains(query) ||
-                product.oem.toLowerCase().contains(query)))
+                product.subGroup == _selectedSubGroup))
         .toList();
     final theme = Theme.of(context);
     final previewPaid = _previewNetPaid;

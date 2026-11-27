@@ -29,16 +29,7 @@ class _OrdersScreenState extends State<OrdersScreen>
   String? _selectedCustomerId;
   String _currentStatusFilter = 'all';
   late TabController _tabController;
-  final List<String> _statusTabs = [
-    'all',
-    OrderStatusMapper.processing,
-    OrderStatusMapper.priced,
-    OrderStatusMapper.approved,
-    OrderStatusMapper.preparing,
-    OrderStatusMapper.readyForShipping,
-    OrderStatusMapper.completed,
-    OrderStatusMapper.cancelled,
-  ];
+  late final List<String> _statusTabs;
 
   final TextEditingController _searchController = TextEditingController();
   List<dynamic> _customers = [];
@@ -54,7 +45,33 @@ class _OrdersScreenState extends State<OrdersScreen>
     super.initState();
     _selectedCustomerId = widget.customerId;
     final provider = context.read<OrdersProvider>();
-    _currentStatusFilter = provider.currentFilter;
+    final isWarehouse = PermissionHelper.fromString(
+            widget.session['role']?.toString() ?? 'user') ==
+        AppRole.warehouse;
+    _statusTabs = isWarehouse
+        ? [
+            'all',
+            OrderStatusMapper.approved,
+            OrderStatusMapper.preparing,
+            OrderStatusMapper.readyForShipping,
+            OrderStatusMapper.completed,
+          ]
+        : [
+            'all',
+            OrderStatusMapper.processing,
+            OrderStatusMapper.priced,
+            OrderStatusMapper.approved,
+            OrderStatusMapper.preparing,
+            OrderStatusMapper.readyForShipping,
+            OrderStatusMapper.completed,
+            OrderStatusMapper.cancelled,
+          ];
+    _currentStatusFilter = _statusTabs.contains(provider.currentFilter)
+        ? provider.currentFilter
+        : 'all';
+    if (_currentStatusFilter != provider.currentFilter) {
+      provider.setFilter(_currentStatusFilter);
+    }
     _searchController.text = provider.searchQuery;
     _tabController = TabController(length: _statusTabs.length, vsync: this);
     final initialTab = _statusTabs.indexOf(_currentStatusFilter);
@@ -215,6 +232,11 @@ class _OrdersScreenState extends State<OrdersScreen>
             userRole, AppPermission.viewProductPrices) ||
         PermissionHelper.hasPermission(
             userRole, AppPermission.viewSellingPriceOnly);
+    final canViewAccountingInvoiceNo = const {
+      AppRole.admin,
+      AppRole.manager,
+      AppRole.accountant,
+    }.contains(userRole);
 
     return Scaffold(
       appBar: AppBar(
@@ -333,11 +355,15 @@ class _OrdersScreenState extends State<OrdersScreen>
             );
           }
 
+          final warehouseOnly = userRole == AppRole.warehouse
+              ? provider.orders.where((order) =>
+                  OrderStatusMapper.isVisibleToWarehouse(order.status))
+              : provider.orders;
           final filteredOrders = _selectedCustomerId != null
-              ? provider.orders
+              ? warehouseOnly
                   .where((o) => o.customerId == _selectedCustomerId)
                   .toList()
-              : provider.orders;
+              : warehouseOnly.toList();
 
           if (widget.motionVisible &&
               filteredOrders.isNotEmpty &&
@@ -599,6 +625,20 @@ class _OrdersScreenState extends State<OrdersScreen>
                                         _buildStatusBadge(order.status),
                                       ],
                                     ),
+                                    if (canViewAccountingInvoiceNo &&
+                                        order.accountingInvoiceNo
+                                                ?.trim()
+                                                .isNotEmpty ==
+                                            true)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: Text(
+                                          'الفاتورة المحاسبية: ${order.accountingInvoiceNo}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
+                                        ),
+                                      ),
                                     const SizedBox(height: 12),
                                     if (canViewAll) ...[
                                       Row(

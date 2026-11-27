@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../repositories/product_repository.dart';
 import '../services/database_service.dart';
 import '../utils/permissions.dart';
 import '../utils/guarded_navigation.dart';
+import '../utils/smart_product_search.dart';
 
 class OrderEditScreen extends StatefulWidget {
   final Order order;
@@ -115,17 +117,15 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
     }
     if (!mounted) return;
 
+    final searchIndex = SmartProductSearchIndex(products);
+    var visibleQuery = '';
+    Timer? searchDebounce;
     final selectedProduct = await showDialog<Product>(
       context: context,
       builder: (dialogContext) {
-        var query = '';
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final filtered = products.where((product) {
-              final normalizedQuery = query.toLowerCase();
-              return product.name.toLowerCase().contains(normalizedQuery) ||
-                  product.code.toLowerCase().contains(normalizedQuery);
-            }).toList();
+            final filtered = searchIndex.search(visibleQuery);
 
             return AlertDialog(
               title: const Text('إضافة صنف'),
@@ -139,7 +139,15 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
                         hintText: 'ابحث بالاسم أو الرمز',
                         prefixIcon: Icon(Icons.search),
                       ),
-                      onChanged: (value) => setDialogState(() => query = value),
+                      onChanged: (value) {
+                        searchDebounce?.cancel();
+                        searchDebounce = Timer(
+                          const Duration(milliseconds: 220),
+                          () {
+                            setDialogState(() => visibleQuery = value);
+                          },
+                        );
+                      },
                     ),
                     const SizedBox(height: 8),
                     Expanded(
@@ -167,6 +175,7 @@ class _OrderEditScreenState extends State<OrderEditScreen> {
             );
           },
         );
+        searchDebounce?.cancel();
       },
     );
 

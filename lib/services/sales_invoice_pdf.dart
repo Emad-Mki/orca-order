@@ -7,10 +7,11 @@ import 'package:mustache_template/mustache_template.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
+import '../utils/shipment_summary.dart';
 
 /// Renders the invoice using the HTML template and Headless WebView for PDF generation.
 class SalesInvoicePdf {
-  static const templateVersion = 'orca-invoice-a4-v1';
+  static const templateVersion = 'orca-invoice-a4-v2';
 
   // Keep these constants for backward compatibility if referenced elsewhere.
   static const defaultColumns = [
@@ -165,6 +166,7 @@ class SalesInvoicePdf {
       'customer_name': (invoice['customer_name'] ?? '').toString(),
       'invoice_type': invoiceType,
       'invoice_statement': (invoice['notes'] ?? '').toString(),
+      'shipment_summary': _shipmentSummary(invoice),
       'currency': currency,
       'payment_method': (invoice['payment_method'] ?? 'آجل').toString(),
       ..._financialValues(invoice, rawItems, exportedAt),
@@ -185,6 +187,18 @@ class SalesInvoicePdf {
 
   static String _invoiceValue(dynamic value) =>
       value == null || value == '' ? '0.00' : value.toString();
+
+  static String _shipmentSummary(Map<String, dynamic> invoice) {
+    final stored = invoice['shipment_summary']?.toString().trim() ?? '';
+    if (stored.isNotEmpty) return stored;
+    final shipmentData = invoice['shipment_data'];
+    if (shipmentData is Map) {
+      return ShipmentSummary.formatAll(
+        Map<String, dynamic>.from(shipmentData),
+      );
+    }
+    return '';
+  }
 
   static dynamic _firstPresent(Iterable<dynamic> values) {
     for (final value in values) {

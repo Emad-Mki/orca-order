@@ -11,6 +11,11 @@ class Order {
   final String? note;
   final String? accountantNotes;
   final String? accountingInvoiceNo;
+  final String? accountingInvoiceNoUpdatedBy;
+  final DateTime? accountingInvoiceNoUpdatedAt;
+  final String? discountType;
+  final String? discountInput;
+  final String? discountReason;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String? createdBy;
@@ -36,6 +41,11 @@ class Order {
     this.note,
     this.accountantNotes,
     this.accountingInvoiceNo,
+    this.accountingInvoiceNoUpdatedBy,
+    this.accountingInvoiceNoUpdatedAt,
+    this.discountType,
+    this.discountInput,
+    this.discountReason,
     this.createdAt,
     this.updatedAt,
     this.createdBy,
@@ -120,6 +130,13 @@ class Order {
       note: _nullableText(json['note']),
       accountantNotes: _nullableText(json['accountant_notes']),
       accountingInvoiceNo: _nullableText(json['accounting_invoice_no']),
+      accountingInvoiceNoUpdatedBy:
+          _nullableText(json['accounting_invoice_no_updated_by']),
+      accountingInvoiceNoUpdatedAt:
+          parseDate(json['accounting_invoice_no_updated_at']),
+      discountType: _nullableText(json['discount_type']),
+      discountInput: _nullableText(json['discount_input']),
+      discountReason: _nullableText(json['discount_reason']),
       createdAt: parseDate(json['created_at'] ?? json['date']),
       updatedAt: parseDate(json['updated_at']),
       createdBy: _nullableText(json['created_by']),
@@ -152,6 +169,11 @@ class Order {
     String? note,
     String? accountantNotes,
     String? accountingInvoiceNo,
+    String? accountingInvoiceNoUpdatedBy,
+    DateTime? accountingInvoiceNoUpdatedAt,
+    String? discountType,
+    String? discountInput,
+    String? discountReason,
     DateTime? createdAt,
     DateTime? updatedAt,
     String? createdBy,
@@ -177,6 +199,13 @@ class Order {
       note: note ?? this.note,
       accountantNotes: accountantNotes ?? this.accountantNotes,
       accountingInvoiceNo: accountingInvoiceNo ?? this.accountingInvoiceNo,
+      accountingInvoiceNoUpdatedBy:
+          accountingInvoiceNoUpdatedBy ?? this.accountingInvoiceNoUpdatedBy,
+      accountingInvoiceNoUpdatedAt:
+          accountingInvoiceNoUpdatedAt ?? this.accountingInvoiceNoUpdatedAt,
+      discountType: discountType ?? this.discountType,
+      discountInput: discountInput ?? this.discountInput,
+      discountReason: discountReason ?? this.discountReason,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       createdBy: createdBy ?? this.createdBy,
@@ -214,6 +243,12 @@ class Order {
         'note': note,
         'accountant_notes': accountantNotes,
         'accounting_invoice_no': accountingInvoiceNo,
+        'accounting_invoice_no_updated_by': accountingInvoiceNoUpdatedBy,
+        'accounting_invoice_no_updated_at':
+            accountingInvoiceNoUpdatedAt?.toIso8601String(),
+        'discount_type': discountType,
+        'discount_input': discountInput,
+        'discount_reason': discountReason,
         'created_at': createdAt?.toIso8601String(),
         'updated_at': updatedAt?.toIso8601String(),
         'created_by': createdBy,

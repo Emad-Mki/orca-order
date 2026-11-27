@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../repositories/product_repository.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
+import '../utils/smart_product_search.dart';
 
 enum ProductViewMode { grid, list }
 
@@ -29,6 +30,7 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
   ProductViewMode _viewMode = ProductViewMode.grid;
   ProductSortOption _sortOption = ProductSortOption.name;
   bool _hasChangedViewMode = false;
+  SmartProductSearchIndex _searchIndex = SmartProductSearchIndex(const []);
 
   Future<void>? _fetchRequest;
   DateTime? _lastManualRefresh;
@@ -156,6 +158,7 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
     try {
       _products =
           await _productRepository.getProducts(forceRefresh: forceRefresh);
+      _searchIndex = SmartProductSearchIndex(_products);
       _isInitialLoading = false;
 
       // التخلص من الفئات المحددة إذا لم تعد موجودة
@@ -177,6 +180,7 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
       notifyListeners();
     } catch (e) {
       _isLoading = false;
+      _isInitialLoading = false;
       _errorMessage = e.toString();
       notifyListeners();
     }
@@ -215,6 +219,7 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
 
   void _applyFiltersAndSort() {
     var filtered = List<Product>.from(_products);
+    final searchRanks = <Product, int>{};
     final sourceOrder = <Product, int>{
       for (var index = 0; index < _products.length; index++)
         _products[index]: index,
@@ -237,28 +242,30 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
 
     // البحث
     if (_searchQuery.isNotEmpty) {
-      final query = _searchQuery.toLowerCase();
-      filtered = filtered.where((p) {
-        return p.name.toLowerCase().contains(query) ||
-            p.code.toLowerCase().contains(query) ||
-            p.oem.toLowerCase().contains(query) ||
-            p.group.toLowerCase().contains(query) ||
-            p.subGroup.toLowerCase().contains(query) ||
-            p.origin.toLowerCase().contains(query) ||
-            (p.brand?.toLowerCase().contains(query) ?? false);
-      }).toList();
+      for (final match in _searchIndex.searchWithRanks(_searchQuery)) {
+        searchRanks[match.product] = match.rank;
+      }
+      filtered = filtered
+          .where((product) => searchRanks.containsKey(product))
+          .toList();
     }
 
     // الفرز
     switch (_sortOption) {
       case ProductSortOption.name:
         filtered.sort((a, b) {
+          final byRelevance =
+              (searchRanks[a] ?? 0).compareTo(searchRanks[b] ?? 0);
+          if (byRelevance != 0) return byRelevance;
           final byName = a.name.toLowerCase().compareTo(b.name.toLowerCase());
           return byName != 0 ? byName : _stableProductOrder(a, b, sourceOrder);
         });
         break;
       case ProductSortOption.priceLowHigh:
         filtered.sort((a, b) {
+          final byRelevance =
+              (searchRanks[a] ?? 0).compareTo(searchRanks[b] ?? 0);
+          if (byRelevance != 0) return byRelevance;
           final byPrice = a.price.compareTo(b.price);
           return byPrice != 0
               ? byPrice
@@ -267,6 +274,9 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
         break;
       case ProductSortOption.priceHighLow:
         filtered.sort((a, b) {
+          final byRelevance =
+              (searchRanks[a] ?? 0).compareTo(searchRanks[b] ?? 0);
+          if (byRelevance != 0) return byRelevance;
           final byPrice = b.price.compareTo(a.price);
           return byPrice != 0
               ? byPrice
@@ -275,6 +285,9 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
         break;
       case ProductSortOption.newest:
         filtered.sort((a, b) {
+          final byRelevance =
+              (searchRanks[a] ?? 0).compareTo(searchRanks[b] ?? 0);
+          if (byRelevance != 0) return byRelevance;
           if (a.createdAt == null && b.createdAt == null) {
             return _stableProductOrder(a, b, sourceOrder);
           }
@@ -322,6 +335,7 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
   /// إضافة منتج جديد
   void addProduct(Product product) {
     _products.add(product);
+    _searchIndex = SmartProductSearchIndex(_products);
     _applyFiltersAndSort();
     notifyListeners();
   }
@@ -331,6 +345,7 @@ class ProductsProvider extends ChangeNotifier with AsyncSessionNotifier {
     final index = _products.indexWhere((p) => p.id == updatedProduct.id);
     if (index != -1) {
       _products[index] = updatedProduct;
+      _searchIndex = SmartProductSearchIndex(_products);
       _applyFiltersAndSort();
       notifyListeners();
     }

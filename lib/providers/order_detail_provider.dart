@@ -6,6 +6,7 @@ import '../services/api_service.dart';
 import 'auth_provider.dart';
 import 'async_session_notifier.dart';
 import 'package:flutter/material.dart';
+import '../utils/order_discount.dart';
 
 /// Provider لإدارة تفاصيل طلب معين وعمليات التسعير
 class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
@@ -195,6 +196,8 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
     required BuildContext context,
     double? subtotal,
     double? total,
+    String? discountInput,
+    String? discountReason,
     String? notes,
     bool submitForCustomer = false,
     bool confirmOfferPriceOverride = false,
@@ -218,6 +221,12 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
     notifyListeners();
 
     try {
+      final calculatedDiscount = calculateOrderDiscount(
+        input: discountInput ??
+            _currentOrder!.discountInput ??
+            (_currentOrder!.discount?.toString() ?? ''),
+        subtotal: subtotal ?? _items.fold(0, (sum, item) => sum + item.total),
+      );
       // تجهيز البيانات بالتنسيق الذي يتوقعه Backend
       final itemsData = _items
           .map((item) => {
@@ -247,6 +256,8 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
         items: itemsData,
         subtotal: subtotal,
         total: total,
+        discountInput: calculatedDiscount.input,
+        discountReason: discountReason,
         notes: notes,
         submitForCustomer: submitForCustomer,
         extraParams: confirmOfferPriceOverride
@@ -254,6 +265,15 @@ class OrderDetailProvider extends ChangeNotifier with AsyncSessionNotifier {
             : null,
       );
 
+      _discount = calculatedDiscount.amount;
+      _currentOrder = _currentOrder!.copyWith(
+        discount: calculatedDiscount.amount,
+        discountType: calculatedDiscount.type,
+        discountInput: calculatedDiscount.input,
+        discountReason: discountReason,
+        totalAmount: calculatedDiscount.netTotal,
+        items: _items,
+      );
       _isLoading = false;
       notifyListeners();
       return true;

@@ -100,6 +100,89 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('category filters hide on scroll down and return on scroll up',
+      (tester) async {
+    await LocalRepository(database).saveProducts(
+      List.generate(
+        30,
+        (index) => Product(
+          id: index + 1,
+          code: 'ITEM-${index + 1}',
+          name: 'منتج ${index + 1}',
+          category: 'الفئة',
+          group: 'الفئة',
+          origin: '',
+          unit: 'قطعة',
+          price: 10,
+        ),
+      ),
+    );
+    final scrollingProvider = ProductsProvider(ProductRepository(database));
+    await scrollingProvider.fetchProducts();
+
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+      value: scrollingProvider,
+      child: const MaterialApp(
+        home: ProductsScreen(session: {'role': 'customer'}),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('الفئة'), findsOneWidget);
+
+    await tester.drag(find.byType(GridView), const Offset(0, -400));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChoiceChip), findsNothing);
+    expect(find.byTooltip('العودة إلى أعلى القائمة'), findsOneWidget);
+
+    await tester.drag(find.byType(GridView), const Offset(0, 250));
+    await tester.pumpAndSettle();
+
+    expect(find.text('الفئة'), findsOneWidget);
+    expect(find.byType(ChoiceChip), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('scroll-to-top control returns the product list to its start',
+      (tester) async {
+    await LocalRepository(database).saveProducts(
+      List.generate(
+        30,
+        (index) => Product(
+          id: index + 1,
+          code: 'ITEM-${index + 1}',
+          name: 'منتج ${index + 1}',
+          category: 'الفئة',
+          group: 'الفئة',
+          origin: '',
+          unit: 'قطعة',
+          price: 10,
+        ),
+      ),
+    );
+    final scrollingProvider = ProductsProvider(ProductRepository(database));
+    await scrollingProvider.fetchProducts();
+
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+      value: scrollingProvider,
+      child: const MaterialApp(
+        home: ProductsScreen(session: {'role': 'customer'}),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(GridView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('العودة إلى أعلى القائمة'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('العودة إلى أعلى القائمة'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('العودة إلى أعلى القائمة'), findsNothing);
+    expect(find.byType(ChoiceChip), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('reduced motion keeps product navigation available',
       (tester) async {
     await tester.pumpWidget(ChangeNotifierProvider.value(

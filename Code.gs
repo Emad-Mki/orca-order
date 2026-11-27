@@ -12,13 +12,13 @@ const H = {
   Customers: ['customer_id','full_name','company_name','phone','address','province','notes','opening_usd','opening_syp','status','created_at','is_system_record','creation_request_id'],
   Products: ['code','name','image_name','group','origin','unit_1','quantity','minimum_stock','unit_2','factor_2','quantity_2','unit_3','factor_3','quantity_3','display_price','price_2','price_3','currency','notes','updated_at','updated_by','image_file_id','sub_group','oem','availability_status'],
   Offers: ['offer_id','product_code','title','unit','old_price','offer_price','currency','min_quantity','starts_at','ends_at','note','enabled','sort_order','revision','created_at','created_by','updated_at','updated_by','archived_at','archived_by','bundle_items'],
-  Orders: ['order_id', 'order_number', 'customer_id', 'customer_name', 'status', 'currency', 'note', 'accounting_invoice_no', 'is_read', 'is_new', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at', 'created_by', 'subtotal', 'total', 'priced_by', 'priced_at', 'accountant_notes', 'posting_id', 'posted_at', 'matching_status', 'revision_no', 'client_request_id'],
+  Orders: ['order_id', 'order_number', 'customer_id', 'customer_name', 'status', 'currency', 'note', 'accounting_invoice_no', 'accounting_invoice_no_updated_by', 'accounting_invoice_no_updated_at', 'discount_type', 'discount_input', 'discount', 'discount_reason', 'is_read', 'is_new', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at', 'created_by', 'subtotal', 'total', 'priced_by', 'priced_at', 'accountant_notes', 'posting_id', 'posted_at', 'matching_status', 'revision_no', 'client_request_id'],
   Order_Items: ['item_id', 'order_id', 'order_number', 'code', 'name_snapshot', 'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot', 'unit_1', 'unit_2', 'factor_2', 'unit_3', 'factor_3', 'quantity_requested', 'quantity_approved', 'quantity_prepared', 'display_price_snapshot', 'final_price', 'currency', 'status', 'customer_note', 'accountant_note', 'warehouse_note', 'warehouse_package_numbers', 'warehouse_package_type', 'warehouse_custom_package_type', 'total_price', 'offer_id', 'offer_revision', 'offer_old_price', 'offer_min_quantity', 'offer_starts_at', 'offer_ends_at'],
   Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type','payment_method','invoice_currency','invoice_equivalent','exchange_rate','reference','client_request_id','change_amount','change_currency','receipt_id','reversal_of'],
   Boxes_Balance: ['box_id','box_name','currency','balance','last_updated'],
   Sham_Cash_Balance: ['id','currency','balance','last_updated'],
   Inventory_Movements: ['movement_id','code','type','quantity','note','created_by','created_at', 'reference_id', 'posting_id', 'is_correction'],
-  Shipments: ['shipment_id','order_id','delivery_method','carrier','tracking_no','province','shipping_cost_internal','package_count','carton_count','bag_count','shipping_date','status','note','warehouse_note'],
+  Shipments: ['shipment_id','order_id','delivery_method','carrier','tracking_no','province','shipping_cost_internal','package_count','carton_count','bag_count','shipping_date','status','note','warehouse_note','invoice_id','package_types_json','weight_kg','dimensions','client_request_id'],
   Low_Stock_Requests: ['request_id','code','requested_qty','status','note','created_by','created_at'],
   Notifications: ['notification_id','event_id','event_type','title','body','target_role','target_user_id','customer_id','order_id','invoice_id','product_id','deep_link','created_at','sent_at','read_at','is_read','status','created_by','retry_count','last_error','last_attempt_at','delivered_device_ids','user_id','type','entity_type','entity_id'],
   User_Devices: ['device_id','user_id','fcm_token','fcm_target_type','platform','app_version','last_active_at','is_active','enabled','created_at','updated_at'],
@@ -531,6 +531,8 @@ function _withoutFinancialFields(record, role) {
     'unit_price_snapshot', 'base_price_snapshot',
     'final_price', 'default_price', 'total_price', 'subtotal', 'total',
     'total_amount', 'grand_total', 'invoice_total', 'balance',
+    'discount', 'discount_type', 'discount_input', 'discount_reason',
+    'accounting_invoice_no_updated_by', 'accounting_invoice_no_updated_at',
     'previous_balance', 'current_balance', 'opening_usd', 'opening_syp',
     'accountant_notes', 'priced_by', 'priced_at', 'accounting_invoice_no',
     'posting_id', 'posted_at', 'matching_status', 'shipping_cost_internal'
@@ -545,6 +547,12 @@ function _withoutInternalOrderFields(record) {
   [
     'accountant_notes',
     'accounting_invoice_no',
+    'accounting_invoice_no_updated_by',
+    'accounting_invoice_no_updated_at',
+    'discount',
+    'discount_type',
+    'discount_input',
+    'discount_reason',
     'posting_id',
     'posted_at',
     'matching_status'
@@ -552,7 +560,7 @@ function _withoutInternalOrderFields(record) {
   return safe;
 }
 
-function _serializeProductForRole(product, role, imageUrl) {
+function _serializeProductForRole(product, role, imageUrl, defaultProductCurrency) {
   const userRole = _normalizeRole(role);
   const item = {
     code: product.code,
@@ -572,7 +580,9 @@ function _serializeProductForRole(product, role, imageUrl) {
     factor_3: product.factor_3 === '' ? null : product.factor_3,
     currency: product.currency ||
       (userRole === 'salesperson'
-        ? _salesProperty_('DEFAULT_PRODUCT_CURRENCY')
+        ? (defaultProductCurrency === undefined
+          ? _salesProperty_('DEFAULT_PRODUCT_CURRENCY')
+          : defaultProductCurrency)
         : 'USD'),
     notes: product.notes || product.description || '',
     is_new: product.show_in_new === 'true' ||
@@ -842,6 +852,9 @@ function doPost(e) {
       case 'price_order':
       case 'updateOrderPricing':
         result = _handleUpdateOrderPricing(body, user);
+        break;
+      case 'order_accounting_invoice_update':
+        result = _handleUpdateAccountingInvoiceNumber(body, user);
         break;
       case 'order_create':
       case 'createOrder':
@@ -2201,6 +2214,9 @@ function _validateUnchangedOfferItem_(input, previous, partial) {
 
 function _handleProducts(body, user) {
   const q = String(body.q || '').toLowerCase();
+  const defaultProductCurrency = _normalizeRole(user.role) === 'salesperson'
+    ? _salesProperty_('DEFAULT_PRODUCT_CURRENCY')
+    : '';
   const products = _all('Products');
   const newProducts = _all('New_Products');
   const imageIndex = _all('Product_Images');
@@ -2237,7 +2253,8 @@ function _handleProducts(body, user) {
         const item = _serializeProductForRole(
           p,
           user.role,
-          imgData ? imgData.image_url : ''
+          imgData ? imgData.image_url : '',
+          defaultProductCurrency
         );
         const newProduct = newProductMap[String(p.code)];
         item.is_new = p.show_in_new === 'true' ||
@@ -2252,6 +2269,9 @@ function _handleProducts(body, user) {
 }
 
 function _handleNewProducts(body, user) {
+  const defaultProductCurrency = _normalizeRole(user.role) === 'salesperson'
+    ? _salesProperty_('DEFAULT_PRODUCT_CURRENCY')
+    : '';
   const catalogProducts = {};
   _all('Products').forEach(product => {
     catalogProducts[String(product.code)] = product;
@@ -2276,7 +2296,8 @@ function _handleNewProducts(body, user) {
       const product = _serializeProductForRole(
         mergedProduct,
         user.role,
-        imageUrl
+        imageUrl,
+        defaultProductCurrency
       );
       product.is_new = true;
       return product;
@@ -2327,6 +2348,9 @@ function _handleBestSellers(body, user) {
   if (!['admin', 'manager', 'accountant', 'warehouse', 'customer', 'salesperson'].includes(userRole)) {
     throw new Error('غير مصرح لك بعرض المنتجات');
   }
+  const defaultProductCurrency = userRole === 'salesperson'
+    ? _salesProperty_('DEFAULT_PRODUCT_CURRENCY')
+    : '';
 
   const imageMaps = _buildImageIndexMaps_(imageIndex);
 
@@ -2338,7 +2362,8 @@ function _handleBestSellers(body, user) {
       const safeProduct = _serializeProductForRole(
         product,
         userRole,
-        image ? image.image_url : product.image_url || ''
+        image ? image.image_url : product.image_url || '',
+        defaultProductCurrency
       );
       safeProduct.order_units = salesMap[code];
       return safeProduct;
@@ -2355,6 +2380,9 @@ function _handleBestSellers(body, user) {
 function _handleSearchProducts(body, user) {
   const query = String(body.q || body.query || '').toLowerCase();
   const category = body.category || body.group || '';
+  const defaultProductCurrency = _normalizeRole(user.role) === 'salesperson'
+    ? _salesProperty_('DEFAULT_PRODUCT_CURRENCY')
+    : '';
   const products = _all('Products');
   const imageIndex = _all('Product_Images');
   const imageMaps = _buildImageIndexMaps_(imageIndex);
@@ -2382,7 +2410,8 @@ function _handleSearchProducts(body, user) {
       const product = _serializeProductForRole(
         p,
         user.role,
-        imgData ? imgData.image_url : ''
+        imgData ? imgData.image_url : '',
+        defaultProductCurrency
       );
       product.image_name = p.image_name || p.code;
       product.image_id = imgData ? imgData.file_id : (p.image_id || '');
@@ -3329,7 +3358,11 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
     productsByCode[String(product.code)] = product;
   });
   const imageIndex = _all('Product_Images');
-  const shipment = _all('Shipments').find(s => String(s.order_id) === orderId);
+  const allOrderShipments = _all('Shipments')
+    .filter(s => String(s.order_id) === orderId);
+  const shipment = allOrderShipments.length
+    ? allOrderShipments[allOrderShipments.length - 1]
+    : null;
   const customer = _all('Customers').find(c => c.customer_id === order.customer_id);
 
   // بناء خريطة للبحث السريع عن الصور O(1)
@@ -3480,9 +3513,19 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
         currentOrderTotal = orderSum;
       } else if (isFinancialStatus) {
         // تضاف فقط الطلبات "المرحلة" للرصيد السابق
-        previousOrdersTotal += orderSum;
+        const savedTotal = Number(o.total);
+        const savedDiscount = Number(o.discount || 0);
+        previousOrdersTotal += o.total !== '' && o.total != null && Number.isFinite(savedTotal)
+          ? savedTotal
+          : _roundOrderAmount_(orderSum - (Number.isFinite(savedDiscount) ? savedDiscount : 0));
       }
     });
+    const savedCurrentTotal = Number(order.total);
+    if (order.total !== '' && order.total != null && Number.isFinite(savedCurrentTotal)) {
+      currentOrderTotal = savedCurrentTotal;
+    } else {
+      currentOrderTotal = _roundOrderAmount_(currentOrderTotal - Number(order.discount || 0));
+    }
     
     // الرصيد السابق = مجموع الفواتير السابقة - مجموع الدفعات السابقة + الرصيد الافتتاحي
     const openingBalance = Number(customer.opening_usd || 0);
@@ -3512,30 +3555,69 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
     note: order.note || '',
     accountant_notes: order.accountant_notes || '',
     accounting_invoice_no: order.accounting_invoice_no || '',
+    accounting_invoice_no_updated_by: order.accounting_invoice_no_updated_by || '',
+    accounting_invoice_no_updated_at: order.accounting_invoice_no_updated_at || '',
     created_at: order.created_at || '',
     updated_at: order.updated_at || '',
     created_by: order.created_by || '',
     items: detailedItems
   };
   if (userRole !== 'warehouse') {
+    orderResponse.total_amount = currentOrderTotal;
+    if (['admin', 'manager', 'accountant'].includes(userRole)) {
+      orderResponse.subtotal = Number(order.subtotal || 0);
+    }
     orderResponse.total_requested = detailedItems.reduce(
       (sum, item) => sum + ((item.price_offer || item.default_price || 0) * (item.quantity_requested || 0)),
       0
     );
-    orderResponse.total_final = currentOrderTotal ||
-      order.total_amount || order.total || order.grand_total || 0;
+    orderResponse.total_final = currentOrderTotal;
+    if (['admin', 'manager', 'accountant'].includes(userRole)) {
+      orderResponse.discount = Number(order.discount || 0);
+      orderResponse.discount_type = order.discount_type || '';
+      orderResponse.discount_input = order.discount_input || '';
+      orderResponse.discount_reason = order.discount_reason || '';
+    }
   } else {
     delete orderResponse.accountant_notes;
     delete orderResponse.accounting_invoice_no;
+    delete orderResponse.accounting_invoice_no_updated_by;
+    delete orderResponse.accounting_invoice_no_updated_at;
   }
   if (userRole === 'customer') {
     delete orderResponse.accountant_notes;
     delete orderResponse.accounting_invoice_no;
+    delete orderResponse.accounting_invoice_no_updated_by;
+    delete orderResponse.accounting_invoice_no_updated_at;
+    delete orderResponse.discount;
+    delete orderResponse.discount_type;
+    delete orderResponse.discount_input;
+    delete orderResponse.discount_reason;
+  }
+  if (!['admin', 'manager', 'accountant'].includes(userRole)) {
+    delete orderResponse.accounting_invoice_no;
+    delete orderResponse.accounting_invoice_no_updated_by;
+    delete orderResponse.accounting_invoice_no_updated_at;
+    delete orderResponse.discount;
+    delete orderResponse.discount_type;
+    delete orderResponse.discount_input;
+    delete orderResponse.discount_reason;
   }
 
-  const safeShipment = shipment && userRole === 'warehouse'
-    ? _withoutFinancialFields(shipment, userRole)
-    : shipment || null;
+  const orderMap = {};
+  orderMap[orderId] = order;
+  const invoiceMap = {};
+  const safeShipments = allOrderShipments.map(item => {
+    const enriched = _shipmentWithSummary_(item, orderMap, invoiceMap);
+    return userRole === 'warehouse'
+      ? _withoutFinancialFields(enriched, userRole)
+      : enriched;
+  });
+  const safeShipment = safeShipments.length
+    ? Object.assign({}, safeShipments[safeShipments.length - 1], {
+        all_shipments: safeShipments
+      })
+    : null;
 
   Logger.log(
     'order_details_ms=' + (Date.now() - startedAt) +
@@ -3962,6 +4044,20 @@ function _handleUpdateOrderStatus(body, user) {
     if (orderIndex === -1) throw new Error('الطلب غير موجود');
     const order = orders[orderIndex];
     _requireOrderOwnership(user, order);
+    if (String(newStatus).trim().toLowerCase() === 'approved') {
+      const accountingInvoiceNo = String(order.accounting_invoice_no || '')
+        .replace(/\s+/g, ' ').trim().toLowerCase();
+      if (accountingInvoiceNo && orders.some(item =>
+        String(item.order_id) !== String(orderId) &&
+        String(item.accounting_invoice_no || '').replace(/\s+/g, ' ').trim().toLowerCase() === accountingInvoiceNo
+      )) {
+        throw _apiError(
+          'DUPLICATE_ACCOUNTING_INVOICE',
+          'رقم الفاتورة المحاسبي مكرر؛ صححه قبل الاعتماد النهائي',
+          false
+        );
+      }
+    }
 
     // التحقق من صلاحية الانتقال
     _validateStateTransition(order.status, newStatus, user.role, {
@@ -4249,10 +4345,14 @@ function _dispatchStatusNotifications(order, newStatus, requestId) {
     );
   } else if (newStatus === 'shipping') {
     const customerUser = _all('Users').find(u => u.customer_id === order.customer_id);
-    const shipment = _all('Shipments').find(s => String(s.order_id) === String(order.order_id)) || {};
+    const orderShipments = _all('Shipments')
+      .filter(s => String(s.order_id) === String(order.order_id));
+    const shipment = orderShipments.length
+      ? orderShipments[orderShipments.length - 1]
+      : {};
     const shippingBody = 'تم شحن الطلب #' + (order.order_number || order.order_id) +
       (shipment.carrier ? ' عبر ' + shipment.carrier : '') +
-      (shipment.package_count ? '، عدد الطرود: ' + shipment.package_count : '') +
+      (shipment.package_count ? '، ' + _shipmentPackageSummary_(shipment) : '') +
       (shipment.province ? '، الوجهة: ' + shipment.province : '') +
       (shipment.tracking_no ? '، التتبع: ' + shipment.tracking_no : '') + '.';
     const metadata = {
@@ -4554,6 +4654,123 @@ function _handleDeleteOrder(body, user) {
   return { success: true };
 }
 
+function _roundOrderAmount_(amount) {
+  return Math.round((Number(amount) + Number.EPSILON) * 100) / 100;
+}
+
+function _parseOrderDiscount_(input, subtotal) {
+  const raw = String(input == null ? '' : input).trim();
+  if (!raw) {
+    return { type: 'none', input: '', amount: 0, netTotal: _roundOrderAmount_(subtotal) };
+  }
+  const digits = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4',
+    '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9'
+  };
+  let normalized = raw.replace(/[٠-٩۰-۹]/g, digit => digits[digit]);
+  normalized = normalized.replace(/٫/g, '.');
+  if (/\d\s+\d/.test(normalized)) {
+    throw _apiError('INVALID_DISCOUNT', 'المسافات داخل الرقم تجعل قيمة الحسم غامضة', false);
+  }
+  normalized = normalized.replace(/\s/g, '');
+  const percentMarks = (normalized.match(/[%٪]/g) || []).length;
+  const type = percentMarks ? 'percent' : 'amount';
+  if (percentMarks) {
+    if (percentMarks !== 1 || !/[%٪]$/.test(normalized)) {
+      throw _apiError('INVALID_DISCOUNT', 'صيغة الحسم غير واضحة؛ ضع % بعد النسبة', false);
+    }
+    normalized = normalized.slice(0, -1);
+  }
+  if (!/^\d+(?:[.,]\d{1,2})?$/.test(normalized) ||
+      (normalized.includes('.') && normalized.includes(','))) {
+    throw _apiError('INVALID_DISCOUNT', 'أدخل مبلغاً أو نسبة صحيحة؛ لا تستخدم فواصل آلاف أو قيمة سالبة', false);
+  }
+  const numeric = Number(normalized.replace(',', '.'));
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw _apiError('INVALID_DISCOUNT', 'قيمة الحسم يجب أن تكون رقماً غير سالب', false);
+  }
+  let amount;
+  if (type === 'percent') {
+    if (numeric > 100) {
+      throw _apiError('INVALID_DISCOUNT', 'نسبة الحسم يجب ألا تتجاوز 100%', false);
+    }
+    amount = _roundOrderAmount_(subtotal * numeric / 100);
+  } else {
+    amount = _roundOrderAmount_(numeric);
+    if (amount > _roundOrderAmount_(subtotal)) {
+      throw _apiError('INVALID_DISCOUNT', 'مبلغ الحسم لا يجوز أن يتجاوز إجمالي الفاتورة', false);
+    }
+  }
+  return {
+    type: type,
+    input: raw.replace(/\s+/g, ' ').trim(),
+    amount: amount,
+    netTotal: _roundOrderAmount_(subtotal - amount)
+  };
+}
+
+function _handleUpdateAccountingInvoiceNumber(body, user) {
+  _needRole(user, ['admin', 'manager', 'accountant']);
+  const orderId = resolveOrderIdentifier_(body);
+  if (!orderId) throw _apiError('ORDER_IDENTIFIER_REQUIRED', 'رقم الطلب مطلوب', false);
+  const input = String(body.accounting_invoice_no == null ? '' : body.accounting_invoice_no)
+    .replace(/\s+/g, ' ').trim();
+  if (input.length > 64) {
+    throw _apiError('ACCOUNTING_INVOICE_TOO_LONG', 'رقم الفاتورة المحاسبي يجب ألا يتجاوز 64 حرفاً', false);
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    throw _apiError('BUSY', 'النظام مشغول، يرجى المحاولة لاحقاً', true);
+  }
+  try {
+    _requireColumns_('Orders', [
+      'order_id', 'accounting_invoice_no', 'accounting_invoice_no_updated_by',
+      'accounting_invoice_no_updated_at', 'updated_at'
+    ]);
+    const orders = _all('Orders');
+    const order = orders.find(item => String(item.order_id) === String(orderId));
+    if (!order) throw _apiError('ORDER_NOT_FOUND', 'الطلب غير موجود', false);
+    const previous = String(order.accounting_invoice_no || '').replace(/\s+/g, ' ').trim();
+    const duplicate = input && orders.some(item =>
+      String(item.order_id) !== String(orderId) &&
+      String(item.accounting_invoice_no || '').replace(/\s+/g, ' ').trim().toLowerCase() === input.toLowerCase()
+    );
+    if (duplicate) {
+      throw _apiError('DUPLICATE_ACCOUNTING_INVOICE', 'رقم الفاتورة المحاسبي مستخدم في طلب آخر', false);
+    }
+    if (previous === input) return { success: true, accounting_invoice_no: input };
+
+    _requireColumns_('Audit_Log', ['log_id', 'user_id', 'action', 'entity', 'entity_id', 'details', 'created_at']);
+    const now = _now();
+    _updateByField('Orders', 'order_id', orderId, {
+      accounting_invoice_no: input,
+      accounting_invoice_no_updated_by: user.user_id || user.username || '',
+      accounting_invoice_no_updated_at: now,
+      updated_at: now
+    });
+    _add('Audit_Log', {
+      log_id: Utilities.getUuid(),
+      user_id: user.user_id,
+      action: 'ORDER_ACCOUNTING_INVOICE_UPDATED',
+      entity: 'Orders',
+      entity_id: orderId,
+      details: JSON.stringify({ previous: previous, new: input }),
+      created_at: now
+    });
+    return {
+      success: true,
+      accounting_invoice_no: input,
+      accounting_invoice_no_updated_by: user.user_id || user.username || '',
+      accounting_invoice_no_updated_at: now
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function _handleUpdateOrderPricing(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant']);
 
@@ -4586,6 +4803,14 @@ function _handleUpdateOrderPricing(body, user) {
       }
     }
     if (!currentOrderData) throw new Error('الطلب غير موجود');
+    _requireColumns_('Orders', [
+      'order_id', 'subtotal', 'total', 'discount', 'discount_type',
+      'discount_input', 'discount_reason', 'updated_at'
+    ]);
+    const previousDiscount = Number(currentOrderData.discount || 0);
+    if (!Number.isFinite(previousDiscount) || previousDiscount < 0) {
+      throw _apiError('INVALID_STORED_DISCOUNT', 'بيانات الحسم المحفوظة غير صالحة', false);
+    }
     if (body.last_updated_at && currentOrderData.updated_at) {
       const clientTs = new Date(body.last_updated_at).getTime();
       const serverTs = new Date(currentOrderData.updated_at).getTime();
@@ -4683,16 +4908,83 @@ function _handleUpdateOrderPricing(body, user) {
       }
     }
 
-    // معالجة التحديثات والإضافات
+    let calculatedSubtotal = 0;
+    const submittedCodesForTotals = new Set();
+    itemsUpdates.forEach(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw _apiError('INVALID_PRICING_ITEM', 'بيانات أحد البنود غير صالحة', false);
+      }
+      const code = String(item.productId || item.code || '').trim();
+      if (!code || submittedCodesForTotals.has(code)) {
+        throw _apiError('INVALID_PRICING_ITEM', 'رمز المنتج مطلوب ولا يجوز تكرار البند', false);
+      }
+      submittedCodesForTotals.add(code);
+      if (item.status === 'unavailable') return;
+      const rawQuantity = item.quantity_approved !== undefined ? item.quantity_approved : (item.quantity || 0);
+      const rawPrice = item.final_price !== undefined ? item.final_price : (item.price !== undefined ? item.price : (item.unitPrice || 0));
+      const quantity = Number(rawQuantity);
+      const price = Number(rawPrice);
+      if (!Number.isFinite(quantity) || quantity < 0 ||
+          !Number.isFinite(price) || price < 0) {
+        throw _apiError('INVALID_PRICING_ITEM', 'الكمية والسعر يجب أن يكونا رقمين غير سالبين', false);
+      }
+      calculatedSubtotal += _roundOrderAmount_(quantity * price);
+    });
+    calculatedSubtotal = _roundOrderAmount_(calculatedSubtotal);
+
+    const hasDiscountInput = Object.prototype.hasOwnProperty.call(body, 'discount_input');
+    const previousType = String(currentOrderData.discount_type || (previousDiscount > 0 ? 'amount' : 'none'));
+    const storedPreviousInput = String(currentOrderData.discount_input || '');
+    const previousInput = storedPreviousInput || (previousDiscount > 0 ? String(previousDiscount) : '');
+    let parsedDiscount;
+    if (hasDiscountInput) {
+      parsedDiscount = _parseOrderDiscount_(body.discount_input, calculatedSubtotal);
+    } else if (previousType === 'percent' && previousInput) {
+      parsedDiscount = _parseOrderDiscount_(previousInput, calculatedSubtotal);
+    } else {
+      parsedDiscount = {
+        type: previousDiscount > 0 ? 'amount' : 'none',
+        input: previousInput,
+        amount: _roundOrderAmount_(previousDiscount),
+        netTotal: _roundOrderAmount_(calculatedSubtotal - previousDiscount)
+      };
+      if (parsedDiscount.amount > calculatedSubtotal) {
+        throw _apiError('INVALID_DISCOUNT', 'مبلغ الحسم المحفوظ يتجاوز إجمالي الفاتورة', false);
+      }
+    }
+    const discountChanged =
+      Math.abs(previousDiscount - parsedDiscount.amount) >= 0.005 ||
+      previousType !== parsedDiscount.type ||
+      (storedPreviousInput !== '' && previousInput !== parsedDiscount.input);
+    if (discountChanged && String(body.discount_reason || '').trim().length < 3) {
+      throw _apiError('DISCOUNT_REASON_REQUIRED', 'أدخل سبباً مختصراً للحسم', false);
+    }
+    if (discountChanged &&
+        (currentOrderData.posting_id ||
+        ['approved', 'prepared', 'shipping', 'shipped', 'delivered', 'returned'].includes(
+          String(currentOrderData.status || '').toLowerCase()
+        ))) {
+      throw _apiError('DISCOUNT_LOCKED', 'لا يمكن تعديل الحسم بعد الاعتماد النهائي؛ يلزم إجراء تصحيح مالي مخوّل', false);
+    }
+    if (discountChanged) {
+      _requireColumns_('Audit_Log', ['log_id', 'user_id', 'action', 'entity', 'entity_id', 'details', 'created_at']);
+    }
+
+    // معالجة التحديثات والإضافات وحساب الإجمالي من البنود المحفوظة
     itemsUpdates.forEach(item => {
       const code = String(item.productId || item.code || '').trim();
       const isOfferItem = offerItems.has(code);
       const available = item.status !== 'unavailable';
       const status = available ? 'available' : 'unavailable';
-      const qty = isOfferItem && !available ? 0 : Number(item.quantity_approved !== undefined ? item.quantity_approved : (item.quantity || 0));
-      const price = isOfferItem && !available ? 0 : Number(item.final_price !== undefined ? item.final_price : (item.price || item.unitPrice || 0));
+      const rawQuantity = item.quantity_approved !== undefined ? item.quantity_approved : (item.quantity || 0);
+      const rawPrice = item.final_price !== undefined ? item.final_price : (item.price !== undefined ? item.price : (item.unitPrice || 0));
+      const qty = !available ? 0 : Number(rawQuantity);
+      const price = !available ? 0 : Number(rawPrice);
+      if (!Number.isFinite(qty) || qty < 0 || !Number.isFinite(price) || price < 0) {
+        throw _apiError('INVALID_PRICING_ITEM', 'الكمية والسعر يجب أن يكونا رقمين غير سالبين', false);
+      }
       const note = item.accountant_note || item.note || '';
-      const lineTotal = available ? qty * price : 0;
+      const lineTotal = available ? _roundOrderAmount_(qty * price) : 0;
       const unit = item.unit || '';
 
       // Additional tracking fields
@@ -4762,7 +5054,6 @@ function _handleUpdateOrderPricing(body, user) {
         });
       }
     });
-
     // حذف البنود التي لم تعد موجودة في القائمة المرسلة (الحذف من الأسفل للأعلى لتجنب إزاحة الفهرس)
     const newCodes = itemsUpdates.map(item => String(item.productId || item.code || '').trim());
     const rowsToDelete = [];
@@ -4779,8 +5070,12 @@ function _handleUpdateOrderPricing(body, user) {
     // 2. تحديث الطلب الرئيسي في ورقة Orders
     const updates = {
       'updated_at': _now(),
-      'subtotal': Number(body.subtotal || 0),
-      'total': Number(body.total || 0),
+      'subtotal': calculatedSubtotal,
+      'total': parsedDiscount.netTotal,
+      'discount_type': parsedDiscount.type,
+      'discount_input': parsedDiscount.input,
+      'discount': parsedDiscount.amount,
+      'discount_reason': discountChanged ? String(body.discount_reason || '').trim() : (currentOrderData.discount_reason || ''),
       'accountant_notes': body.notes || '',
       'priced_by': body.pricedBy || user.user_id,
       'priced_at': _now()
@@ -4791,6 +5086,33 @@ function _handleUpdateOrderPricing(body, user) {
       }
 
       _updateByField('Orders', 'order_id', orderId, updates);
+      if (discountChanged) {
+        _add('Audit_Log', {
+          log_id: Utilities.getUuid(),
+          user_id: user.user_id,
+          action: 'ORDER_DISCOUNT_UPDATED',
+          entity: 'Orders',
+          entity_id: orderId,
+          details: JSON.stringify({
+            previous: {
+              type: previousType,
+              input: previousInput,
+              amount: previousDiscount,
+              subtotal: Number(currentOrderData.subtotal || 0),
+              total: Number(currentOrderData.total || currentOrderData.subtotal || 0)
+            },
+            new: {
+              type: parsedDiscount.type,
+              input: parsedDiscount.input,
+              amount: parsedDiscount.amount,
+              subtotal: calculatedSubtotal,
+              total: parsedDiscount.netTotal
+            },
+            reason: String(body.discount_reason || '').trim()
+          }),
+          created_at: _now()
+        });
+      }
 
       // إشعار للزبون والإدارة بعد إرسال التسعير للمراجعة
       if (body.submitForCustomer === true) {
@@ -4859,6 +5181,12 @@ function _handleEditOrder(body, user) {
     ];
     if (!(customerCanEdit ? customerStatuses : financialStatuses).includes(status)) {
       throw _apiError('INVALID_STATE', 'لا يمكن تعديل الطلب في مرحلته الحالية', false);
+    }
+    if (!customerCanEdit && ['priced', 'customer_confirmed', 'approved'].includes(status)) {
+      _requireColumns_('Orders', [
+        'subtotal', 'total', 'discount', 'discount_type', 'discount_input',
+        'discount_reason'
+      ]);
     }
     const ss = _ss();
     const itemsSheet = ss.getSheetByName('Order_Items');
@@ -5000,7 +5328,7 @@ function _handleEditOrder(body, user) {
       }
       const approvedStage = ['priced', 'customer_confirmed', 'approved'].includes(status);
       const lineTotal = !customerCanEdit && approvedStage && lineStatus !== 'unavailable'
-        ? quantity * price
+        ? _roundOrderAmount_(quantity * price)
         : 0;
       return {
         itemId: itemId,
@@ -5179,14 +5507,46 @@ function _handleEditOrder(body, user) {
     if (customerCanEdit) {
       orderUpdates.subtotal = 0;
       orderUpdates.total = 0;
+      orderUpdates.discount = 0;
+      orderUpdates.discount_type = 'none';
+      orderUpdates.discount_input = '';
+      orderUpdates.discount_reason = '';
       orderUpdates.accountant_notes = '';
       orderUpdates.priced_by = '';
       orderUpdates.priced_at = '';
     } else if (['priced', 'customer_confirmed', 'approved'].includes(status)) {
-      const previousSubtotal = Number(order.subtotal || 0);
-      const previousTotal = Number(order.total || previousSubtotal);
+      subtotal = _roundOrderAmount_(subtotal);
+      const previousDiscount = Number(order.discount || 0);
+      const discountType = String(order.discount_type || (previousDiscount > 0 ? 'amount' : 'none'));
+      const discountInput = String(order.discount_input || (previousDiscount > 0 ? previousDiscount : ''));
+      const recalculatedDiscount = discountType === 'percent' && discountInput
+        ? _parseOrderDiscount_(discountInput, subtotal)
+        : _parseOrderDiscount_(discountType === 'none' ? '' : (discountInput || previousDiscount), subtotal);
       orderUpdates.subtotal = subtotal;
-      orderUpdates.total = previousTotal + subtotal - previousSubtotal;
+      orderUpdates.total = recalculatedDiscount.netTotal;
+      orderUpdates.discount = recalculatedDiscount.amount;
+      orderUpdates.discount_type = recalculatedDiscount.type;
+      orderUpdates.discount_input = recalculatedDiscount.input;
+      orderUpdates.discount_reason = order.discount_reason || '';
+      if (Math.abs(previousDiscount - recalculatedDiscount.amount) >= 0.005) {
+        _add('Audit_Log', {
+          log_id: Utilities.getUuid(),
+          user_id: user.user_id,
+          action: 'ORDER_DISCOUNT_RECALCULATED',
+          entity: 'Orders',
+          entity_id: orderId,
+          details: JSON.stringify({
+            previous: { type: discountType, input: discountInput, amount: previousDiscount },
+            new: {
+              type: recalculatedDiscount.type,
+              input: recalculatedDiscount.input,
+              amount: recalculatedDiscount.amount
+            },
+            reason: 'إعادة احتساب حسم الفاتورة بعد تعديل أصناف الطلب صراحةً'
+          }),
+          created_at: _now()
+        });
+      }
     }
     _updateByField('Orders', 'order_id', orderId, orderUpdates);
 
@@ -5372,8 +5732,6 @@ function _handleConfirmWarehousePrep(body, user) {
 
     const stockDeltaByCode = {};
     const packageNumbersSet = {};
-    const cartonNumbersSet = {};
-    const bagNumbersSet = {};
     const packageTypeByNumber = {};
     const validatedUpdates = orderItems.map(item => {
       const itemId = String(item.item_id || '');
@@ -5418,8 +5776,6 @@ function _handleConfirmWarehousePrep(body, user) {
             }
             packageTypeByNumber[key] = packageTypeKey;
             packageNumbersSet[key] = true;
-            if (packageType === 'carton') cartonNumbersSet[key] = true;
-            if (packageType === 'bag') bagNumbersSet[key] = true;
           }
         });
       }
@@ -5517,12 +5873,35 @@ function _handleConfirmWarehousePrep(body, user) {
       });
     });
 
+    const packageTypeCounts = {};
+    Object.keys(packageTypeByNumber).forEach(packageNumber => {
+      const typeKey = packageTypeByNumber[packageNumber];
+      packageTypeCounts[typeKey] = (packageTypeCounts[typeKey] || 0) + 1;
+    });
+    const packageTypes = Object.keys(packageTypeCounts).map(typeKey => {
+      if (typeKey === 'carton') {
+        return { type: 'carton', label: 'كرتونة', count: packageTypeCounts[typeKey] };
+      }
+      if (typeKey === 'bag') {
+        return { type: 'bag', label: 'كيس', count: packageTypeCounts[typeKey] };
+      }
+      return {
+        type: 'custom',
+        label: typeKey.substring('other:'.length),
+        count: packageTypeCounts[typeKey]
+      };
+    });
+    const packageSummary = _shipmentPackageSummary_({
+      package_count: Object.keys(packageNumbersSet).length,
+      package_types: packageTypes
+    });
     _add('Shipments', {
       shipment_id: 'SHP-' + Utilities.getUuid().substring(0, 8).toUpperCase(),
       order_id: orderId,
       package_count: Object.keys(packageNumbersSet).length,
-      carton_count: Object.keys(cartonNumbersSet).length,
-      bag_count: Object.keys(bagNumbersSet).length,
+      carton_count: packageTypeCounts.carton || 0,
+      bag_count: packageTypeCounts.bag || 0,
+      package_types_json: JSON.stringify(packageTypes),
       status: 'prepared',
       shipping_date: _now(),
       warehouse_note: String(body.warehouse_note || '').trim(),
@@ -5537,9 +5916,7 @@ function _handleConfirmWarehousePrep(body, user) {
     });
     const readyOrder = _all('Orders').find(o => String(o.order_id) === String(orderId));
     const preparedBody = 'تم تجهيز الطلب #' + (readyOrder ? (readyOrder.order_number || orderId) : orderId) +
-      '؛ الطرود: ' + Object.keys(packageNumbersSet).length +
-      '، الكراتين: ' + Object.keys(cartonNumbersSet).length +
-      '، الأكياس: ' + Object.keys(bagNumbersSet).length + '.';
+      '؛ ' + packageSummary + '.';
     const preparedMetadata = {
       event_type: 'warehouse.prepared',
       order_id: orderId,
@@ -5684,16 +6061,23 @@ function _handleGetCustomers(body, user) {
         const items = orderItems.filter(oi => oi.order_id === o.order_id);
         const currency = String(o.currency || 'USD').toUpperCase();
         const rate = Number(o.exchange_rate || o.rate_syp_per_usd || 0);
+        let orderValue = 0;
         items.forEach(item => {
           const price = item.final_price === '' || item.final_price == null
             ? item.display_price_snapshot : item.final_price;
           const quantity = item.quantity_approved === '' || item.quantity_approved == null
             ? item.quantity_requested : item.quantity_approved;
-          const value = Number(price || 0) * Number(quantity || 0);
-          if (currency === 'USD') totalOrdersValue += value;
-          else if (currency === 'SYP' && rate > 0) totalOrdersValue += value / rate;
-          else needsFinancialReview = true;
+          orderValue += Number(price || 0) * Number(quantity || 0);
         });
+        const savedTotal = Number(o.total);
+        if (o.total !== '' && o.total != null && Number.isFinite(savedTotal)) {
+          orderValue = savedTotal;
+        } else {
+          orderValue = _roundOrderAmount_(orderValue - Number(o.discount || 0));
+        }
+        if (currency === 'USD') totalOrdersValue += orderValue;
+        else if (currency === 'SYP' && rate > 0) totalOrdersValue += orderValue / rate;
+        else needsFinancialReview = true;
       });
       let salesInvoiceValue = 0;
       salesInvoices.filter(invoice =>
@@ -8338,6 +8722,18 @@ function _handleListSalesInvoicesV2(body, user) {
   }
   const customers = _all('Customers');
   const users = _all('Users');
+  const invoiceShipments = _all('Shipments');
+  const shipmentSummaryByInvoice = {};
+  invoiceShipments.forEach(shipment => {
+    const invoiceId = String(shipment.invoice_id || '');
+    if (!invoiceId) return;
+    const summary = _shipmentPackageSummary_(shipment);
+    if (summary === 'لا توجد طرود مسجلة') return;
+    if (!shipmentSummaryByInvoice[invoiceId]) {
+      shipmentSummaryByInvoice[invoiceId] = [];
+    }
+    shipmentSummaryByInvoice[invoiceId].push(summary);
+  });
   let invoices = _all('Sales_Invoices').filter(invoice =>
     role !== 'salesperson' || String(invoice.seller_id) === String(user.user_id)
   );
@@ -8393,6 +8789,8 @@ function _handleListSalesInvoicesV2(body, user) {
       const creator = users.find(row =>
         String(row.user_id) === String(invoice.created_by || invoice.seller_id)
       );
+      const shipmentSummary =
+        (shipmentSummaryByInvoice[String(invoice.invoice_id)] || []).join('؛ ');
       return Object.assign({}, invoice, summary, {
         customer_name: customer ? customer.full_name : invoice.customer_name,
         seller_name: seller ? seller.full_name : String(invoice.seller_id || ''),
@@ -8402,6 +8800,7 @@ function _handleListSalesInvoicesV2(body, user) {
         creator_role: _normalizeRole(
           invoice.created_by_role || (creator && creator.role) || ''
         ),
+        shipment_summary: shipmentSummary,
         items: _all('Sales_Invoice_Items').filter(item =>
           String(item.invoice_id) === String(invoice.invoice_id)
         ),
@@ -9105,59 +9504,284 @@ function _handleGetInventoryMovements(body, user) {
 // ============================================================
 // 12. الشحن (Shipments)
 // ============================================================
+function _shipmentInteger_(value, fieldName) {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  if (text === '') return 0;
+  const number = Number(text);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new Error('عدد الطرود في ' + fieldName + ' يجب أن يكون عددًا صحيحًا غير سالب');
+  }
+  return number;
+}
+
+function _shipmentPackageTypes_(shipment) {
+  let raw = shipment.package_types;
+  if (raw === undefined || raw === null || raw === '') {
+    raw = shipment.package_types_json;
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      raw = JSON.parse(raw);
+    } catch (error) {
+      throw new Error('بيانات أنواع الطرود المخزنة غير صالحة');
+    }
+  }
+  if (Array.isArray(raw)) {
+    if (raw.length > 20) throw new Error('عدد أنواع الطرود أكبر من الحد المسموح');
+    const parsedTypes = raw.map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error('بيانات أنواع الطرود غير صالحة');
+      }
+      const count = _shipmentInteger_(item.count, 'نوع الطرد');
+      const type = String(item.type || '').trim().toLowerCase();
+      if (!['carton', 'bag', 'custom', 'other'].includes(type)) {
+        throw new Error('نوع الطرد غير مدعوم');
+      }
+      const customType = type === 'custom' || type === 'other'
+        ? String(item.label || item.custom_type || '').trim()
+        : '';
+      if (count > 0 && (type === 'custom' || type === 'other') && !customType) {
+        throw new Error('اكتب اسم نوع الطرد المخصص');
+      }
+      if (customType.length > 40) throw new Error('اسم نوع الطرد طويل جدًا');
+      return {
+        type: type === 'other' ? 'custom' : type,
+        label: type === 'carton' ? 'كرتونة'
+          : type === 'bag' ? 'كيس' : customType,
+        count: count
+      };
+    }).filter(item => item.count > 0);
+    if (parsedTypes.length) return parsedTypes;
+  }
+
+  const cartonCount = _shipmentInteger_(shipment.carton_count, 'الكرتون');
+  const bagCount = _shipmentInteger_(shipment.bag_count, 'الأكياس');
+  const customCount = _shipmentInteger_(shipment.custom_count, 'النوع الآخر');
+  const customType = String(shipment.custom_type || '').trim();
+  if (customCount > 0 && !customType) throw new Error('اكتب اسم نوع الطرد المخصص');
+  const legacyTypes = [];
+  if (cartonCount > 0) legacyTypes.push({ type: 'carton', label: 'كرتونة', count: cartonCount });
+  if (bagCount > 0) legacyTypes.push({ type: 'bag', label: 'كيس', count: bagCount });
+  if (customCount > 0) legacyTypes.push({ type: 'custom', label: customType, count: customCount });
+  return legacyTypes;
+}
+
+function _shipmentPackageSummary_(shipment) {
+  const types = _shipmentPackageTypes_(shipment);
+  const typedTotal = types.reduce((sum, item) => sum + item.count, 0);
+  const legacyTotal = _shipmentInteger_(shipment.package_count, 'الإجمالي');
+  const total = typedTotal > 0 ? typedTotal : legacyTotal;
+  if (!total) return 'لا توجد طرود مسجلة';
+  const totalNoun = total === 1 ? 'طرد واحد'
+    : total === 2 ? 'طردان'
+      : total <= 10 ? 'طرود' : 'طردًا';
+  const detail = types.map(item => {
+    const count = item.count;
+    if (item.type === 'carton') {
+      return count + ' ' + (count === 1 ? 'كرتونة'
+        : count === 2 ? 'كرتونتان' : count <= 10 ? 'كراتين' : 'كرتونة');
+    }
+    if (item.type === 'bag') {
+      return count + ' ' + (count === 1 ? 'كيس'
+        : count === 2 ? 'كيسان' : count <= 10 ? 'أكياس' : 'كيس');
+    }
+    return item.label ? count + ' ' + item.label : '';
+  }).filter(Boolean);
+  return total + ' ' + totalNoun +
+    (detail.length ? ' (' + detail.join('، ') + ')' : '');
+}
+
+function _shipmentWithSummary_(shipment, orderById, invoiceById) {
+  const copy = Object.assign({}, shipment);
+  const types = _shipmentPackageTypes_(copy);
+  const typedTotal = types.reduce((sum, item) => sum + item.count, 0);
+  if (types.length) {
+    copy.package_types = types;
+    copy.package_count = typedTotal;
+  } else {
+    copy.package_types = [];
+  }
+  copy.package_summary = _shipmentPackageSummary_(copy);
+  const order = orderById[String(copy.order_id || '')];
+  const invoice = invoiceById[String(copy.invoice_id || '')];
+  if (order) {
+    copy.order_number = order.order_number || order.order_id || '';
+    copy.customer_name = order.customer_name || '';
+    copy.accounting_invoice_no = order.accounting_invoice_no || '';
+  } else if (invoice) {
+    copy.order_number = '';
+    copy.customer_name = invoice.customer_name || invoice.buyer_name || '';
+    copy.accounting_invoice_no = invoice.invoice_number || invoice.invoice_id || '';
+    copy.invoice_no = invoice.invoice_number || '';
+  }
+  return copy;
+}
+
 function _handleGetShipments(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant', 'warehouse']);
+  const orders = {};
+  _all('Orders').forEach(order => {
+    orders[String(order.order_id || '')] = order;
+  });
+  const invoices = {};
+  _all('Sales_Invoices').forEach(invoice => {
+    invoices[String(invoice.invoice_id || '')] = invoice;
+  });
   const shipments = _all('Shipments').reverse();
   const userRole = _normalizeRole(user.role);
   return {
-    shipments: shipments.map(s => _withoutFinancialFields(s, userRole))
+    shipments: shipments.map(s =>
+      _withoutFinancialFields(_shipmentWithSummary_(s, orders, invoices), userRole)
+    )
   };
 }
 
 function _handleShipment(body, user) {
   _needRole(user, ['admin', 'manager', 'accountant', 'warehouse']);
-  if (!body.order_id) throw new Error('رقم الطلب مطلوب');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('تعذر بدء حفظ الشحنة؛ حاول مجددًا');
+  try {
+    const shipmentId = String(body.shipment_id || body.shipmentId || '').trim();
+    const requestId = String(body.client_request_id || '').trim();
+    if (requestId) {
+      const previous = _all('Shipments').find(s =>
+        String(s.client_request_id || '') === requestId
+      );
+      if (previous && !shipmentId) {
+        return { success: true, shipment_id: previous.shipment_id, duplicate: true };
+      }
+    }
 
-  const shipmentId = 'SHP-' + Utilities.getUuid().substring(0, 8).toUpperCase();
-  _add('Shipments', {
-    shipment_id: shipmentId,
-    order_id: body.order_id,
-    delivery_method: body.delivery_method || 'شحن',
-    carrier: body.carrier || '',
-    tracking_no: body.tracking_no || '',
-    province: body.province || '',
-    shipping_cost_internal: Number(body.shipping_cost_internal || 0),
-    package_count: body.package_count || '',
-    carton_count: body.carton_count || '',
-    bag_count: body.bag_count || '',
-    shipping_date: body.shipping_date || _now(),
-    status: body.status || 'shipping',
-    note: body.note || '',
-  });
+    const identifier = String(body.order_id || body.orderId || body.invoice_id || '').trim();
+    if (!identifier) throw new Error('رقم الطلب أو الفاتورة مطلوب');
+    const existing = shipmentId
+      ? _all('Shipments').find(item => String(item.shipment_id) === shipmentId)
+      : null;
+    if (shipmentId && !existing) throw new Error('الشحنة غير موجودة');
+    const orders = _all('Orders');
+    const order = orders.find(item =>
+      [item.order_id, item.order_number, item.accounting_invoice_no]
+        .some(value => String(value || '').trim() === identifier)
+    ) || null;
+    const invoices = _all('Sales_Invoices');
+    const invoice = invoices.find(item =>
+      [item.invoice_id, item.invoice_number]
+        .some(value => String(value || '').trim() === identifier)
+    ) || null;
+    const retainedReference = existing &&
+      [existing.order_id, existing.invoice_id]
+        .some(value => String(value || '').trim() === identifier);
+    if (!order && !invoice && !retainedReference) {
+      throw new Error('الطلب أو الفاتورة غير موجودة');
+    }
+    if (existing) {
+      const status = String(existing.status || '').toLowerCase();
+      if (['delivered', 'closed', 'locked'].includes(status) &&
+          _normalizeRole(user.role) !== 'admin') {
+        throw new Error('لا يمكن تعديل شحنة مسلّمة أو مقفلة إلا للمدير العام');
+      }
+    }
 
-  const order = _all('Orders').find(o => String(o.order_id) === String(body.order_id));
-  if (order && String(body.status || 'shipping').toLowerCase() === 'shipping') {
-    _dispatchStatusNotifications(order, 'shipping');
+    const packageTypes = _shipmentPackageTypes_(body);
+    const packageCount = packageTypes.reduce((sum, item) => sum + item.count, 0) ||
+      _shipmentInteger_(body.package_count, 'الإجمالي');
+    if (!Number.isSafeInteger(packageCount)) throw new Error('إجمالي الطرود أكبر من الحد المسموح');
+    const weight = String(body.weight_kg === undefined ? '' : body.weight_kg).trim();
+    if (weight && (!Number.isFinite(Number(weight)) || Number(weight) <= 0)) {
+      throw new Error('الوزن يجب أن يكون رقمًا موجبًا');
+    }
+    const allowedStatuses = ['prepared', 'shipping', 'in_transit', 'delivered', 'returned', 'closed'];
+    const requestedStatus = String(body.status || (existing && existing.status) || 'shipping')
+      .trim().toLowerCase();
+    if (!allowedStatuses.includes(requestedStatus)) throw new Error('حالة الشحنة غير صالحة');
+    if (requestedStatus === 'closed' && _normalizeRole(user.role) !== 'admin') {
+      throw new Error('إقفال الشحنة متاح للمدير العام فقط');
+    }
+    const values = {
+      order_id: order ? order.order_id : (existing ? existing.order_id : ''),
+      invoice_id: invoice ? invoice.invoice_id : (existing ? existing.invoice_id || '' : ''),
+      delivery_method: String(body.delivery_method || (existing && existing.delivery_method) || 'شحن').trim(),
+      carrier: String(body.carrier || '').trim(),
+      tracking_no: String(body.tracking_no || '').trim(),
+      province: String(body.province || '').trim(),
+      package_count: packageCount,
+      carton_count: packageTypes.filter(item => item.type === 'carton')
+        .reduce((sum, item) => sum + item.count, 0),
+      bag_count: packageTypes.filter(item => item.type === 'bag')
+        .reduce((sum, item) => sum + item.count, 0),
+      package_types_json: JSON.stringify(packageTypes),
+      weight_kg: weight,
+      dimensions: String(body.dimensions || '').trim(),
+      shipping_date: String(body.shipping_date || (existing && existing.shipping_date) || _now()).trim(),
+      status: requestedStatus,
+      note: String(body.note || '').trim(),
+      warehouse_note: String(body.warehouse_note || (existing && existing.warehouse_note) || '').trim()
+    };
+    const shippingCost = Number(body.shipping_cost_internal || 0);
+    if (!Number.isFinite(shippingCost) || shippingCost < 0) {
+      throw new Error('تكلفة الشحن يجب أن تكون رقمًا غير سالب');
+    }
+    if (!Number.isFinite(Date.parse(values.shipping_date))) {
+      throw new Error('تاريخ الشحن غير صالح');
+    }
+    const maxLengths = {
+      delivery_method: 80, carrier: 120, tracking_no: 120, province: 120,
+      dimensions: 80, note: 1000, warehouse_note: 1000
+    };
+    Object.keys(maxLengths).forEach(field => {
+      if (values[field].length > maxLengths[field]) throw new Error('قيمة الحقل ' + field + ' طويلة جدًا');
+    });
+
+    let savedId = shipmentId;
+    if (existing) {
+      if (!_updateByField('Shipments', 'shipment_id', shipmentId, values)) {
+        throw new Error('تعذر تحديث الشحنة');
+      }
+    } else {
+      savedId = 'SHP-' + Utilities.getUuid().substring(0, 8).toUpperCase();
+      values.shipment_id = savedId;
+      values.client_request_id = requestId;
+      values.shipping_cost_internal = shippingCost;
+      _add('Shipments', values);
+    }
+
+    if (order && requestedStatus === 'shipping' &&
+        (!existing || String(existing.status || '').toLowerCase() !== 'shipping')) {
+      _dispatchStatusNotifications(order, 'shipping');
+    }
+    return { success: true, shipment_id: savedId };
+  } finally {
+    lock.releaseLock();
   }
-
-  return { success: true, shipment_id: shipmentId };
 }
 
 function _handleUpdateShipmentStatus(body, user) {
   _needRole(user, ['admin', 'manager', 'warehouse']);
   const shipmentId = body.shipmentId || body.shipment_id;
-  const newStatus = body.status;
-  if (!shipmentId || !newStatus) throw new Error('بيانات غير صالحة');
+  const newStatus = String(body.status || '').trim().toLowerCase();
+  const allowedStatuses = ['prepared', 'shipping', 'in_transit', 'delivered', 'returned', 'closed'];
+  if (!shipmentId || !allowedStatuses.includes(newStatus)) throw new Error('بيانات غير صالحة');
+  if (newStatus === 'closed' && _normalizeRole(user.role) !== 'admin') {
+    throw new Error('إقفال الشحنة متاح للمدير العام فقط');
+  }
 
   const ss = _ss();
   const sheet = ss.getSheetByName('Shipments');
+  if (!sheet) throw new Error('جدول الشحنات غير موجود');
   const data = sheet.getDataRange().getValues();
+  if (!data.length) throw new Error('جدول الشحنات غير مهيأ');
   const headers = data[0];
   const idIdx = headers.indexOf('shipment_id');
   const statusIdx = headers.indexOf('status');
+  if (idIdx < 0 || statusIdx < 0) throw new Error('أعمدة الشحنات غير مهيأة');
 
   for (let i = 1; i < data.length; i++) {
-    if (data[i][idIdx] === shipmentId) {
+    if (String(data[i][idIdx]) === String(shipmentId)) {
+      const oldStatus = String(data[i][statusIdx] || '').toLowerCase();
+      if (['delivered', 'closed', 'locked'].includes(oldStatus) &&
+          _normalizeRole(user.role) !== 'admin' && oldStatus !== newStatus) {
+        throw new Error('لا يمكن تعديل شحنة مسلّمة أو مقفلة إلا للمدير العام');
+      }
       sheet.getRange(i + 1, statusIdx + 1).setValue(newStatus);
       const shipment = Object.fromEntries(headers.map((header, index) => [header, data[i][index]]));
       const order = _all('Orders').find(o => String(o.order_id) === String(shipment.order_id));
@@ -10159,6 +10783,12 @@ function _handleGetCustomerStatement(body, user) {
         ? item.quantity_requested : item.quantity_approved;
       total += Number(price || 0) * Number(quantity || 0);
     });
+    const savedTotal = Number(o.total);
+    if (o.total !== '' && o.total != null && Number.isFinite(savedTotal)) {
+      total = savedTotal;
+    } else {
+      total = _roundOrderAmount_(total - Number(o.discount || 0));
+    }
     if (currency === 'SYP') {
       if (Number.isFinite(rate) && rate > 0) total /= rate;
       else {
@@ -10193,7 +10823,12 @@ function _handleGetCustomerStatement(body, user) {
       ref: o.order_id,
       debit: total,
       credit: 0,
-      note: o.note || ''
+      note: [
+        o.note || '',
+        Number(o.discount || 0) > 0
+          ? 'حسم الفاتورة: ' + Number(o.discount) + ' ' + (o.currency || 'USD')
+          : ''
+      ].filter(Boolean).join(' | ')
     });
   });
 

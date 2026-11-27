@@ -105,6 +105,30 @@ void main() {
     expect(provider.manualRefreshRemaining, greaterThan(Duration.zero));
     expect(provider.products.map((product) => product.code), visibleCodes);
   });
+
+  test('failed initial fetch exits loading state and exposes the error',
+      () async {
+    final failingProvider = ProductsProvider(
+      _FailingProductRepository(database),
+    );
+    expect(failingProvider.isInitialLoading, isTrue);
+
+    await failingProvider.fetchProducts();
+
+    expect(failingProvider.isLoading, isFalse);
+    expect(failingProvider.isInitialLoading, isFalse);
+    expect(failingProvider.errorMessage, contains('product service offline'));
+    expect(failingProvider.products, isEmpty);
+  });
+}
+
+class _FailingProductRepository extends ProductRepository {
+  _FailingProductRepository(super.db);
+
+  @override
+  Future<List<Product>> getProducts({bool forceRefresh = false}) {
+    throw StateError('product service offline');
+  }
 }
 
 Product _product(

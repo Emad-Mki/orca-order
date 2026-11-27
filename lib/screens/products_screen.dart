@@ -39,8 +39,12 @@ class _ProductsScreenState extends State<ProductsScreen>
     with SingleTickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  Timer? _searchDebounce;
   bool _throttleNoticeShown = false;
   String? _expandedCategory;
+  bool _showCategoryFilters = true;
+  bool _showScrollToTop = false;
+  double _lastScrollOffset = 0;
   late final AnimationController _entrance = AnimationController(
     vsync: this,
     duration: AppMotion.duration + AppMotion.staggerInterval * 3,
@@ -50,6 +54,7 @@ class _ProductsScreenState extends State<ProductsScreen>
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_handleProductScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final provider = context.read<ProductsProvider>();
@@ -63,10 +68,38 @@ class _ProductsScreenState extends State<ProductsScreen>
 
   @override
   void dispose() {
+    _scrollController.removeListener(_handleProductScroll);
+    _searchDebounce?.cancel();
     _searchController.dispose();
     _scrollController.dispose();
     _entrance.dispose();
     super.dispose();
+  }
+
+  void _handleProductScroll() {
+    if (!_scrollController.hasClients) return;
+    final offset = _scrollController.offset;
+    final atTop = offset <= 0;
+    final showScrollToTop = offset > 180;
+    final showCategoryFilters = atTop || offset < _lastScrollOffset;
+    _lastScrollOffset = offset;
+
+    if (_showScrollToTop != showScrollToTop ||
+        _showCategoryFilters != showCategoryFilters) {
+      setState(() {
+        _showScrollToTop = showScrollToTop;
+        _showCategoryFilters = showCategoryFilters;
+      });
+    }
+  }
+
+  Future<void> _scrollToTop() async {
+    if (!_scrollController.hasClients) return;
+    await _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   Future<void> _fetchProducts() async {
@@ -296,6 +329,29 @@ class _ProductsScreenState extends State<ProductsScreen>
                     ),
                   ),
                 ),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 160),
+                  child: _showScrollToTop
+                      ? IconButton(
+                          key: const ValueKey('products-scroll-to-top'),
+                          tooltip: 'العودة إلى أعلى القائمة',
+                          onPressed: _scrollToTop,
+                          icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                          iconSize: 20,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 36,
+                            height: 36,
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        )
+                      : const SizedBox(
+                          key: ValueKey('products-scroll-to-top-hidden'),
+                          width: 0,
+                          height: 36,
+                        ),
+                ),
+                const SizedBox(width: 4),
                 Text(
                   '${provider.products.length} منتج',
                   style: theme.textTheme.bodySmall?.copyWith(
@@ -313,7 +369,15 @@ class _ProductsScreenState extends State<ProductsScreen>
                     'ابحث عن المنتج بالاسم أو الرمز أو رقم OEM.',
                     TextField(
                       controller: _searchController,
-                      onChanged: provider.setSearchQuery,
+                      onChanged: (value) {
+                        _searchDebounce?.cancel();
+                        _searchDebounce = Timer(
+                          const Duration(milliseconds: 220),
+                          () {
+                            if (mounted) provider.setSearchQuery(value);
+                          },
+                        );
+                      },
                       textInputAction: TextInputAction.search,
                       decoration: InputDecoration(
                         hintText: 'ابحث بالاسم أو الرمز أو OEM',
@@ -324,6 +388,7 @@ class _ProductsScreenState extends State<ProductsScreen>
                                 tooltip: 'مسح البحث',
                                 icon: const Icon(Icons.close_rounded),
                                 onPressed: () {
+                                  _searchDebounce?.cancel();
                                   _searchController.clear();
                                   provider.setSearchQuery('');
                                 },
@@ -353,27 +418,45 @@ class _ProductsScreenState extends State<ProductsScreen>
                     _viewModeToggle(provider)),
                 const SizedBox(width: 4),
                 target(
-                    2,
-                    'رتّب النتائج بالاسم أو الخيارات المتاحة لحسابك.',
-                    IconButton.filledTonal(
-                      tooltip: 'ترتيب المنتجات',
-                      onPressed: () =>
-                          _showSortBottomSheet(provider, canViewPrices),
-                      icon: const Icon(Icons.sort_rounded),
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(48, 48),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                  2,
+                  'رتّب النتائج بالاسم أو الخيارات المتاحة لحسابك.',
+                  IconButton.filledTonal(
+                    tooltip: 'ترتيب المنتجات',
+                    onPressed: () =>
+                        _showSortBottomSheet(provider, canViewPrices),
+                    icon: const Icon(Icons.sort_rounded),
+                    iconSize: 20,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    style: IconButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    )),
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 10),
-            target(
-                3,
-                'اختر مجموعة لتضييق النتائج، ثم افتح المنتج للاطلاع عليه وإضافته للطلب.',
-                _buildCategoryFilters(provider, expandedCategory)),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeInOut,
+              alignment: Alignment.topCenter,
+              child: _showCategoryFilters
+                  ? target(
+                      3,
+                      'اختر مجموعة لتضييق النتائج، ثم افتح المنتج للاطلاع عليه وإضافته للطلب.',
+                      _buildCategoryFilters(provider, expandedCategory),
+                    )
+                  : const SizedBox(
+                      width: double.infinity,
+                      height: 0,
+                    ),
+            ),
             if (activeFilters.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -424,10 +507,6 @@ class _ProductsScreenState extends State<ProductsScreen>
   Widget _viewModeToggle(ProductsProvider provider) {
     return SegmentedButton<ProductViewMode>(
       showSelectedIcon: false,
-      style: SegmentedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        visualDensity: VisualDensity.compact,
-      ),
       segments: const [
         ButtonSegment(
           value: ProductViewMode.grid,
@@ -441,6 +520,11 @@ class _ProductsScreenState extends State<ProductsScreen>
         ),
       ],
       selected: {provider.viewMode},
+      style: SegmentedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
       onSelectionChanged: (selection) {
         unawaited(_changeViewMode(provider, selection.first));
       },
@@ -456,15 +540,19 @@ class _ProductsScreenState extends State<ProductsScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          height: 44,
+          height: 36,
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
               Padding(
-                padding: const EdgeInsetsDirectional.only(end: 8),
+                padding: const EdgeInsetsDirectional.only(end: 4),
                 child: ChoiceChip(
                   label: const Text('الكل'),
                   selected: provider.selectedCategory == null,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
                   onSelected: (_) {
                     provider.selectCategory(null);
                     setState(() => _expandedCategory = null);
@@ -473,13 +561,17 @@ class _ProductsScreenState extends State<ProductsScreen>
               ),
               for (final category in provider.categories)
                 Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 8),
+                  padding: const EdgeInsetsDirectional.only(end: 4),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       ChoiceChip(
                         label: Text(category),
                         selected: provider.selectedCategory == category,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
                         onSelected: (_) {
                           provider.selectCategory(category);
                           setState(() => _expandedCategory = category);
@@ -491,6 +583,11 @@ class _ProductsScreenState extends State<ProductsScreen>
                               ? 'طي المجموعات الفرعية'
                               : 'عرض المجموعات الفرعية',
                           visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 32,
+                            height: 32,
+                          ),
+                          padding: EdgeInsets.zero,
                           onPressed: () => setState(() {
                             _expandedCategory =
                                 expandedCategory == category ? null : category;
@@ -517,25 +614,33 @@ class _ProductsScreenState extends State<ProductsScreen>
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: SizedBox(
-              height: 40,
+              height: 34,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
                   Padding(
-                    padding: const EdgeInsetsDirectional.only(end: 8),
+                    padding: const EdgeInsetsDirectional.only(end: 4),
                     child: ChoiceChip(
                       label: const Text('كل المجموعة'),
                       selected: provider.selectedSubGroup == null,
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
                       onSelected: (_) => provider.selectSubGroup(null),
                     ),
                   ),
                   for (final subGroup
                       in provider.getSubGroupsForCategory(expandedCategory))
                     Padding(
-                      padding: const EdgeInsetsDirectional.only(end: 8),
+                      padding: const EdgeInsetsDirectional.only(end: 4),
                       child: ChoiceChip(
                         label: Text(subGroup),
                         selected: provider.selectedSubGroup == subGroup,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
                         onSelected: (_) {
                           provider.selectCategory(expandedCategory);
                           provider.selectSubGroup(subGroup);

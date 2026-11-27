@@ -3,16 +3,20 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../app_config.dart';
 import '../order_status_mapper.dart';
+import '../models/order.dart';
 import '../providers/order_detail_provider.dart';
 import '../providers/orders_provider.dart';
 import '../repositories/order_repository.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/invoice_product_images.dart';
+import '../services/warehouse_preparation_draft_store.dart';
 import '../utils/permissions.dart';
 import '../utils/order_edit_policy.dart';
+import '../utils/shipment_summary.dart';
 import 'widgets/order_items_list_view.dart';
 import 'widgets/order_actions_widget.dart';
 import 'widgets/order_shipping_widget.dart';
@@ -117,6 +121,32 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Future<void> _updateStatus(String newStatus,
       {String? reason, bool proxyForCustomer = false}) async {
     if (_provider == null) return;
+    final order = _provider!.currentOrder;
+    if (newStatus == 'approved' &&
+        order != null &&
+        _canEditAccountingInvoiceNo &&
+        (order.accountingInvoiceNo?.trim().isEmpty ?? true)) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('رقم الفاتورة المحاسبي غير مضاف'),
+          content: const Text(
+            'يمكنك الاعتماد الآن وإضافة الرقم لاحقاً، لكن يفضّل إدخاله قبل الاعتماد.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('العودة لإضافة الرقم'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('المتابعة دون رقم'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
     final success = await _provider!.updateStatus(
       newStatus,
       reason: reason,
@@ -223,221 +253,389 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   Future<void> _showWarehousePrepDialog(OrderDetailProvider provider) async {
     final items = provider.items;
+    final user = ApiService().currentUser ?? widget.session ?? {};
+    final userId = (user['user_id'] ??
+            user['id'] ??
+            user['customer_id'] ??
+            user['username'])
+        ?.toString()
+        .trim();
+    final draftScope = userId == null || userId.isEmpty
+        ? null
+        : '${AppConfig.environmentName}:${AppConfig.apiUrl}:$userId:'
+            '${user['role'] ?? _role}:${widget.orderId}';
+    const draftStore = WarehousePreparationDraftStore();
+    Map<String, dynamic>? savedDraft;
+    String? draftLoadError;
+    if (draftScope != null) {
+      try {
+        savedDraft = await draftStore.load(draftScope);
+      } catch (error) {
+        draftLoadError = error.toString();
+      }
+    }
+    if (!mounted) return;
+    final savedItems = <String, Map<String, dynamic>>{};
+    final savedRows = savedDraft?['items'];
+    if (savedRows is List) {
+      for (final row in savedRows) {
+        if (row is Map && row['item_id'] != null) {
+          savedItems[row['item_id'].toString()] =
+              Map<String, dynamic>.from(row);
+        }
+      }
+    }
+    String savedValue(String itemId, String key, String fallback) {
+      return savedItems[itemId]?[key]?.toString() ?? fallback;
+    }
+
     final quantityControllers = items
         .map((item) => TextEditingController(
-              text: (item.isUnavailable
-                      ? 0
-                      : item.quantityPrepared ??
-                          item.quantityApproved ??
-                          item.quantityRequested ??
-                          0)
-                  .toString(),
+              text: savedValue(
+                item.itemId.toString(),
+                'quantity_prepared',
+                (item.isUnavailable
+                        ? 0
+                        : item.quantityPrepared ??
+                            item.quantityApproved ??
+                            item.quantityRequested ??
+                            0)
+                    .toString(),
+              ),
             ))
         .toList();
     final packageNumberControllers = items
         .map((item) => TextEditingController(
-              text: item.warehousePackageNumbers ?? '',
+              text: savedValue(
+                  item.itemId.toString(),
+                  'warehouse_package_numbers',
+                  item.warehousePackageNumbers ?? ''),
             ))
         .toList();
     final noteControllers = items
-        .map((item) => TextEditingController(text: item.warehouseNote ?? ''))
+        .map((item) => TextEditingController(
+              text: savedValue(item.itemId.toString(), 'warehouse_note',
+                  item.warehouseNote ?? ''),
+            ))
         .toList();
     final customTypeControllers = items
         .map((item) => TextEditingController(
-              text: item.warehouseCustomPackageType ?? '',
+              text: savedValue(
+                  item.itemId.toString(),
+                  'warehouse_custom_package_type',
+                  item.warehouseCustomPackageType ?? ''),
             ))
         .toList();
     final packageTypes = items.map((item) {
+      final savedType =
+          savedItems[item.itemId.toString()]?['warehouse_package_type'];
+      if (['carton', 'bag', 'other'].contains(savedType)) {
+        return savedType as String;
+      }
       final type = item.warehousePackageType;
       return ['carton', 'bag', 'other'].contains(type) ? type : null;
     }).toList();
     final generalNoteController = TextEditingController(
-      text: provider.shipmentData?['warehouse_note']?.toString() ?? '',
+      text: savedDraft?['warehouse_note']?.toString() ??
+          provider.shipmentData?['warehouse_note']?.toString() ??
+          '',
     );
     var saving = false;
     String? errorText;
+    String? draftSaveError;
+    Timer? draftTimer;
+    var draftWrites = Future<void>.value();
+
+    Future<void> persistDraft() {
+      if (draftScope == null) return Future<void>.value();
+      final draft = <String, dynamic>{
+        'items': [
+          for (var index = 0; index < items.length; index++)
+            {
+              'item_id': items[index].itemId,
+              'quantity_prepared': quantityControllers[index].text.trim(),
+              'warehouse_package_numbers':
+                  packageNumberControllers[index].text.trim(),
+              'warehouse_package_type': packageTypes[index] ?? '',
+              'warehouse_custom_package_type':
+                  customTypeControllers[index].text.trim(),
+              'warehouse_note': noteControllers[index].text.trim(),
+            },
+        ],
+        'warehouse_note': generalNoteController.text.trim(),
+      };
+      final nextWrite =
+          draftWrites.then((_) => draftStore.save(draftScope, draft));
+      draftWrites = nextWrite;
+      return nextWrite;
+    }
 
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('تعبئة وتجهيز الفاتورة'),
-          content: SizedBox(
-            width: 560,
-            height: MediaQuery.of(context).size.height * 0.65,
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: items.length,
-                    itemBuilder: (context, index) {
-                      final item = items[index];
-                      final packageType = packageTypes[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              Text(
-                                'الكمية المعتمدة: ${item.quantityApproved ?? item.quantityRequested ?? 0} ${item.unit}',
-                              ),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: quantityControllers[index],
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                  decimal: true,
-                                ),
-                                decoration: InputDecoration(
-                                  labelText:
-                                      'الكمية التي تم تجهيزها (${item.unit})',
-                                ),
-                              ),
-                              TextField(
-                                controller: packageNumberControllers[index],
-                                decoration: const InputDecoration(
-                                  labelText: 'رقم الطرد (مثال: 1 أو 1-2)',
-                                ),
-                              ),
-                              DropdownButtonFormField<String>(
-                                initialValue: packageType,
-                                decoration: const InputDecoration(
-                                  labelText: 'نوع الطرد',
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 'carton',
-                                    child: Text('كرتونة'),
+        builder: (context, setDialogState) {
+          void scheduleDraftSave() {
+            if (draftScope == null) return;
+            draftTimer?.cancel();
+            draftTimer = Timer(const Duration(milliseconds: 350), () async {
+              try {
+                await persistDraft();
+                if (context.mounted) {
+                  setDialogState(() => draftSaveError = null);
+                }
+              } catch (error) {
+                if (context.mounted) {
+                  setDialogState(() => draftSaveError = error.toString());
+                }
+              }
+            });
+          }
+
+          return AlertDialog(
+            title: const Text('تعبئة وتجهيز الفاتورة'),
+            content: SizedBox(
+              width: 560,
+              height: MediaQuery.of(context).size.height * 0.65,
+              child: Column(
+                children: [
+                  if (savedDraft != null)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child:
+                          Text('تم استعادة مسودة التجهيز المحفوظة على الجهاز'),
+                    ),
+                  if (draftScope == null)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text('تعذر تحديد الحساب؛ لن تُحفظ المسودة محليًا'),
+                    ),
+                  if (draftLoadError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'تعذر قراءة المسودة المحلية: $draftLoadError',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error),
+                      ),
+                    ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: items.length,
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        final packageType = packageTypes[index];
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
                                   ),
-                                  DropdownMenuItem(
-                                    value: 'bag',
-                                    child: Text('كيس'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'other',
-                                    child: Text('أخرى'),
-                                  ),
-                                ],
-                                onChanged: (value) {
-                                  setDialogState(
-                                      () => packageTypes[index] = value);
-                                },
-                              ),
-                              if (packageType == 'other')
+                                ),
+                                Text(
+                                  'الكمية المعتمدة: ${item.quantityApproved ?? item.quantityRequested ?? 0} ${item.unit}',
+                                ),
+                                const SizedBox(height: 8),
                                 TextField(
-                                  controller: customTypeControllers[index],
-                                  decoration: const InputDecoration(
-                                    labelText: 'اكتب نوع الطرد',
+                                  controller: quantityControllers[index],
+                                  onChanged: (_) => scheduleDraftSave(),
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                                  decoration: InputDecoration(
+                                    labelText:
+                                        'الكمية التي تم تجهيزها (${item.unit})',
                                   ),
                                 ),
-                              TextField(
-                                controller: noteControllers[index],
-                                decoration: const InputDecoration(
-                                  labelText: 'ملاحظة على هذا البند',
+                                TextField(
+                                  controller: packageNumberControllers[index],
+                                  onChanged: (_) => scheduleDraftSave(),
+                                  decoration: const InputDecoration(
+                                    labelText: 'رقم الطرد (مثال: 1 أو 1-2)',
+                                  ),
                                 ),
-                                maxLines: 2,
-                              ),
-                            ],
+                                DropdownButtonFormField<String>(
+                                  initialValue: packageType,
+                                  decoration: const InputDecoration(
+                                    labelText: 'نوع الطرد',
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem(
+                                      value: 'carton',
+                                      child: Text('كرتونة'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 'bag',
+                                      child: Text('كيس'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 'other',
+                                      child: Text('أخرى'),
+                                    ),
+                                  ],
+                                  onChanged: (value) {
+                                    setDialogState(
+                                        () => packageTypes[index] = value);
+                                    scheduleDraftSave();
+                                  },
+                                ),
+                                if (packageType == 'other')
+                                  TextField(
+                                    controller: customTypeControllers[index],
+                                    onChanged: (_) => scheduleDraftSave(),
+                                    decoration: const InputDecoration(
+                                      labelText: 'اكتب نوع الطرد',
+                                    ),
+                                  ),
+                                TextField(
+                                  controller: noteControllers[index],
+                                  onChanged: (_) => scheduleDraftSave(),
+                                  decoration: const InputDecoration(
+                                    labelText: 'ملاحظة على هذا البند',
+                                  ),
+                                  maxLines: 2,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                TextField(
-                  controller: generalNoteController,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظات عامة للمستودع',
-                  ),
-                  maxLines: 2,
-                ),
-                if (errorText != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      errorText!,
-                      style:
-                          TextStyle(color: Theme.of(context).colorScheme.error),
+                        );
+                      },
                     ),
                   ),
-              ],
+                  TextField(
+                    controller: generalNoteController,
+                    onChanged: (_) => scheduleDraftSave(),
+                    decoration: const InputDecoration(
+                      labelText: 'ملاحظات عامة للمستودع',
+                    ),
+                    maxLines: 2,
+                  ),
+                  if (errorText != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        errorText!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error),
+                      ),
+                    ),
+                  if (draftSaveError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'تعذر حفظ المسودة المحلية: $draftSaveError',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error),
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed:
-                  saving ? null : () => Navigator.pop(dialogContext, false),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              onPressed: saving
-                  ? null
-                  : () async {
-                      final payload = <Map<String, dynamic>>[];
-                      for (var index = 0; index < items.length; index++) {
-                        final quantity = double.tryParse(
-                          quantityControllers[index].text.trim(),
-                        );
-                        if (quantity == null || quantity < 0) {
-                          setDialogState(() {
-                            errorText = 'تحقق من الكميات المدخلة لكل بند';
+            actions: [
+              TextButton(
+                onPressed:
+                    saving ? null : () => Navigator.pop(dialogContext, false),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        draftTimer?.cancel();
+                        final payload = <Map<String, dynamic>>[];
+                        for (var index = 0; index < items.length; index++) {
+                          final quantity = double.tryParse(
+                            quantityControllers[index].text.trim(),
+                          );
+                          if (quantity == null || quantity < 0) {
+                            setDialogState(() {
+                              errorText = 'تحقق من الكميات المدخلة لكل بند';
+                            });
+                            return;
+                          }
+                          payload.add({
+                            'item_id': items[index].itemId,
+                            'quantity_prepared': quantity,
+                            'warehouse_package_numbers':
+                                packageNumberControllers[index].text.trim(),
+                            'warehouse_package_type': packageTypes[index] ?? '',
+                            'warehouse_custom_package_type':
+                                customTypeControllers[index].text.trim(),
+                            'warehouse_note':
+                                noteControllers[index].text.trim(),
                           });
-                          return;
                         }
-                        payload.add({
-                          'item_id': items[index].itemId,
-                          'quantity_prepared': quantity,
-                          'warehouse_package_numbers':
-                              packageNumberControllers[index].text.trim(),
-                          'warehouse_package_type': packageTypes[index] ?? '',
-                          'warehouse_custom_package_type':
-                              customTypeControllers[index].text.trim(),
-                          'warehouse_note': noteControllers[index].text.trim(),
-                        });
-                      }
 
-                      setDialogState(() {
-                        saving = true;
-                        errorText = null;
-                      });
-                      final success = await provider.confirmWarehousePrep(
-                        items: payload,
-                        warehouseNote: generalNoteController.text.trim(),
-                      );
-                      if (!context.mounted) return;
-                      if (success) {
-                        Navigator.pop(dialogContext, true);
-                      } else {
                         setDialogState(() {
-                          saving = false;
-                          errorText = provider.errorMessage ??
-                              'تعذر حفظ بيانات التعبئة';
+                          saving = true;
+                          errorText = null;
                         });
-                      }
-                    },
-              child: saving
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('تم التجهيز'),
-            ),
-          ],
-        ),
+                        try {
+                          await persistDraft();
+                        } catch (error) {
+                          setDialogState(() {
+                            draftSaveError = error.toString();
+                          });
+                        }
+                        final success = await provider.confirmWarehousePrep(
+                          items: payload,
+                          warehouseNote: generalNoteController.text.trim(),
+                        );
+                        if (!context.mounted) return;
+                        if (success) {
+                          try {
+                            if (draftScope != null) {
+                              await draftStore.clear(draftScope);
+                            }
+                          } catch (error) {
+                            setDialogState(() {
+                              draftSaveError = error.toString();
+                            });
+                          }
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext, true);
+                        } else {
+                          setDialogState(() {
+                            saving = false;
+                            errorText = provider.errorMessage ??
+                                'تعذر حفظ بيانات التعبئة';
+                          });
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('تم التجهيز'),
+              ),
+            ],
+          );
+        },
       ),
     );
 
+    draftTimer?.cancel();
+    if (saved != true && draftScope != null) {
+      try {
+        await persistDraft();
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('تعذر حفظ المسودة المحلية: $error'),
+          ));
+        }
+      }
+    }
     for (final controller in [
       ...quantityControllers,
       ...packageNumberControllers,
@@ -698,20 +896,21 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   ),
                 ),
                 Expanded(
-                  child: provider.items.isEmpty
-                      ? const OrderEmptyStateWidget()
-                      : ListView(
-                          padding: const EdgeInsets.all(8),
-                          children: [
-                            OrderItemsListView(role: _role ?? 'user'),
-                            if (provider.shipmentData != null)
-                              OrderShippingWidget(
-                                  shipmentData: provider.shipmentData!,
-                                  role: _role ?? 'user'),
-                            if (canSeeFinancials && provider.items.isNotEmpty)
-                              _buildOrderFinancialSummary(provider),
-                          ],
-                        ),
+                  child: ListView(
+                    padding: const EdgeInsets.all(8),
+                    children: [
+                      if (provider.items.isEmpty)
+                        const OrderEmptyStateWidget()
+                      else
+                        OrderItemsListView(role: _role ?? 'user'),
+                      if (provider.shipmentData != null)
+                        OrderShippingWidget(
+                            shipmentData: provider.shipmentData!,
+                            role: _role ?? 'user'),
+                      if (canSeeFinancials)
+                        _buildOrderFinancialSummary(provider),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -757,6 +956,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final approvedTotal = provider.subtotal;
 
     final discount = provider.discount ?? 0.0;
+    final discountLabel = order.discountType == 'percent' &&
+            order.discountInput?.isNotEmpty == true
+        ? 'الحسم (${order.discountInput})'
+        : 'الحسم';
     final shipping = provider.shippingCost ?? 0.0;
     final finalAmount = order.totalAmount ?? provider.total;
     final hasHistoricalPrices = provider.items.every(
@@ -774,6 +977,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             const Text('الملخص المالي',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             const Divider(),
+            if (_canEditAccountingInvoiceNo)
+              _buildAccountingInvoiceNumber(order, provider),
+            if (_canEditAccountingInvoiceNo) const Divider(),
             if (!hasPricing && hasHistoricalPrices)
               _summaryRow('إجمالي الكميات المطلوبة:',
                   '${initialTotal.toStringAsFixed(2)} ${order.currency}'),
@@ -787,8 +993,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   '${approvedTotal.toStringAsFixed(2)} ${order.currency}',
                   color: Theme.of(context).colorScheme.primary),
             if (discount > 0)
-              _summaryRow(
-                  'الخصم:', '-${discount.toStringAsFixed(2)} ${order.currency}',
+              _summaryRow('$discountLabel:',
+                  '-${discount.toStringAsFixed(2)} ${order.currency}',
                   color: Theme.of(context).colorScheme.error),
             if (shipping > 0)
               _summaryRow('تكلفة الشحن:',
@@ -809,6 +1015,120 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         ),
       ),
     );
+  }
+
+  bool get _canEditAccountingInvoiceNo => {
+        AppRole.admin,
+        AppRole.manager,
+        AppRole.accountant,
+      }.contains(PermissionHelper.fromString(_role ?? ''));
+
+  Widget _buildAccountingInvoiceNumber(
+      Order order, OrderDetailProvider provider) {
+    final theme = Theme.of(context);
+    final number = order.accountingInvoiceNo?.trim() ?? '';
+    final updatedAt = order.accountingInvoiceNoUpdatedAt;
+    return Row(
+      children: [
+        const Icon(Icons.receipt_long_outlined),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('رقم الفاتورة الأصلي في البرنامج المحاسبي'),
+              SelectableText(
+                number.isEmpty ? 'غير مضاف' : number,
+                style: theme.textTheme.titleMedium,
+              ),
+              if (updatedAt != null)
+                Text(
+                  'آخر تحديث: ${DateFormat('yyyy/MM/dd HH:mm').format(updatedAt.toLocal())}'
+                  '${order.accountingInvoiceNoUpdatedBy?.isNotEmpty == true ? ' - ${order.accountingInvoiceNoUpdatedBy}' : ''}',
+                  style: theme.textTheme.bodySmall,
+                ),
+            ],
+          ),
+        ),
+        if (number.isNotEmpty)
+          IconButton(
+            tooltip: 'نسخ رقم الفاتورة',
+            icon: const Icon(Icons.copy),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: number));
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('تم نسخ رقم الفاتورة'),
+                ));
+              }
+            },
+          ),
+        IconButton(
+          tooltip: 'تعديل رقم الفاتورة',
+          icon: const Icon(Icons.edit_outlined),
+          onPressed: provider.isLoading
+              ? null
+              : () => _editAccountingInvoiceNo(order, provider),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _editAccountingInvoiceNo(
+      Order order, OrderDetailProvider provider) async {
+    final controller = TextEditingController(
+      text: order.accountingInvoiceNo ?? '',
+    );
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('رقم الفاتورة الأصلي'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 64,
+          decoration: const InputDecoration(
+            labelText: 'رقم الفاتورة في البرنامج المحاسبي',
+            helperText: 'اتركه فارغاً لإزالة الرقم',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    final invoiceNumber = value?.replaceAll(RegExp(r'\s+'), ' ').trim();
+    controller.dispose();
+    if (invoiceNumber == null || !mounted) return;
+    try {
+      final response = await ApiService().orders.updateAccountingInvoiceNumber(
+            orderId: order.orderId,
+            invoiceNumber: invoiceNumber,
+          );
+      if (response['ok'] != true && response['success'] != true) {
+        throw Exception(response['error'] ?? 'تعذر حفظ رقم الفاتورة');
+      }
+      await provider.fetchOrderDetails(order.orderId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم حفظ رقم الفاتورة المحاسبي'),
+        ));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('تعذر حفظ رقم الفاتورة: $error'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ));
+      }
+    }
   }
 
   Widget _summaryRow(String label, String value,
@@ -1026,10 +1346,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       'invoice_date': order.createdAt?.toIso8601String(),
       'customer_name': order.customerName,
       'currency': order.currency,
+      'subtotal': canSeeFinancials ? provider.subtotal : null,
       'discount': canSeeFinancials ? order.discount : null,
+      'discount_type': canSeeFinancials ? order.discountType : null,
+      'discount_input': canSeeFinancials ? order.discountInput : null,
       'shipping_cost': canSeeFinancials ? order.shippingCost : null,
       'net_total': canSeeFinancials ? order.totalAmount : null,
       'notes': order.note,
+      'shipment_summary': provider.shipmentData == null
+          ? ''
+          : ShipmentSummary.formatAll(provider.shipmentData!),
       'items': provider.items
           .map((item) => {
                 'code': item.code,

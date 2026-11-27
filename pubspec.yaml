@@ -27,6 +27,7 @@ dependencies:
   permission_handler: ^13.0.1
   crypto: ^3.0.6
   provider: ^6.1.1
+  share_plus: ^13.3.1
   intl: ^0.20.2
   drift: ^2.16.0
   sqlite3_flutter_libs: ^0.5.42

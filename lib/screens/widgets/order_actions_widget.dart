@@ -79,7 +79,11 @@ class OrderActionsWidget extends StatelessWidget {
           if (canPrepare && _isPreparableStatus(status))
             _buildActionButton(
               context,
-              status == 'approved' ? 'بدء التجهيز' : 'متابعة التعبئة',
+              userRole == AppRole.warehouse
+                  ? 'متابعة التعبئة'
+                  : status == 'approved'
+                      ? 'بدء التجهيز'
+                      : 'متابعة التعبئة',
               Icons.inventory_2,
               Colors.orange,
               isBusy ? null : onPrepare,

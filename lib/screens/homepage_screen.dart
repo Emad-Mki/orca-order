@@ -302,15 +302,22 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           (s) => DashboardScreen(session: s, userRole: userRole)),
       _NavConfig(
         3,
-        isSalesperson ? Icons.bar_chart : Icons.account_balance_wallet,
-        isSalesperson ? 'مبيعاتي' : 'كشف حساب',
+        isSalesperson
+            ? Icons.bar_chart
+            : userRole == AppRole.warehouse
+                ? Icons.local_shipping
+                : Icons.account_balance_wallet,
+        isSalesperson
+            ? 'مبيعاتي'
+            : userRole == AppRole.warehouse
+                ? 'الشحن'
+                : 'كشف حساب',
         (s) {
           if (isSalesperson) {
             return SalesInvoicesScreen(session: s);
           }
           if (userRole == AppRole.warehouse) {
-            return const Scaffold(
-                body: Center(child: Text('غير متاح لأمين المستودع')));
+            return const ShippingScreen();
           }
           return const CustomerStatementScreen();
         },
@@ -680,7 +687,8 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
           ),
         ),
-        floatingActionButton: selectedIndex == 2
+        floatingActionButton: selectedIndex == 2 &&
+                userRole != AppRole.warehouse
             ? Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,

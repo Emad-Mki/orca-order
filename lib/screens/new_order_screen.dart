@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:math';
 import 'package:provider/provider.dart';
@@ -10,6 +11,7 @@ import '../providers/customer_provider.dart';
 import '../services/api_service.dart';
 import '../utils/permissions.dart';
 import '../utils/guarded_navigation.dart';
+import '../utils/smart_product_search.dart';
 import 'product_detail_screen.dart';
 import '../widgets/widgets.dart';
 
@@ -40,6 +42,9 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   final List<OrderItem> _cart = [];
   List<Product> _allProducts = [];
   List<Product> _filteredProducts = [];
+  SmartProductSearchIndex _productSearchIndex =
+      SmartProductSearchIndex(const []);
+  Timer? _searchDebounce;
   bool _loading = true;
   bool _isSubmitting = false;
   bool _allowPop = false;
@@ -80,6 +85,7 @@ class _NewOrderScreenState extends State<NewOrderScreen>
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _orderNoteCtrl.dispose();
     _searchCtrl.dispose();
@@ -615,15 +621,12 @@ class _NewOrderScreenState extends State<NewOrderScreen>
   }
 
   void _filterProducts() {
-    setState(() {
-      final query = _searchCtrl.text.toLowerCase();
-      _filteredProducts = _allProducts
-          .where((p) =>
-              p.name.toLowerCase().contains(query) ||
-              p.code.toLowerCase().contains(query) ||
-              p.oem.toLowerCase().contains(query) ||
-              p.category.toLowerCase().contains(query))
-          .toList();
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+      setState(() {
+        _filteredProducts = _productSearchIndex.search(_searchCtrl.text);
+      });
     });
   }
 
@@ -639,7 +642,8 @@ class _NewOrderScreenState extends State<NewOrderScreen>
       if (mounted) {
         setState(() {
           _allProducts = productsProvider.allProducts;
-          _filteredProducts = _allProducts;
+          _productSearchIndex = SmartProductSearchIndex(_allProducts);
+          _filteredProducts = _productSearchIndex.search(_searchCtrl.text);
           _loading = false;
         });
         if (forceRefresh && productsProvider.lastRefreshThrottled) {

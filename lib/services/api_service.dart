@@ -334,6 +334,8 @@ class OrderApiService {
     required List<Map<String, dynamic>> items,
     double? subtotal,
     double? total,
+    String? discountInput,
+    String? discountReason,
     String? notes,
     bool submitForCustomer = false,
     Map<String, dynamic>? extraParams,
@@ -344,11 +346,24 @@ class OrderApiService {
       'items': items,
       'subtotal': subtotal,
       'total': total,
+      if (discountInput != null) 'discount_input': discountInput,
+      if (discountReason != null) 'discount_reason': discountReason,
       'notes': notes,
       'submitForCustomer': submitForCustomer,
       if (extraParams != null) ...extraParams,
     };
     return _apiService.post(payload);
+  }
+
+  Future<Map<String, dynamic>> updateAccountingInvoiceNumber({
+    required String orderId,
+    required String invoiceNumber,
+  }) {
+    return _apiService.post({
+      'action': 'order_accounting_invoice_update',
+      'order_id': orderId,
+      'accounting_invoice_no': invoiceNumber,
+    });
   }
 
   /// إلغاء طلب

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../models/product.dart';
@@ -6,6 +7,7 @@ import '../widgets/product_skeleton_widget.dart';
 import 'inventory_movements_screen.dart';
 import 'homepage_screen.dart';
 import '../utils/permissions.dart';
+import '../utils/smart_product_search.dart';
 
 class InventoryScreen extends StatefulWidget {
   final Map<String, dynamic> session;
@@ -17,6 +19,9 @@ class InventoryScreen extends StatefulWidget {
 
 class _InventoryScreenState extends State<InventoryScreen> {
   List<Product> _products = [];
+  SmartProductSearchIndex _searchIndex = SmartProductSearchIndex(const []);
+  Timer? _searchDebounce;
+  String _query = '';
   bool _isLoading = true;
   String? _error;
   final _search = TextEditingController();
@@ -61,6 +66,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       if (mounted) {
         setState(() {
           _products = products;
+          _searchIndex = SmartProductSearchIndex(products);
           if (!products.any((p) => p.group == _group)) _group = null;
           if (!products.any((p) =>
               (_group == null || p.group == _group) &&
@@ -82,6 +88,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -285,19 +292,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
         .toSet()
         .toList()
       ..sort();
-    final query = _search.text.trim().toLowerCase();
-    final filtered = _products.where((p) {
-      final matchesQuery = query.isEmpty ||
-          p.name.toLowerCase().contains(query) ||
-          p.code.toLowerCase().contains(query) ||
-          p.oem.toLowerCase().contains(query);
+    final filtered = _searchIndex.search(_query).where((p) {
       final quantity = p.stockQuantity ?? p.quantity;
       final matchesStock = _stockFilter == 'all' ||
           (_stockFilter == 'positive' && quantity > 0) ||
           (_stockFilter == 'zero' && quantity == 0) ||
           (_stockFilter == 'negative' && quantity < 0);
-      return matchesQuery &&
-          matchesStock &&
+      return matchesStock &&
           (_group == null || p.group == _group) &&
           (_subGroup == null || p.subGroup == _subGroup);
     }).toList();
@@ -317,7 +318,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       prefixIcon: Icon(Icons.search),
                       border: OutlineInputBorder(),
                     ),
-                    onChanged: (_) => setState(() {}),
+                    onChanged: (value) {
+                      _searchDebounce?.cancel();
+                      _searchDebounce = Timer(
+                        const Duration(milliseconds: 220),
+                        () {
+                          if (mounted) setState(() => _query = value);
+                        },
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(width: 8),
