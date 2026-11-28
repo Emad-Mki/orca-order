@@ -81,6 +81,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     var role = user?['role']?.toString() ?? 'customer';
     var customerType = user?['customer_type']?.toString() ?? '';
     var active = user?['status'] == 'active';
+    var canViewWholesalePrice =
+        user?['can_view_wholesale_price'] == true ||
+            user?['can_view_wholesale_price'] == 1 ||
+            user?['can_view_wholesale_price'] == '1' ||
+            user?['can_view_wholesale_price'] == 'true';
+    final canManageWholesalePrice =
+        widget.session['role']?.toString().toLowerCase() == 'admin';
     var saving = false;
 
     await showDialog<void>(
@@ -180,6 +187,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     value: active,
                     onChanged: (value) => setDialogState(() => active = value),
                   ),
+                  if (canManageWholesalePrice)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('السماح برؤية سعر الجملة'),
+                      subtitle: const Text(
+                        'يظهر سعر الجملة في بطاقة المنتج لهذا الحساب.',
+                      ),
+                      value: canViewWholesalePrice,
+                      onChanged: (value) => setDialogState(
+                        () => canViewWholesalePrice = value,
+                      ),
+                    ),
                   if (user == null)
                     const Align(
                       alignment: AlignmentDirectional.centerStart,
@@ -231,6 +250,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                           'customer_type':
                               role == 'customer' ? customerType : '',
                           'status': active ? 'active' : 'inactive',
+                          if (canManageWholesalePrice)
+                            'can_view_wholesale_price': canViewWholesalePrice,
                           if (role == 'salesperson')
                             'cash_box_id': cashBox.text.trim(),
                         });

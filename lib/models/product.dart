@@ -14,6 +14,10 @@ class Product {
   final bool priceConfigured;
   final double? price2;
   final double? price3;
+  final double? wholesalePrice;
+  final double? quantityPrice;
+  final double? quantityThreshold;
+  final String? quantityUnit;
   final double? offerPrice;
   final double quantity;
   final double? stockQuantity;
@@ -51,6 +55,10 @@ class Product {
     this.priceConfigured = true,
     this.price2,
     this.price3,
+    this.wholesalePrice,
+    this.quantityPrice,
+    this.quantityThreshold,
+    this.quantityUnit,
     this.offerPrice,
     this.quantity = 0,
     this.stockQuantity,
@@ -146,6 +154,10 @@ class Product {
           : parseOptionalPrice(priceValue) != null,
       price2: parseOptionalPrice(json['price_2']),
       price3: parseOptionalPrice(json['price_3']),
+      wholesalePrice: parseOptionalPrice(json['wholesale_price']),
+      quantityPrice: parseOptionalPrice(json['quantity_price']),
+      quantityThreshold: _parseOptionalNumber(json['quantity_threshold']),
+      quantityUnit: cleanUnit(json['quantity_unit']),
       offerPrice:
           json['offer_price'] != null ? _parsePrice(json['offer_price']) : null,
       quantity: (json['quantity'] ?? 0).toDouble(),
@@ -190,11 +202,55 @@ class Product {
   }
 
   double? priceForUnit(String selectedUnit) {
-    if (selectedUnit == unit) return priceConfigured ? price : null;
-    if (selectedUnit == unit2) return price2;
-    if (selectedUnit == unit3) return price3;
-    return null;
+    return _priceForUnit(priceConfigured ? price : null, selectedUnit);
   }
+
+  double? wholesalePriceForUnit(String selectedUnit) =>
+      _priceForUnit(wholesalePrice, selectedUnit);
+
+  double? quantityPriceForUnit(String selectedUnit) =>
+      _priceForUnit(quantityPrice, selectedUnit);
+
+  Product withoutRestrictedPricing() => Product.fromJson({
+        ...toJson(),
+        'wholesale_price': null,
+        'quantity_price': null,
+        'quantity_threshold': null,
+        'quantity_unit': null,
+      });
+
+  double? _priceForUnit(double? basePrice, String selectedUnit) {
+    if (basePrice == null) return null;
+    final factor = factorForUnit(selectedUnit);
+    if (factor == null || !factor.isFinite || factor <= 0) return null;
+    return roundProductPrice(basePrice * factor);
+  }
+
+  double? get quantityThresholdInBaseUnits {
+    final threshold = quantityThreshold;
+    if (threshold == null || !threshold.isFinite || threshold <= 0) return null;
+    final factor = factorForUnit(quantityUnit ?? unit);
+    if (factor == null || !factor.isFinite || factor <= 0) return null;
+    return roundProductPrice(threshold * factor);
+  }
+
+  bool qualifiesForQuantityPrice({
+    required double quantity,
+    required String selectedUnit,
+  }) {
+    final threshold = quantityThresholdInBaseUnits;
+    final factor = factorForUnit(selectedUnit);
+    if (threshold == null ||
+        factor == null ||
+        !factor.isFinite ||
+        factor <= 0) {
+      return false;
+    }
+    return quantity.isFinite && quantity > 0 && quantity * factor >= threshold;
+  }
+
+  static double roundProductPrice(double value) =>
+      (value * 100).roundToDouble() / 100;
 
   double? factorForUnit(String selectedUnit) {
     if (selectedUnit == unit) return 1;
@@ -259,6 +315,10 @@ class Product {
         'price_configured': priceConfigured,
         'price_2': price2,
         'price_3': price3,
+        'wholesale_price': wholesalePrice,
+        'quantity_price': quantityPrice,
+        'quantity_threshold': quantityThreshold,
+        'quantity_unit': quantityUnit,
         'offer_price': offerPrice,
         'quantity': quantity,
         'stock_quantity': stockQuantity,

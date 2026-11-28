@@ -78,6 +78,27 @@ void main() {
     expect(provider.orders.single.status, 'cancelled');
   });
 
+  test('sync after accounting invoice update refreshes the list value',
+      () async {
+    final repository = _FakeOrderRepository((call) async => [
+          _order(
+            '1',
+            'priced',
+            DateTime(2026, 1, 1),
+          ).copyWith(
+            accountingInvoiceNo: call == 1 ? null : 'INV-1042',
+          ),
+        ]);
+    final provider = OrdersProvider(repository);
+
+    await provider.fetchOrders();
+    expect(provider.orders.single.accountingInvoiceNo, isNull);
+    await provider.syncAfterMutation();
+
+    expect(repository.fetchCount, 2);
+    expect(provider.orders.single.accountingInvoiceNo, 'INV-1042');
+  });
+
   test('search, status, date range, and sort apply to the same full list',
       () async {
     final repository = _FakeOrderRepository((_) async => [

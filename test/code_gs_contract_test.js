@@ -1777,8 +1777,17 @@ test('sales invoice create is role-checked, globally numbered and idempotent', (
       { customer_id: 'customer-1', full_name: 'Customer', status: 'active' },
     ],
     Products: [
-      { code: 'P-1', name: 'Part', unit_1: 'piece', currency: 'USD', quantity: 50 },
+      {
+        code: 'P-1',
+        name: 'Part',
+        unit_1: 'piece',
+        unit_2: 'box',
+        factor_2: 2,
+        currency: 'USD',
+        quantity: 50,
+      },
     ],
+    Customer_Product_Prices: [],
     Sales_Invoices: [],
     Sales_Invoice_Items: [],
     Sales_Invoice_Audit: [],
@@ -1788,6 +1797,9 @@ test('sales invoice create is role-checked, globally numbered and idempotent', (
   };
   backend._all = name => tables[name] || [];
   backend._add = (name, row) => tables[name].push(row);
+  backend._saveCustomerPriceSuggestions_ = records => {
+    tables.Customer_Product_Prices.push(...records);
+  };
   backend._requireColumns_ = () => {};
   backend._setProductStockQuantity_ = (code, quantity) => {
     tables.Products.find(product => product.code === code).quantity = quantity;
@@ -1824,7 +1836,7 @@ test('sales invoice create is role-checked, globally numbered and idempotent', (
   const invoiceBody = {
     client_request_id: 'same-request-id-12345',
     customer_id: 'customer-1',
-    items: [{ code: 'P-1', quantity: 1, unit_price: 20 }],
+    items: [{ code: 'P-1', unit: 'box', quantity: 1, unit_price: 20 }],
     discount: 1,
     received_lines: receivedLines,
     refunded_lines: [{ method: 'cash_usd', amount: 1 }],
@@ -1843,6 +1855,11 @@ test('sales invoice create is role-checked, globally numbered and idempotent', (
   assert.equal(salespersonInvoice.net_paid_usd, 19);
   assert.equal(tables.Payments.length, 5);
   assert.equal(tables.Products[0].quantity, 49);
+  assert.equal(tables.Sales_Invoice_Items[0].unit, 'box');
+  assert.equal(tables.Customer_Product_Prices.length, 1);
+  assert.equal(tables.Customer_Product_Prices[0].unit_factor, 2);
+  assert.equal(tables.Customer_Product_Prices[0].unit_price, 20);
+  assert.equal(tables.Customer_Product_Prices[0].source_type, 'invoice');
 
   const duplicate = backend._handleCreateSalesInvoiceV2(
     invoiceBody,

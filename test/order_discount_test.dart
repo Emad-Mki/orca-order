@@ -25,6 +25,21 @@ void main() {
     );
   });
 
+  test('applies both discount forms to the sum of multiple invoice lines', () {
+    final subtotal = (2 * 20.0) + (3 * 10.0);
+    final percentage = calculateOrderDiscount(
+      input: '10%',
+      subtotal: subtotal,
+    );
+    final amount = calculateOrderDiscount(
+      input: '5.50',
+      subtotal: subtotal,
+    );
+
+    expect(percentage.netTotal, 63);
+    expect(amount.netTotal, 64.5);
+  });
+
   test('rounds using invoice precision and treats empty input as no discount',
       () {
     final noDiscount = calculateOrderDiscount(input: '', subtotal: 12.345);

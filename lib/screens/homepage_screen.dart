@@ -413,7 +413,21 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   List<Widget> _buildMoreOptions() {
-    List<Widget> options = [];
+    final options = <Widget>[
+      _buildMenuSection('الحساب'),
+      _buildMenuOption(
+        Icons.person_outline,
+        'الملف الشخصي',
+        () => _navigate(ProfileScreen(session: widget.session)),
+      ),
+      _buildMenuSection('الإعدادات'),
+      _buildMenuOption(
+        Icons.settings_outlined,
+        'الإعدادات',
+        () => _openSettings(),
+      ),
+      _buildMenuSection('إدارة العمل'),
+    ];
 
     if (userRole == AppRole.admin ||
         userRole == AppRole.manager ||
@@ -509,14 +523,8 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ]);
     } else if (userRole == AppRole.customer) {
       options.addAll([
-        _buildMenuOption(Icons.person, 'بيانات الحساب',
-            () => _navigate(ProfileScreen(session: widget.session))),
-        _buildMenuOption(Icons.location_on, 'العناوين', () => {}),
-        _buildMenuOption(Icons.contact_support, 'التواصل', () => {}),
         _buildMenuOption(Icons.archive, 'الإشعارات المؤرشفة',
             () => _navigate(const NotificationsScreen())),
-        _buildMenuOption(Icons.info, 'حول التطبيق', () => {}),
-        _buildMenuOption(Icons.help, 'الدعم', () => {}),
       ]);
     } else if (userRole == AppRole.salesperson) {
       options.addAll([
@@ -527,12 +535,44 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ]);
     }
 
-    options.add(const Divider());
+    options.addAll([
+      const Divider(height: 28),
+      _buildMenuSection('التواصل والدعم'),
+      _buildMenuOption(
+        Icons.contact_phone_outlined,
+        'التواصل',
+        () => _navigate(const ContactScreen()),
+      ),
+      _buildMenuOption(
+        Icons.support_agent,
+        'الدعم',
+        () => _navigate(SupportScreen(session: widget.session)),
+      ),
+      _buildMenuSection('حول التطبيق'),
+      _buildMenuOption(
+        Icons.info_outline,
+        'حول التطبيق',
+        () => _navigate(AboutScreen(session: widget.session)),
+      ),
+      _buildMenuSection('تسجيل الخروج'),
+      const Divider(height: 8),
+    ]);
     options.add(_buildMenuOption(Icons.logout, 'تسجيل الخروج', _confirmLogout,
         color: Colors.red));
 
     return options;
   }
+
+  Widget _buildMenuSection(String title) => Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(16, 16, 16, 6),
+        child: Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+      );
 
   Widget _buildMenuOption(IconData icon, String title, VoidCallback onTap,
       {Color? color}) {

@@ -8,12 +8,13 @@
 // 1. مخطط الجداول (Schema)
 // ============================================================
 const H = {
-  Users: ['user_id','username','password_hash','salt','full_name','phone','role','customer_id','status','must_change_password','created_at','last_login','city','address','email','customer_type','internal_notes','sales_stock_id','cash_box_id','updated_at','updated_by'],
+  Users: ['user_id','username','password_hash','salt','full_name','phone','role','customer_id','status','must_change_password','created_at','last_login','city','address','email','customer_type','internal_notes','sales_stock_id','cash_box_id','updated_at','updated_by','can_view_wholesale_price','wholesale_price_permission_updated_by','wholesale_price_permission_updated_at'],
   Customers: ['customer_id','full_name','company_name','phone','address','province','notes','opening_usd','opening_syp','status','created_at','is_system_record','creation_request_id'],
-  Products: ['code','name','image_name','group','origin','unit_1','quantity','minimum_stock','unit_2','factor_2','quantity_2','unit_3','factor_3','quantity_3','display_price','price_2','price_3','currency','notes','updated_at','updated_by','image_file_id','sub_group','oem','availability_status'],
+  Products: ['code','name','image_name','group','origin','unit_1','quantity','minimum_stock','unit_2','factor_2','quantity_2','unit_3','factor_3','quantity_3','display_price','price_2','price_3','currency','notes','updated_at','updated_by','image_file_id','sub_group','oem','availability_status','wholesale_price','quantity_price','quantity_threshold','quantity_unit'],
   Offers: ['offer_id','product_code','title','unit','old_price','offer_price','currency','min_quantity','starts_at','ends_at','note','enabled','sort_order','revision','created_at','created_by','updated_at','updated_by','archived_at','archived_by','bundle_items'],
   Orders: ['order_id', 'order_number', 'customer_id', 'customer_name', 'status', 'currency', 'note', 'accounting_invoice_no', 'accounting_invoice_no_updated_by', 'accounting_invoice_no_updated_at', 'discount_type', 'discount_input', 'discount', 'discount_reason', 'is_read', 'is_new', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at', 'created_by', 'subtotal', 'total', 'priced_by', 'priced_at', 'accountant_notes', 'posting_id', 'posted_at', 'matching_status', 'revision_no', 'client_request_id'],
   Order_Items: ['item_id', 'order_id', 'order_number', 'code', 'name_snapshot', 'unit', 'unit_factor', 'base_price_snapshot', 'unit_price_snapshot', 'unit_1', 'unit_2', 'factor_2', 'unit_3', 'factor_3', 'quantity_requested', 'quantity_approved', 'quantity_prepared', 'display_price_snapshot', 'final_price', 'currency', 'status', 'customer_note', 'accountant_note', 'warehouse_note', 'warehouse_package_numbers', 'warehouse_package_type', 'warehouse_custom_package_type', 'total_price', 'offer_id', 'offer_revision', 'offer_old_price', 'offer_min_quantity', 'offer_starts_at', 'offer_ends_at'],
+  Customer_Product_Prices: ['customer_id','product_code','unit','unit_factor','currency','unit_price','source_type','source_id','source_number','updated_at','updated_by'],
   Payments: ['payment_id','customer_id','order_id','amount','currency','box_type','method','payment_date','note','created_by','created_at','action_type','payment_method','invoice_currency','invoice_equivalent','exchange_rate','reference','client_request_id','change_amount','change_currency','receipt_id','reversal_of'],
   Boxes_Balance: ['box_id','box_name','currency','balance','last_updated'],
   Sham_Cash_Balance: ['id','currency','balance','last_updated'],
@@ -31,7 +32,9 @@ const H = {
   Sales_Invoice_Items: ['item_id','invoice_id','code','name_snapshot','unit','quantity','unit_price','line_total','note','stock_source'],
   Sales_Invoice_Audit: ['audit_id','invoice_id','user_id','created_at','action','reason','before_json','after_json'],
   Sales_Invoice_Allocations: ['allocation_id','receipt_id','invoice_id','customer_id','amount_usd','created_by','created_at','client_request_id'],
-};
+  App_Settings: ['key','value','updated_at','updated_by'],
+  Support_Tickets: ['ticket_id','user_id','username','created_at','type','description','diagnostics_json','attachment_base64','status','response','updated_at','updated_by'],
+}
 const _PASSWORD_HASH_ITERATIONS_ = 120000;
 const _SHA256_CONSTANTS_ = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
@@ -115,6 +118,23 @@ function _requireColumns_(sheetName, requiredColumns) {
       'مخطط ورقة ' + sheetName + ' غير مهيأ (' + missing.join(', ') + ')؛ شغّل setupSystem أولاً',
       false
     );
+  }
+
+  function _ensureFeatureSheets_() {
+    const ss = _ss();
+    ['App_Settings', 'Support_Tickets'].forEach(name => {
+      let sheet = ss.getSheetByName(name);
+      if (!sheet) sheet = ss.insertSheet(name);
+      const expected = H[name];
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(expected);
+        return;
+      }
+      const headers = _getHeaders(name);
+      expected.filter(column => headers.indexOf(column) < 0).forEach(column => {
+        sheet.getRange(1, sheet.getLastColumn() + 1).setValue(column);
+      });
+    });
   }
 }
 
@@ -428,6 +448,30 @@ function _recordLoginAttempt_(key, failed) {
   cache.put(key, String(attempts), 900);
 }
 
+function _passwordChangeAttemptKey_(userId) {
+  const cache = CacheService.getScriptCache();
+  const key = 'password-change-attempts:' +
+    _digest(String(userId || '')).slice(0, 32);
+  const attempts = Number(cache.get(key) || 0);
+  if (attempts >= 5) {
+    throw _apiError(
+      'PASSWORD_CHANGE_RATE_LIMITED',
+      'تعذر التحقق من كلمة المرور حاليًا. حاول بعد 15 دقيقة',
+      false
+    );
+  }
+  return key;
+}
+
+function _recordPasswordChangeAttempt_(key, failed) {
+  const cache = CacheService.getScriptCache();
+  if (!failed) {
+    cache.remove(key);
+    return;
+  }
+  cache.put(key, String(Number(cache.get(key) || 0) + 1), 900);
+}
+
 function _removeSessionsForUser_(userId) {
   const sheet = _ss().getSheetByName('Sessions');
   if (!sheet) return;
@@ -527,7 +571,8 @@ function _withoutFinancialFields(record, role) {
 
   const financialFields = [
     'price', 'display_price', 'display_price_snapshot', 'price_offer', 'offer_old_price',
-    'price_2', 'price_3',
+    'price_2', 'price_3', 'wholesale_price', 'quantity_price',
+    'quantity_threshold', 'quantity_unit',
     'unit_price_snapshot', 'base_price_snapshot',
     'final_price', 'default_price', 'total_price', 'subtotal', 'total',
     'total_amount', 'grand_total', 'invoice_total', 'balance',
@@ -560,8 +605,63 @@ function _withoutInternalOrderFields(record) {
   return safe;
 }
 
-function _serializeProductForRole(product, role, imageUrl, defaultProductCurrency) {
+function _canViewWholesalePrices_(user) {
+  const role = _normalizeRole(user && user.role);
+  return role === 'admin' || role === 'accountant' ||
+    _isTrue_(user && user.can_view_wholesale_price);
+}
+
+function _productFactorForUnit_(product, unit) {
+  const selected = String(unit || '').trim();
+  if (!selected) return null;
+  const unit1 = String(product.unit_1 || product.unit || '').trim();
+  if (selected === unit1) return 1;
+  if (selected === String(product.unit_2 || '').trim()) {
+    const factor = Number(product.factor_2);
+    return Number.isFinite(factor) && factor > 0 ? factor : null;
+  }
+  if (selected === String(product.unit_3 || '').trim()) {
+    const factor = Number(product.factor_3);
+    return Number.isFinite(factor) && factor > 0 ? factor : null;
+  }
+  return null;
+}
+
+function _productPriceForUnit_(product, basePrice, unit) {
+  if (basePrice == null || String(basePrice).trim() === '') return null;
+  const price = Number(basePrice);
+  const factor = _productFactorForUnit_(product, unit);
+  if (!Number.isFinite(price) || price < 0 || factor == null) return null;
+  return _roundOrderAmount_(price * factor);
+}
+
+function _orderItemFactorForUnit_(item, product, unit) {
+  const selected = String(unit || '').trim();
+  if (!selected) return null;
+  const unit1 = String(item && (item.unit_1 || item.unit) || '').trim();
+  if (unit1 && selected === unit1) return 1;
+  const unit2 = String(item && item.unit_2 || '').trim();
+  const factor2 = Number(item && item.factor_2);
+  if (unit2 && selected === unit2) {
+    return Number.isFinite(factor2) && factor2 > 0 ? factor2 : null;
+  }
+  const unit3 = String(item && item.unit_3 || '').trim();
+  const factor3 = Number(item && item.factor_3);
+  if (unit3 && selected === unit3) {
+    return Number.isFinite(factor3) && factor3 > 0 ? factor3 : null;
+  }
+  if (unit1 || unit2 || unit3) return null;
+  return _productFactorForUnit_(product || {}, selected);
+}
+
+function _serializeProductForRole(
+    product, role, imageUrl, defaultProductCurrency, canViewWholesale) {
   const userRole = _normalizeRole(role);
+  const canSeeWholesale = userRole === 'admin' ||
+    userRole === 'accountant' || canViewWholesale === true;
+  const basePrice = product.display_price === '' || product.display_price == null
+    ? (product.price === '' || product.price == null ? null : Number(product.price))
+    : Number(product.display_price);
   const item = {
     code: product.code,
     name: product.name,
@@ -590,11 +690,27 @@ function _serializeProductForRole(product, role, imageUrl, defaultProductCurrenc
     created_at: product.created_at || ''
   };
   if (['admin', 'manager', 'accountant', 'salesperson'].includes(userRole)) {
-    item.price = product.display_price === '' || product.display_price == null
-      ? (product.price === '' || product.price == null ? null : Number(product.price))
-      : Number(product.display_price);
-    item.price_2 = product.price_2 === '' || product.price_2 == null ? null : Number(product.price_2);
-    item.price_3 = product.price_3 === '' || product.price_3 == null ? null : Number(product.price_3);
+    item.price = basePrice;
+    item.price_2 = _productPriceForUnit_(product, basePrice, product.unit_2);
+    item.price_3 = _productPriceForUnit_(product, basePrice, product.unit_3);
+    item.price_configured = Number.isFinite(basePrice);
+    if (['admin', 'accountant'].includes(userRole)) {
+      item.quantity_price = product.quantity_price === '' ||
+          product.quantity_price == null
+        ? null
+        : Number(product.quantity_price);
+      item.quantity_threshold = product.quantity_threshold === '' ||
+          product.quantity_threshold == null
+        ? null
+        : Number(product.quantity_threshold);
+      item.quantity_unit = product.quantity_unit || product.unit_1 || '';
+    }
+    if (canSeeWholesale) {
+      item.wholesale_price = product.wholesale_price === '' ||
+          product.wholesale_price == null
+        ? null
+        : Number(product.wholesale_price);
+    }
   }
   if (['admin', 'manager', 'accountant', 'warehouse', 'salesperson'].includes(userRole)) {
     item.quantity = Number(product.quantity === '' || product.quantity == null
@@ -602,11 +718,17 @@ function _serializeProductForRole(product, role, imageUrl, defaultProductCurrenc
       : product.quantity);
     item.stock = item.quantity;
   } else if (userRole === 'customer') {
-    item.price = product.display_price === '' || product.display_price == null
-      ? (product.price === '' || product.price == null ? null : Number(product.price))
-      : Number(product.display_price);
-    item.price_2 = product.price_2 === '' || product.price_2 == null ? null : Number(product.price_2);
-    item.price_3 = product.price_3 === '' || product.price_3 == null ? null : Number(product.price_3);
+    item.price = basePrice;
+    item.price_2 = _productPriceForUnit_(product, basePrice, product.unit_2);
+    item.price_3 = _productPriceForUnit_(product, basePrice, product.unit_3);
+  }
+  if (canSeeWholesale) {
+    item.wholesale_price = product.wholesale_price === '' ||
+        product.wholesale_price == null
+      ? null
+      : Number(product.wholesale_price);
+  } else {
+    delete item.wholesale_price;
   }
   return item;
 }
@@ -714,6 +836,11 @@ function seedAdmin(password) {
     must_change_password: 'yes',
     created_at: _now(),
   });
+}
+
+function _sheetLiteralText_(value) {
+  const text = String(value == null ? '' : value);
+  return /^[=+\-@]/.test(text) ? "'" + text : text;
 }
 
 // ============================================================
@@ -1058,6 +1185,30 @@ function doPost(e) {
       case 'user_reset_password':
         result = _handleResetManagedPassword(body, user);
         break;
+      case 'contact_info_get':
+        result = _handleContactInfoGet_(body, user);
+        break;
+      case 'contact_info_update':
+        result = _handleContactInfoUpdate_(body, user);
+        break;
+      case 'support_faq_list':
+        result = _handleSupportFaqList_(body, user);
+        break;
+      case 'support_faq_update':
+        result = _handleSupportFaqUpdate_(body, user);
+        break;
+      case 'support_ticket_create':
+        result = _handleSupportTicketCreate_(body, user);
+        break;
+      case 'support_ticket_list':
+        result = _handleSupportTicketList_(body, user);
+        break;
+      case 'support_ticket_admin_list':
+        result = _handleSupportTicketAdminList_(body, user);
+        break;
+      case 'support_ticket_update':
+        result = _handleSupportTicketUpdate_(body, user);
+        break;
       case 'sales_stock_transfer':
         result = _handleSalesStockTransfer(body, user);
         break;
@@ -1189,7 +1340,9 @@ function _handleLogin(body) {
       full_name: u.full_name,
       role: role,
       customer_id: u.customer_id,
+      last_login: loginUpdates.last_login,
       must_change_password: _isTrue_(u.must_change_password),
+      can_view_wholesale_price: _isTrue_(u.can_view_wholesale_price),
       id: u.user_id,
       name: u.full_name,
     },
@@ -1201,7 +1354,9 @@ function _handleLogin(body) {
       name: u.full_name,
       role: role,
       customer_id: u.customer_id,
+      last_login: loginUpdates.last_login,
       must_change_password: _isTrue_(u.must_change_password),
+      can_view_wholesale_price: _isTrue_(u.can_view_wholesale_price),
     },
   };
 }
@@ -1210,9 +1365,14 @@ function _handleUpdateUser(body, user) {
   if (body.role !== undefined ||
       body.user_id !== undefined ||
       body.target_username !== undefined ||
+      body.can_view_wholesale_price !== undefined ||
       body.is_active !== undefined ||
       body.status !== undefined) {
     throw _apiError('FORBIDDEN', 'لا يمكن تعديل الدور أو حالة الحساب من هذه العملية', false);
+  }
+  if (body.full_name !== undefined &&
+      !['admin', 'manager', 'accountant'].includes(_normalizeRole(user.role))) {
+    throw _apiError('FORBIDDEN', 'تعديل الاسم الكامل متاح للمدير والمحاسب فقط', false);
   }
   const ss = _ss();
   const sheet = ss.getSheetByName('Users');
@@ -1232,25 +1392,48 @@ function _handleUpdateUser(body, user) {
         );
       }
       const updates = { updated_at: _now(), updated_by: user.user_id };
-      if (body.full_name !== undefined) updates.full_name = String(body.full_name).trim();
-      if (body.phone !== undefined) updates.phone = String(body.phone).trim();
+      const previousName = String(data[i][headers.indexOf('full_name')] || '');
+      if (body.full_name !== undefined) {
+        const nextName = String(body.full_name).trim();
+        if (!nextName || nextName.length > 120) {
+          throw _apiError('INVALID_NAME', 'أدخل اسمًا صحيحًا لا يتجاوز 120 محرفًا', false);
+        }
+        updates.full_name = nextName;
+      }
+      if (body.phone !== undefined) {
+        const phone = String(body.phone).trim();
+        if (phone.length > 30 || (phone &&
+            !/^\+?[0-9 ()-]{7,30}$/.test(phone))) {
+          throw _apiError('INVALID_PHONE', 'أدخل رقم هاتف صحيحًا', false);
+        }
+        updates.phone = phone;
+      }
       if (body.new_password) {
         if (!body.old_password) {
           throw _apiError('OLD_PASSWORD_REQUIRED', 'أدخل كلمة المرور الحالية أولاً', false);
         }
+        const attemptKey = _passwordChangeAttemptKey_(user.user_id);
         const password = String(body.new_password);
-        if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        if (password.length < 10 || !/[A-Za-z]/.test(password) ||
+            !/\d/.test(password) ||
+            /^(password|password123|1234567890|qwerty123|admin123|welcome1)$/i.test(password)) {
           throw _apiError(
             'WEAK_PASSWORD',
-            'يجب أن تتكون كلمة المرور من 8 محارف على الأقل وتضم حرفًا ورقمًا',
+            'استخدم 10 محارف على الأقل، مع أحرف وأرقام، وتجنب كلمات المرور الشائعة',
             false
           );
         }
-        if (!_verifyPassword_(String(body.old_password), {
+        const passwordUser = {
           password_hash: data[i][passHashIdx],
           salt: data[i][saltIdx]
-        })) {
+        };
+        if (!_verifyPassword_(String(body.old_password), passwordUser)) {
+          _recordPasswordChangeAttempt_(attemptKey, true);
           throw _apiError('INVALID_CREDENTIALS', 'كلمة المرور الحالية غير صحيحة', false);
+        }
+        _recordPasswordChangeAttempt_(attemptKey, false);
+        if (String(body.old_password) === password) {
+          throw _apiError('PASSWORD_REUSE', 'اختر كلمة مرور مختلفة عن الحالية', false);
         }
         const newSalt = Utilities.getUuid();
         updates.password_hash = _passwordHash_(password, newSalt);
@@ -1261,34 +1444,469 @@ function _handleUpdateUser(body, user) {
           const index = headers.indexOf(key);
           if (index >= 0) previousValues[key] = data[i][index];
         });
+        const linkedCustomer = user.customer_id
+          ? _all('Customers').find(customer =>
+              String(customer.customer_id) === String(user.customer_id)
+            )
+          : null;
+        const previousCustomerProfile = linkedCustomer
+          ? { full_name: linkedCustomer.full_name, phone: linkedCustomer.phone }
+          : null;
+        let linkedCustomerUpdated = false;
         const updated = _updateByField('Users', 'user_id', user.user_id, updates);
         if (!updated) throw new Error('فشل تحديث كلمة المرور');
         try {
+          if (linkedCustomer &&
+              (updates.full_name !== undefined || updates.phone !== undefined)) {
+            const customerUpdates = {};
+            if (updates.full_name !== undefined) {
+              customerUpdates.full_name = updates.full_name;
+            }
+            if (updates.phone !== undefined) customerUpdates.phone = updates.phone;
+            linkedCustomerUpdated = _updateByField(
+              'Customers',
+              'customer_id',
+              user.customer_id,
+              customerUpdates
+            );
+            if (!linkedCustomerUpdated) {
+              throw new Error('فشل تحديث بيانات الزبون المرتبط بالحساب');
+            }
+          }
           _add('Audit_Log', {
             log_id: Utilities.getUuid(),
             user_id: user.user_id,
-            action: 'CHANGE_PASSWORD',
+            action: updates.full_name !== undefined && updates.full_name !== previousName
+              ? 'CHANGE_PASSWORD_AND_NAME'
+              : 'CHANGE_PASSWORD',
             entity: 'Users',
             entity_id: user.user_id,
-            details: 'تغيير كلمة المرور',
+            details: JSON.stringify({
+              password_changed: true,
+              ...(updates.full_name !== undefined && updates.full_name !== previousName
+                ? { previous_name: previousName, new_name: updates.full_name }
+                : {})
+            }),
             created_at: _now(),
           });
         } catch (error) {
           _updateByField('Users', 'user_id', user.user_id, previousValues);
+          if (linkedCustomerUpdated && previousCustomerProfile) {
+            _updateByField(
+              'Customers',
+              'customer_id',
+              user.customer_id,
+              previousCustomerProfile
+            );
+          }
           throw error;
         }
         _removeSessionsForUser_(user.user_id);
+        _deactivateAllUserDevices_(user.user_id);
         return {
           success: true,
           message: 'تم تغيير كلمة المرور، سجّل الدخول من جديد',
           session_revoked: true
         };
       }
-      _updateByField('Users', 'user_id', user.user_id, updates);
+      const previousPhoneIndex = headers.indexOf('phone');
+      const previousProfile = {
+        full_name: previousName,
+        phone: previousPhoneIndex >= 0 ? data[i][previousPhoneIndex] : '',
+        updated_at: data[i][headers.indexOf('updated_at')],
+        updated_by: data[i][headers.indexOf('updated_by')]
+      };
+      const linkedCustomer = user.customer_id
+        ? _all('Customers').find(customer =>
+            String(customer.customer_id) === String(user.customer_id)
+          )
+        : null;
+      const previousCustomerProfile = linkedCustomer
+        ? { full_name: linkedCustomer.full_name, phone: linkedCustomer.phone }
+        : null;
+      if (!_updateByField('Users', 'user_id', user.user_id, updates)) {
+        throw new Error('فشل تحديث بيانات المستخدم');
+      }
+      let linkedCustomerUpdated = false;
+      try {
+        if (linkedCustomer &&
+            (updates.full_name !== undefined || updates.phone !== undefined)) {
+          const customerUpdates = {};
+          if (updates.full_name !== undefined) {
+            customerUpdates.full_name = updates.full_name;
+          }
+          if (updates.phone !== undefined) customerUpdates.phone = updates.phone;
+          linkedCustomerUpdated = _updateByField(
+            'Customers',
+            'customer_id',
+            user.customer_id,
+            customerUpdates
+          );
+          if (!linkedCustomerUpdated) {
+            throw new Error('فشل تحديث بيانات الزبون المرتبط بالحساب');
+          }
+        }
+        if (updates.full_name !== undefined && updates.full_name !== previousName) {
+          _add('Audit_Log', {
+            log_id: Utilities.getUuid(),
+            user_id: user.user_id,
+            action: 'UPDATE_USER_NAME',
+            entity: 'Users',
+            entity_id: user.user_id,
+            details: JSON.stringify({
+              changed_by: user.user_id,
+              previous_name: previousName,
+              new_name: updates.full_name
+            }),
+            created_at: _now(),
+          });
+        }
+      } catch (error) {
+        _updateByField('Users', 'user_id', user.user_id, previousProfile);
+        if (linkedCustomerUpdated && previousCustomerProfile) {
+          _updateByField('Customers', 'customer_id', user.customer_id, previousCustomerProfile);
+        }
+        throw error;
+      }
       return { success: true, message: 'تم تحديث البيانات بنجاح' };
     }
   }
   throw new Error('المستخدم غير موجود');
+}
+
+function _publicAppSettings_() {
+  _ensureFeatureSheets_();
+  const row = _all('App_Settings').find(item =>
+    String(item.key || '') === 'public_app_settings'
+  );
+  if (!row || !row.value) {
+    return {
+      contact_info: {},
+      legal_content: {},
+      faq: [],
+      last_updated: ''
+    };
+  }
+  try {
+    const parsed = JSON.parse(String(row.value));
+    return {
+      contact_info: parsed.contact_info || {},
+      legal_content: parsed.legal_content || {},
+      faq: Array.isArray(parsed.faq) ? parsed.faq : [],
+      last_updated: row.updated_at || ''
+    };
+  } catch (error) {
+    throw _apiError('APP_SETTINGS_INVALID', 'تعذر قراءة إعدادات التطبيق', false);
+  }
+}
+
+function _savePublicAppSettings_(settings, user, changedSections) {
+  const serialized = JSON.stringify(settings);
+  if (serialized.length > 18000) {
+    throw _apiError('APP_SETTINGS_TOO_LARGE', 'حجم إعدادات التواصل والمحتوى كبير جدًا', false);
+  }
+  _ensureFeatureSheets_();
+  const previous = _publicAppSettings_();
+  const updates = {
+    key: 'public_app_settings',
+    value: serialized,
+    updated_at: _now(),
+    updated_by: user.user_id
+  };
+  if (!_updateByField('App_Settings', 'key', 'public_app_settings', updates)) {
+    _add('App_Settings', updates);
+  }
+  try {
+    _add('Audit_Log', {
+      log_id: Utilities.getUuid(),
+      user_id: user.user_id,
+      action: 'UPDATE_PUBLIC_APP_SETTINGS',
+      entity: 'App_Settings',
+      entity_id: 'public_app_settings',
+      details: JSON.stringify({
+        sections: changedSections,
+        before: previous,
+        after: settings
+      }),
+      created_at: _now()
+    });
+  } catch (error) {
+    const original = JSON.stringify(previous);
+    _updateByField('App_Settings', 'key', 'public_app_settings', {
+      value: original,
+      updated_at: _now(),
+      updated_by: user.user_id
+    });
+    throw error;
+  }
+  return updates.updated_at;
+}
+
+function _validatePublicAppSettings_(input, current) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw _apiError('INVALID_APP_SETTINGS', 'بيانات الإعدادات غير صالحة', false);
+  }
+  const result = {
+    contact_info: Object.assign({}, current.contact_info),
+    legal_content: Object.assign({}, current.legal_content),
+    faq: current.faq.slice()
+  };
+  const contactKeys = [
+    'company_name', 'phone', 'whatsapp', 'facebook', 'telegram',
+    'instagram', 'email', 'working_hours', 'address', 'support_hours',
+    'expected_response_time', 'extra_name', 'extra_value'
+  ];
+  const textLimits = {
+    company_name: 120, working_hours: 200, address: 300,
+    support_hours: 200, expected_response_time: 200,
+    extra_name: 50, extra_value: 250
+  };
+  if (input.contact_info !== undefined) {
+    if (!input.contact_info || typeof input.contact_info !== 'object' ||
+        Array.isArray(input.contact_info)) {
+      throw _apiError('INVALID_CONTACT_INFO', 'بيانات التواصل غير صالحة', false);
+    }
+    const contact = Object.assign({}, result.contact_info);
+    Object.keys(input.contact_info).forEach(key => {
+      if (contactKeys.indexOf(key) < 0) {
+        throw _apiError('INVALID_CONTACT_FIELD', 'حقل تواصل غير معروف', false);
+      }
+      const value = String(input.contact_info[key] == null ? '' : input.contact_info[key]).trim();
+      if (value.length > (textLimits[key] || 250)) {
+        throw _apiError('INVALID_CONTACT_FIELD', 'تجاوز أحد حقول التواصل الحد المسموح', false);
+      }
+      if (['phone', 'whatsapp'].includes(key) && value &&
+          !/^\+[1-9]\d{7,14}$/.test(value)) {
+        throw _apiError('INVALID_PHONE', 'أدخل رقمًا دوليًا يبدأ بعلامة +', false);
+      }
+      if (key === 'email' && value &&
+          !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) {
+        throw _apiError('INVALID_EMAIL', 'أدخل بريدًا إلكترونيًا صحيحًا', false);
+      }
+      const socialHosts = {
+        facebook: /^(?:www\.)?facebook\.com$/i,
+        telegram: /^(?:www\.)?(?:t\.me|telegram\.me)$/i,
+        instagram: /^(?:www\.)?instagram\.com$/i
+      };
+      if (['facebook', 'telegram', 'instagram'].includes(key) && value) {
+        const match = value.match(/^https:\/\/([^/?#]+)(?:[/?#]|$)/i);
+        const host = match ? match[1].toLowerCase().split(':')[0] : '';
+        if (!match || !socialHosts[key].test(host)) {
+          throw _apiError('INVALID_SOCIAL_URL', 'استخدم رابط HTTPS صحيحًا للقناة المحددة', false);
+        }
+      }
+      if (key === 'extra_value' && /^https?:\/\//i.test(value) &&
+          !/^https:\/\/[^/?#]+(?:[/?#]|$)/i.test(value)) {
+        throw _apiError('INVALID_EXTRA_URL', 'يجب أن يبدأ الرابط الإضافي الآمن بـ HTTPS', false);
+      }
+      contact[key] = value;
+    });
+    result.contact_info = contact;
+  }
+  if (input.legal_content !== undefined) {
+    if (!input.legal_content || typeof input.legal_content !== 'object' ||
+        Array.isArray(input.legal_content)) {
+      throw _apiError('INVALID_LEGAL_CONTENT', 'المحتوى القانوني غير صالح', false);
+    }
+    const legal = Object.assign({}, result.legal_content);
+    ['terms', 'privacy_policy'].forEach(key => {
+      if (input.legal_content[key] !== undefined) {
+        const value = String(input.legal_content[key] || '').trim();
+        if (value.length > 8000) {
+          throw _apiError('INVALID_LEGAL_CONTENT', 'يجب ألا يتجاوز كل نص 8000 محرف', false);
+        }
+        legal[key] = value;
+      }
+    });
+    result.legal_content = legal;
+  }
+  if (input.faq !== undefined) {
+    if (!Array.isArray(input.faq) || input.faq.length > 50) {
+      throw _apiError('INVALID_FAQ', 'الأسئلة الشائعة غير صالحة أو تجاوزت الحد', false);
+    }
+    result.faq = input.faq.map(item => {
+      if (!item || typeof item !== 'object') {
+        throw _apiError('INVALID_FAQ', 'تحقق من صيغة الأسئلة والأجوبة', false);
+      }
+      const question = String(item.question || '').trim();
+      const answer = String(item.answer || '').trim();
+      if (!question || !answer || question.length > 250 || answer.length > 1500) {
+        throw _apiError('INVALID_FAQ', 'يجب أن يكون السؤال والجواب مكتملين وبحجم مناسب', false);
+      }
+      return { question: question, answer: answer };
+    });
+  }
+  return result;
+}
+
+function _handleContactInfoGet_(body, user) {
+  const settings = _publicAppSettings_();
+  return {
+    contact_info: settings.contact_info,
+    legal_content: settings.legal_content,
+    faq: settings.faq,
+    last_updated: settings.last_updated
+  };
+}
+
+function _handleContactInfoUpdate_(body, user) {
+  _needRole(user, ['admin']);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    throw _apiError('BUSY', 'إعدادات التطبيق قيد التحديث، حاول مجددًا', true);
+  }
+  try {
+    const current = _publicAppSettings_();
+    const next = _validatePublicAppSettings_(body.settings, current);
+    const changedSections = ['contact_info', 'legal_content', 'faq'].filter(key =>
+      JSON.stringify(current[key]) !== JSON.stringify(next[key])
+    );
+    const lastUpdated = changedSections.length
+      ? _savePublicAppSettings_(next, user, changedSections)
+      : current.last_updated;
+    return { success: true, settings: next, last_updated: lastUpdated };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _handleSupportFaqList_(body, user) {
+  return { faq: _publicAppSettings_().faq };
+}
+
+function _handleSupportFaqUpdate_(body, user) {
+  _needRole(user, ['admin']);
+  return _handleContactInfoUpdate_({
+    settings: { faq: body.faq }
+  }, user);
+}
+
+function _handleSupportTicketCreate_(body, user) {
+  _ensureFeatureSheets_();
+  const description = String(body.description || '').trim();
+  const type = String(body.type || '').trim();
+  const allowedTypes = ['bug', 'account', 'order', 'payment', 'suggestion', 'other'];
+  if (allowedTypes.indexOf(type) < 0 || !description || description.length > 3000) {
+    throw _apiError('INVALID_TICKET', 'حدد نوع البلاغ واكتب وصفًا لا يتجاوز 3000 محرف', false);
+  }
+  const attachment = String(body.attachment_base64 || '');
+  if (attachment && (attachment.length > 40000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(attachment))) {
+    throw _apiError('INVALID_ATTACHMENT', 'تعذر إرفاق الصورة؛ الحد الأقصى 30 كيلوبايت', false);
+  }
+  if (attachment) {
+    let bytes;
+    try {
+      bytes = Utilities.base64Decode(attachment);
+    } catch (error) {
+      throw _apiError('INVALID_ATTACHMENT', 'صيغة الصورة المرفقة غير صالحة', false);
+    }
+    const isJpeg = bytes.length >= 3 && (bytes[0] & 255) === 255 &&
+      (bytes[1] & 255) === 216 && (bytes[2] & 255) === 255;
+    const isPng = bytes.length >= 8 &&
+      [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) =>
+        (bytes[index] & 255) === value
+      );
+    const isWebp = bytes.length >= 12 &&
+      String.fromCharCode.apply(null, bytes.slice(0, 4)) === 'RIFF' &&
+      String.fromCharCode.apply(null, bytes.slice(8, 12)) === 'WEBP';
+    if (bytes.length > 30000 || !(isJpeg || isPng || isWebp)) {
+      throw _apiError('INVALID_ATTACHMENT', 'يُقبل ملف صورة فقط وبحجم لا يتجاوز 30 كيلوبايت', false);
+    }
+  }
+  const cache = CacheService.getScriptCache();
+  const rateKey = 'support-ticket:' + _digest(String(user.user_id)).slice(0, 32);
+  const count = Number(cache.get(rateKey) || 0);
+  if (count >= 3) {
+    throw _apiError('TICKET_RATE_LIMITED', 'تم إرسال بلاغات مؤخرًا. يرجى الانتظار قليلًا', false);
+  }
+  const ticketId = 'ORC-' + Utilities.formatDate(new Date(), 'UTC', 'yyyyMMdd') +
+    '-' + Utilities.getUuid().slice(0, 8).toUpperCase();
+  let diagnostics = '';
+  if (body.attach_diagnostics === true && body.diagnostics &&
+      typeof body.diagnostics === 'object' &&
+      !Array.isArray(body.diagnostics)) {
+    diagnostics = JSON.stringify({
+      app_version: String(body.diagnostics.app_version || '').slice(0, 40),
+      build_number: String(body.diagnostics.build_number || '').slice(0, 40),
+      device: String(body.diagnostics.device || '').slice(0, 200),
+      user_id: String(user.user_id || '').slice(0, 100)
+    });
+  }
+  _add('Support_Tickets', {
+    ticket_id: ticketId,
+    user_id: user.user_id,
+    username: user.username,
+    created_at: _now(),
+    type: type,
+    description: _sheetLiteralText_(description),
+    diagnostics_json: diagnostics,
+    attachment_base64: attachment,
+    status: 'open',
+    response: '',
+    updated_at: _now(),
+    updated_by: user.user_id
+  });
+  cache.put(rateKey, String(count + 1), 600);
+  return { success: true, ticket_id: ticketId, status: 'open' };
+}
+
+function _handleSupportTicketList_(body, user) {
+  _ensureFeatureSheets_();
+  const rows = _all('Support_Tickets').filter(item =>
+    String(item.user_id) === String(user.user_id)
+  );
+  return {
+    tickets: rows.slice(-100).reverse().map(item => {
+      const ticket = Object.assign({}, item);
+      delete ticket.attachment_base64;
+      delete ticket.diagnostics_json;
+      return ticket;
+    })
+  };
+}
+
+function _handleSupportTicketAdminList_(body, user) {
+  _needRole(user, ['admin']);
+  _ensureFeatureSheets_();
+  return { tickets: _all('Support_Tickets').slice(-200).reverse() };
+}
+
+function _handleSupportTicketUpdate_(body, user) {
+  _needRole(user, ['admin']);
+  const ticketId = String(body.ticket_id || '').trim();
+  const status = String(body.status || '').trim();
+  const response = String(body.response || '').trim();
+  if (!ticketId || !['open', 'in_progress', 'resolved'].includes(status) ||
+      response.length > 2000) {
+    throw _apiError('INVALID_TICKET_UPDATE', 'حالة البلاغ أو الرد غير صالح', false);
+  }
+  const ticket = _all('Support_Tickets').find(item =>
+    String(item.ticket_id) === ticketId
+  );
+  if (!ticket) throw _apiError('TICKET_NOT_FOUND', 'لم يتم العثور على البلاغ', false);
+  const updates = {
+    status: status,
+    response: _sheetLiteralText_(response),
+    updated_at: _now(),
+    updated_by: user.user_id
+  };
+  if (!_updateByField('Support_Tickets', 'ticket_id', ticketId, updates)) {
+    throw new Error('فشل تحديث البلاغ');
+  }
+  _add('Audit_Log', {
+    log_id: Utilities.getUuid(),
+    user_id: user.user_id,
+    action: 'UPDATE_SUPPORT_TICKET',
+    entity: 'Support_Tickets',
+    entity_id: ticketId,
+    details: JSON.stringify({
+      before_status: ticket.status,
+      status: status,
+      response: response
+    }),
+    created_at: _now()
+  });
+  return { success: true };
 }
 
 const _CUSTOMER_TYPES_ = ['زبون جملة', 'زبون نصف جملة', 'زبون مفرق', 'زبون موزع'];
@@ -1311,6 +1929,11 @@ function _managedUserView_(user) {
     must_change_password: _isTrue_(user.must_change_password),
     sales_stock_id: user.sales_stock_id || '',
     cash_box_id: user.cash_box_id || '',
+    can_view_wholesale_price: _isTrue_(user.can_view_wholesale_price),
+    wholesale_price_permission_updated_by:
+      user.wholesale_price_permission_updated_by || '',
+    wholesale_price_permission_updated_at:
+      user.wholesale_price_permission_updated_at || '',
     created_at: user.created_at || '',
     updated_at: user.updated_at || '',
     updated_by: user.updated_by || '',
@@ -1409,6 +2032,14 @@ function _handleListUsers(body, user) {
 
 function _handleCreateManagedUser(body, user) {
   _needRole(user, ['admin', 'accountant']);
+  if (body.can_view_wholesale_price !== undefined) {
+    _needRole(user, ['admin']);
+    _requireColumns_('Users', [
+      'can_view_wholesale_price',
+      'wholesale_price_permission_updated_by',
+      'wholesale_price_permission_updated_at'
+    ]);
+  }
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw _apiError('BUSY', 'تعذر قفل إدارة الحسابات، حاول مجددًا', true);
   let createdCustomerId = '';
@@ -1447,6 +2078,25 @@ function _handleCreateManagedUser(body, user) {
       internal_notes: String(body.internal_notes || '').trim(),
       sales_stock_id: '',
       cash_box_id: cashBoxId,
+      can_view_wholesale_price:
+        body.can_view_wholesale_price === true ||
+        body.can_view_wholesale_price === 1 ||
+        body.can_view_wholesale_price === '1' ||
+        body.can_view_wholesale_price === 'true',
+      wholesale_price_permission_updated_by:
+        body.can_view_wholesale_price === true ||
+            body.can_view_wholesale_price === 1 ||
+            body.can_view_wholesale_price === '1' ||
+            body.can_view_wholesale_price === 'true'
+          ? user.user_id
+          : '',
+      wholesale_price_permission_updated_at:
+        body.can_view_wholesale_price === true ||
+            body.can_view_wholesale_price === 1 ||
+            body.can_view_wholesale_price === '1' ||
+            body.can_view_wholesale_price === 'true'
+          ? now
+          : '',
       updated_at: now,
       updated_by: user.user_id,
     };
@@ -1478,6 +2128,18 @@ function _handleCreateManagedUser(body, user) {
 
 function _handleUpdateManagedUser(body, user) {
   _needRole(user, ['admin', 'accountant']);
+  if (body.can_view_wholesale_price !== undefined) {
+    _needRole(user, ['admin']);
+    _requireColumns_('Users', [
+      'can_view_wholesale_price',
+      'wholesale_price_permission_updated_by',
+      'wholesale_price_permission_updated_at'
+    ]);
+    if (![true, false, 1, 0, '1', '0', 'true', 'false']
+      .includes(body.can_view_wholesale_price)) {
+      throw _apiError('INVALID_PERMISSION', 'قيمة صلاحية سعر الجملة غير صالحة', false);
+    }
+  }
   const targetId = String(body.user_id || '').trim();
   if (!targetId) throw _apiError('USER_ID_REQUIRED', 'معرف الحساب مطلوب', false);
   const lock = LockService.getScriptLock();
@@ -1517,6 +2179,17 @@ function _handleUpdateManagedUser(body, user) {
       updated_at: now,
       updated_by: user.user_id,
     };
+    if (body.can_view_wholesale_price !== undefined) {
+      const enabled = body.can_view_wholesale_price === true ||
+        body.can_view_wholesale_price === 1 ||
+        body.can_view_wholesale_price === '1' ||
+        body.can_view_wholesale_price === 'true';
+      updates.can_view_wholesale_price = enabled;
+      if (enabled !== _isTrue_(target.can_view_wholesale_price)) {
+        updates.wholesale_price_permission_updated_by = user.user_id;
+        updates.wholesale_price_permission_updated_at = now;
+      }
+    }
     if (validated.role === 'salesperson') {
       updates.cash_box_id = String(body.cash_box_id ?? target.cash_box_id ?? '').trim() ||
         ('sales_' + target.user_id);
@@ -1763,17 +2436,11 @@ function _offerText_(value, required) {
 
 function _offerProductPrice_(product, unit) {
   if (!product) return null;
-  const definitions = [
-    [product.unit_1, product.display_price, 1],
-    [product.unit_2, product.price_2, product.factor_2],
-    [product.unit_3, product.price_3, product.factor_3]
-  ];
-  const matching = definitions.filter(entry => String(entry[0] || '').trim() === unit);
-  if (matching.length !== 1) return null;
-  const price = matching[0][1], factor = Number(matching[0][2]);
-  if (price == null || String(price).trim() === '' || !Number.isFinite(Number(price)) ||
-      Number(price) <= 0 || !Number.isFinite(factor) || factor <= 0) return null;
-  return Number(price);
+  const basePrice = product.display_price === '' || product.display_price == null
+    ? product.price
+    : product.display_price;
+  const price = _productPriceForUnit_(product, basePrice, unit);
+  return price != null && price > 0 ? price : null;
 }
 
 function _offerMatchesProduct_(offer, product) {
@@ -2254,7 +2921,8 @@ function _handleProducts(body, user) {
           p,
           user.role,
           imgData ? imgData.image_url : '',
-          defaultProductCurrency
+          defaultProductCurrency,
+          _canViewWholesalePrices_(user)
         );
         const newProduct = newProductMap[String(p.code)];
         item.is_new = p.show_in_new === 'true' ||
@@ -2297,7 +2965,8 @@ function _handleNewProducts(body, user) {
         mergedProduct,
         user.role,
         imageUrl,
-        defaultProductCurrency
+        defaultProductCurrency,
+        _canViewWholesalePrices_(user)
       );
       product.is_new = true;
       return product;
@@ -2363,7 +3032,8 @@ function _handleBestSellers(body, user) {
         product,
         userRole,
         image ? image.image_url : product.image_url || '',
-        defaultProductCurrency
+        defaultProductCurrency,
+        _canViewWholesalePrices_(user)
       );
       safeProduct.order_units = salesMap[code];
       return safeProduct;
@@ -2411,7 +3081,8 @@ function _handleSearchProducts(body, user) {
         p,
         user.role,
         imgData ? imgData.image_url : '',
-        defaultProductCurrency
+        defaultProductCurrency,
+        _canViewWholesalePrices_(user)
       );
       product.image_name = p.image_name || p.code;
       product.image_id = imgData ? imgData.file_id : (p.image_id || '');
@@ -2525,23 +3196,61 @@ function _handleCreateProduct(body, user) {
   const name = String(body.name || '').trim();
   const price = Number(body.display_price ?? body.price ?? 0);
   const quantity = Number(body.quantity || 0);
+  const unit1 = String(body.unit_1 || body.unit || '').trim();
+  const unit2 = String(body.unit_2 || '').trim();
+  const unit3 = String(body.unit_3 || '').trim();
+  const factor2 = unit2 ? Number(body.factor_2) : null;
+  const factor3 = unit3 ? Number(body.factor_3) : null;
+  const wholesalePrice = body.wholesale_price == null ||
+      String(body.wholesale_price).trim() === ''
+    ? ''
+    : Number(body.wholesale_price);
+  const quantityPrice = body.quantity_price == null ||
+      String(body.quantity_price).trim() === ''
+    ? ''
+    : Number(body.quantity_price);
+  const quantityThreshold = body.quantity_threshold == null ||
+      String(body.quantity_threshold).trim() === ''
+    ? ''
+    : Number(body.quantity_threshold);
+  const quantityUnit = String(body.quantity_unit || unit1).trim();
   if (!code || !name || !Number.isFinite(price) || price < 0 ||
-      !Number.isFinite(quantity) || quantity < 0) {
+      !Number.isFinite(quantity) || quantity < 0 || !unit1 ||
+      (unit2 && (!Number.isFinite(factor2) || factor2 <= 0)) ||
+      (unit3 && (!Number.isFinite(factor3) || factor3 <= 0)) ||
+      (wholesalePrice !== '' &&
+        (!Number.isFinite(wholesalePrice) || wholesalePrice < 0)) ||
+      (quantityPrice !== '' &&
+        (!Number.isFinite(quantityPrice) || quantityPrice < 0)) ||
+      (quantityThreshold !== '' &&
+        (!Number.isFinite(quantityThreshold) || quantityThreshold <= 0)) ||
+      ((quantityPrice !== '' || quantityThreshold !== '') &&
+        (quantityPrice === '' || quantityThreshold === '' ||
+         ![unit1, unit2, unit3].filter(Boolean).includes(quantityUnit)))) {
     throw _apiError('INVALID_PRODUCT', 'بيانات المنتج غير صالحة', false);
   }
   if (_all('Products').some(product => String(product.code) === code)) {
     throw _apiError('PRODUCT_EXISTS', 'رمز المنتج مستخدم مسبقاً', false);
   }
+  _requireColumns_('Products', H.Products);
   _add('Products', {
     code: code,
     name: name,
     image_name: body.image_name || '',
     group: body.group || body.category || '',
     origin: body.origin || '',
-    unit_1: body.unit || body.unit_1 || '',
+    unit_1: unit1,
     quantity: quantity,
     minimum_stock: Number(body.minimum_stock || 0),
+    unit_2: unit2,
+    factor_2: factor2 == null ? '' : factor2,
+    unit_3: unit3,
+    factor_3: factor3 == null ? '' : factor3,
     display_price: price,
+    wholesale_price: wholesalePrice,
+    quantity_price: quantityPrice,
+    quantity_threshold: quantityThreshold,
+    quantity_unit: quantityUnit,
     currency: body.currency || 'USD',
     notes: body.notes || '',
     updated_at: _now(),
@@ -2583,11 +3292,85 @@ function _handleUpdateProductPrice(body, user) {
   try {
     product = _all('Products').find(item => String(item.code) === code);
     if (!product) throw _apiError('PRODUCT_NOT_FOUND', 'المنتج غير موجود', false);
-    _updateByField('Products', 'code', code, {
+    const updates = {
       display_price: price,
       currency: body.currency || product.currency || 'USD',
       updated_at: _now(),
       updated_by: user.user_id
+    };
+    const before = {
+      display_price: product.display_price,
+      wholesale_price: product.wholesale_price,
+      quantity_price: product.quantity_price,
+      quantity_threshold: product.quantity_threshold,
+      quantity_unit: product.quantity_unit,
+      currency: product.currency
+    };
+    ['wholesale_price', 'quantity_price', 'quantity_threshold']
+      .forEach(field => {
+        if (!Object.prototype.hasOwnProperty.call(body, field)) return;
+        const value = body[field];
+        if (value == null || String(value).trim() === '') {
+          updates[field] = '';
+          return;
+        }
+        const number = Number(value);
+        const isThreshold = field === 'quantity_threshold';
+        if (!Number.isFinite(number) || (isThreshold ? number <= 0 : number < 0)) {
+          throw _apiError('INVALID_PRODUCT_PRICE', 'بيانات أسعار المنتج غير صالحة', false);
+        }
+        updates[field] = number;
+      });
+    if (Object.prototype.hasOwnProperty.call(body, 'quantity_unit')) {
+      const unit = String(body.quantity_unit || '').trim();
+      if (unit && ![product.unit_1, product.unit_2, product.unit_3]
+        .map(value => String(value || '').trim()).filter(Boolean).includes(unit)) {
+        throw _apiError('INVALID_PRODUCT_UNIT', 'وحدة حد سعر الكمية غير معرفة', false);
+      }
+      updates.quantity_unit = unit;
+    }
+    const nextQuantityPrice = Object.prototype.hasOwnProperty.call(updates, 'quantity_price')
+      ? updates.quantity_price
+      : product.quantity_price;
+    const nextThreshold = Object.prototype.hasOwnProperty.call(updates, 'quantity_threshold')
+      ? updates.quantity_threshold
+      : product.quantity_threshold;
+    if ((nextQuantityPrice !== '' && nextQuantityPrice != null) !==
+        (nextThreshold !== '' && nextThreshold != null)) {
+      throw _apiError(
+        'INVALID_PRODUCT_PRICE',
+        'سعر الكمية يتطلب تحديد حد الكمية ووحدته معًا',
+        false
+      );
+    }
+    if ((nextQuantityPrice !== '' && nextQuantityPrice != null) &&
+        !String(updates.quantity_unit || product.quantity_unit || product.unit_1 || '').trim()) {
+      throw _apiError(
+        'INVALID_PRODUCT_UNIT',
+        'سعر الكمية يتطلب تحديد وحدة حد الكمية',
+        false
+      );
+    }
+    _requireColumns_(
+      'Products',
+      ['code', 'display_price'].concat(
+        Object.keys(updates).filter(field =>
+          ['wholesale_price', 'quantity_price', 'quantity_threshold', 'quantity_unit']
+            .includes(field)
+        )
+      )
+    );
+    _requireColumns_('Audit_Log', H.Audit_Log);
+    _updateByField('Products', 'code', code, updates);
+    const after = Object.assign({}, before, updates);
+    _add('Audit_Log', {
+      log_id: Utilities.getUuid(),
+      user_id: user.user_id,
+      action: 'PRODUCT_PRICES_UPDATED',
+      entity: 'Products',
+      entity_id: code,
+      details: JSON.stringify({ before: before, after: after }),
+      created_at: _now()
     });
     SpreadsheetApp.flush();
   } finally {
@@ -3455,6 +4238,55 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
     }
     return item;
   });
+  if (['admin', 'accountant'].includes(userRole)) {
+    detailedItems.forEach(item => {
+      const product = productsByCode[String(item.code)];
+      if (!product) return;
+      const wholesalePrice = _productPriceForUnit_(
+        product,
+        product.wholesale_price,
+        item.unit
+      );
+      const quantityPrice = _productPriceForUnit_(
+        product,
+        product.quantity_price,
+        item.unit
+      );
+      if (wholesalePrice != null) item.wholesale_price = wholesalePrice;
+      if (quantityPrice != null) item.quantity_price = quantityPrice;
+      item.quantity_threshold = product.quantity_threshold === '' ||
+          product.quantity_threshold == null
+        ? null
+        : Number(product.quantity_threshold);
+      item.quantity_unit =
+        product.quantity_unit || product.unit_1 || '';
+    });
+  }
+  if (['admin', 'manager', 'accountant'].includes(userRole) &&
+      order.customer_id) {
+    const suggestionSheet = _ss().getSheetByName('Customer_Product_Prices');
+    const suggestionRows = suggestionSheet
+      ? _all('Customer_Product_Prices')
+      : [];
+    detailedItems.forEach(item => {
+      const product = productsByCode[String(item.code)];
+      const suggestion = _customerPriceSuggestion_(
+        suggestionRows,
+        order.customer_id,
+        product,
+        item.unit,
+        order.currency || 'USD',
+        orderId
+      );
+      if (!suggestion) return;
+      item.suggested_price = suggestion.price;
+      item.suggested_price_factor = suggestion.factor;
+      item.suggested_price_currency = suggestion.currency;
+      item.suggested_price_updated_at = suggestion.updated_at;
+      item.suggested_price_source =
+        suggestion.source_number || suggestion.source_type;
+    });
+  }
 
   // تطبيق أمان الحقول على مستوى الطلب الرئيسي
   let safeOrder = Object.assign({}, order);
@@ -3554,7 +4386,9 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
     currency: order.currency || 'USD',
     note: order.note || '',
     accountant_notes: order.accountant_notes || '',
-    accounting_invoice_no: order.accounting_invoice_no || '',
+    accounting_invoice_no: order.accounting_invoice_no == null
+      ? ''
+      : String(order.accounting_invoice_no),
     accounting_invoice_no_updated_by: order.accounting_invoice_no_updated_by || '',
     accounting_invoice_no_updated_at: order.accounting_invoice_no_updated_at || '',
     created_at: order.created_at || '',
@@ -3609,9 +4443,14 @@ function _handleOrderDetailsWithRealId(order, orderId, user) {
   const invoiceMap = {};
   const safeShipments = allOrderShipments.map(item => {
     const enriched = _shipmentWithSummary_(item, orderMap, invoiceMap);
+    if (['admin', 'manager', 'accountant'].includes(userRole)) return enriched;
+    const safe = Object.assign({}, enriched);
+    delete safe.accounting_invoice_no;
+    delete safe.accounting_invoice_no_updated_by;
+    delete safe.accounting_invoice_no_updated_at;
     return userRole === 'warehouse'
-      ? _withoutFinancialFields(enriched, userRole)
-      : enriched;
+      ? _withoutFinancialFields(safe, userRole)
+      : safe;
   });
   const safeShipment = safeShipments.length
     ? Object.assign({}, safeShipments[safeShipments.length - 1], {
@@ -3859,20 +4698,15 @@ function _handleCreateOrder(body, user) {
         if (offer) _offerError_('OFFER_CHANGED', 'وحدة المنتج المرتبط بالعرض تغيرت');
         throw _apiError('INVALID_PRODUCT_UNIT', 'الوحدة المحددة غير معرفة للمنتج ' + code, false);
       }
-      let factor = 1;
-      let unitPrice;
-      if (unit === unit1) {
-        unitPrice = product.display_price;
-      } else if (unit === unit2) {
-        factor = Number(String(product.factor_2 || '').trim());
-        unitPrice = product.price_2;
-      } else {
-        factor = Number(String(product.factor_3 || '').trim());
-        unitPrice = product.price_3;
-      }
-      if (unit !== unit1 && (!Number.isFinite(factor) || factor <= 0)) {
+      const factor = _productFactorForUnit_(product, unit);
+      if (factor == null) {
         throw _apiError('UNIT_CONVERSION_REQUIRED', 'معامل تحويل الوحدة غير مضبوط للمنتج ' + code, false);
       }
+      const basePrice = product.display_price === '' ||
+          product.display_price == null
+        ? product.price
+        : product.display_price;
+      const unitPrice = _productPriceForUnit_(product, basePrice, unit);
       if (unitPrice == null || String(unitPrice).trim() === '' || !Number.isFinite(Number(unitPrice))) {
         if (Object.prototype.hasOwnProperty.call(item, 'expected_unit_price')) {
           _offerError_('PRICE_CHANGED', 'سعر الوحدة تغير، يرجى تحديث الطلب');
@@ -4658,6 +5492,119 @@ function _roundOrderAmount_(amount) {
   return Math.round((Number(amount) + Number.EPSILON) * 100) / 100;
 }
 
+function _customerPriceSuggestion_(
+    rows, customerId, product, selectedUnit, currency, excludeSourceId) {
+  const selectedFactor = _productFactorForUnit_(product, selectedUnit);
+  if (!customerId || !product || selectedFactor == null) return null;
+  const candidates = (rows || []).filter(row =>
+    String(row.customer_id || '') === String(customerId) &&
+    String(row.product_code || '') === String(product.code || '') &&
+    String(row.currency || '').trim().toUpperCase() ===
+      String(currency || '').trim().toUpperCase() &&
+    String(row.source_id || '') !== String(excludeSourceId || '') &&
+    Number.isFinite(Number(row.unit_price)) &&
+    Number(row.unit_price) >= 0 &&
+    Number.isFinite(Number(row.unit_factor)) &&
+    Number(row.unit_factor) > 0
+  );
+  candidates.sort((a, b) =>
+    Date.parse(b.updated_at || '') - Date.parse(a.updated_at || ''));
+  const latest = candidates[0];
+  if (!latest) return null;
+  return {
+    price: _roundOrderAmount_(
+      Number(latest.unit_price) / Number(latest.unit_factor) * selectedFactor
+    ),
+    factor: selectedFactor,
+    currency: String(currency || '').trim().toUpperCase(),
+    updated_at: latest.updated_at || '',
+    source_type: latest.source_type || '',
+    source_number: latest.source_number || ''
+  };
+}
+
+function _prepareCustomerPriceSuggestionRecords_(
+    order, items, user, savedItemDefinitions, sourceType) {
+  const customerId = String(order.customer_id || '').trim();
+  if (!customerId) return [];
+  _requireColumns_('Customer_Product_Prices', H.Customer_Product_Prices);
+  const productsByCode = new Map(
+    _all('Products').map(product => [String(product.code).trim(), product])
+  );
+  const orderId = String(order.order_id || '');
+  const orderNumber = String(order.order_number || orderId);
+  const currency = String(order.currency || 'USD').trim().toUpperCase();
+  const timestamp = _now();
+
+  return items.filter(item => item && item.status !== 'unavailable').map(item => {
+    const code = String(item.productId || item.code || '').trim();
+    const product = productsByCode.get(code);
+    const unit = String(item.unit || (product && product.unit_1) || '').trim();
+    const factor = _orderItemFactorForUnit_(
+      (savedItemDefinitions || {})[code],
+      product,
+      unit
+    );
+    const price = Number(
+      item.final_price !== undefined
+        ? item.final_price
+        : (item.price !== undefined ? item.price : item.unitPrice)
+    );
+    if (!product || !unit || factor == null ||
+        !Number.isFinite(price) || price < 0) {
+      throw _apiError(
+        'INVALID_PRICE_SUGGESTION',
+        'تعذر حفظ سعر مقترح بسبب منتج أو وحدة أو سعر غير صالح',
+        false
+      );
+    }
+
+    return {
+      customer_id: customerId,
+      product_code: code,
+      unit: unit,
+      unit_factor: factor,
+      currency: currency,
+      unit_price: _roundOrderAmount_(price),
+      source_type: sourceType || 'order',
+      source_id: orderId,
+      source_number: orderNumber,
+      updated_at: timestamp,
+      updated_by: user.user_id || ''
+    };
+  });
+}
+
+function _saveCustomerPriceSuggestions_(records) {
+  if (!records || !records.length) return;
+  const sheet = _ss().getSheetByName('Customer_Product_Prices');
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0].map(header => String(header).trim());
+
+  records.forEach(record => {
+    const existingIndex = data.findIndex((row, index) =>
+      index > 0 &&
+      String(row[headers.indexOf('customer_id')]) === record.customer_id &&
+      String(row[headers.indexOf('product_code')]) === record.product_code &&
+      String(row[headers.indexOf('unit')]) === record.unit &&
+      String(row[headers.indexOf('currency')]).trim().toUpperCase() === record.currency &&
+      String(row[headers.indexOf('source_id')]) === record.source_id
+    );
+    if (existingIndex < 1) {
+      _add('Customer_Product_Prices', record);
+      data.push(headers.map(header => record[header] == null ? '' : record[header]));
+    } else {
+      const nextRow = headers.map((header, index) =>
+        Object.prototype.hasOwnProperty.call(record, header)
+          ? record[header]
+          : data[existingIndex][index]
+      );
+      sheet.getRange(existingIndex + 1, 1, 1, headers.length).setValues([nextRow]);
+      data[existingIndex] = nextRow;
+    }
+  });
+}
+
 function _parseOrderDiscount_(input, subtotal) {
   const raw = String(input == null ? '' : input).trim();
   if (!raw) {
@@ -4803,6 +5750,7 @@ function _handleUpdateOrderPricing(body, user) {
       }
     }
     if (!currentOrderData) throw new Error('الطلب غير موجود');
+    _requireColumns_('Customer_Product_Prices', H.Customer_Product_Prices);
     _requireColumns_('Orders', [
       'order_id', 'subtotal', 'total', 'discount', 'discount_type',
       'discount_input', 'discount_reason', 'updated_at'
@@ -4851,6 +5799,23 @@ function _handleUpdateOrderPricing(body, user) {
         }
       }
     }
+    const savedItemDefinitions = {};
+    const productsByCode = new Map(
+      _all('Products').map(row => [String(row.code).trim(), row])
+    );
+    Object.keys(existingItems).forEach(code => {
+      const row = itemsData[existingItems[code] - 1];
+      savedItemDefinitions[code] = Object.fromEntries(
+        itemsHeaders.map((header, index) => [header, row[index]])
+      );
+    });
+    const customerPriceSuggestionRecords =
+      _prepareCustomerPriceSuggestionRecords_(
+        currentOrderData,
+        itemsUpdates,
+        user,
+        savedItemDefinitions
+      );
     if (offerItems.size) {
       const rejectOfferPricing = () => _offerError_('OFFER_REQUOTE_REQUIRED',
         'تعذر تسعير العرض بشروط مختلفة عن لقطة الطلب؛ يلزم إعادة اقتباس');
@@ -4988,13 +5953,38 @@ function _handleUpdateOrderPricing(body, user) {
       const unit = item.unit || '';
 
       // Additional tracking fields
-      const unitFactor = item.unit_factor;
-      const basePriceSnapshot = item.base_price_snapshot;
-      const unit1 = item.unit_1;
-      const unit2 = item.unit_2;
-      const factor2 = item.factor_2;
-      const unit3 = item.unit_3;
-      const factor3 = item.factor_3;
+      const savedDefinition = savedItemDefinitions[code];
+      const product = productsByCode.get(code);
+      const unitFactor =
+        _orderItemFactorForUnit_(savedDefinition, product, unit);
+      if (unitFactor == null) {
+        throw _apiError(
+          'INVALID_PRODUCT_UNIT',
+          'الوحدة أو عامل تحويلها غير صالح للمنتج ' + code,
+          false
+        );
+      }
+      const basePriceSnapshot = savedDefinition
+        ? savedDefinition.base_price_snapshot
+        : (product && product.display_price != null &&
+            String(product.display_price).trim() !== ''
+            ? Number(product.display_price)
+            : '');
+      const unit1 = savedDefinition
+        ? savedDefinition.unit_1
+        : (product && (product.unit_1 || product.unit) || '');
+      const unit2 = savedDefinition
+        ? savedDefinition.unit_2
+        : (product && product.unit_2 || '');
+      const factor2 = savedDefinition
+        ? savedDefinition.factor_2
+        : (product && product.factor_2 || '');
+      const unit3 = savedDefinition
+        ? savedDefinition.unit_3
+        : (product && product.unit_3 || '');
+      const factor3 = savedDefinition
+        ? savedDefinition.factor_3
+        : (product && product.factor_3 || '');
 
       if (existingItems[code]) {
         // تحديث بند موجود
@@ -5011,23 +6001,6 @@ function _handleUpdateOrderPricing(body, user) {
           const ufIdx = itemsHeaders.indexOf('unit_factor');
           if (ufIdx !== -1 && unitFactor !== undefined) itemsSheet.getRange(row, ufIdx + 1).setValue(unitFactor);
 
-          const bpsIdx = itemsHeaders.indexOf('base_price_snapshot');
-          if (bpsIdx !== -1 && basePriceSnapshot !== undefined) itemsSheet.getRange(row, bpsIdx + 1).setValue(basePriceSnapshot);
-
-          const u1Idx = itemsHeaders.indexOf('unit_1');
-          if (u1Idx !== -1 && unit1 !== undefined) itemsSheet.getRange(row, u1Idx + 1).setValue(unit1);
-
-          const u2Idx = itemsHeaders.indexOf('unit_2');
-          if (u2Idx !== -1 && unit2 !== undefined) itemsSheet.getRange(row, u2Idx + 1).setValue(unit2);
-
-          const f2Idx = itemsHeaders.indexOf('factor_2');
-          if (f2Idx !== -1 && factor2 !== undefined) itemsSheet.getRange(row, f2Idx + 1).setValue(factor2);
-
-          const u3Idx = itemsHeaders.indexOf('unit_3');
-          if (u3Idx !== -1 && unit3 !== undefined) itemsSheet.getRange(row, u3Idx + 1).setValue(unit3);
-
-          const f3Idx = itemsHeaders.indexOf('factor_3');
-          if (f3Idx !== -1 && factor3 !== undefined) itemsSheet.getRange(row, f3Idx + 1).setValue(factor3);
         }
       } else {
         // إضافة بند جديد
@@ -5086,6 +6059,7 @@ function _handleUpdateOrderPricing(body, user) {
       }
 
       _updateByField('Orders', 'order_id', orderId, updates);
+      _saveCustomerPriceSuggestions_(customerPriceSuggestionRecords);
       if (discountChanged) {
         _add('Audit_Log', {
           log_id: Utilities.getUuid(),
@@ -7825,6 +8799,7 @@ function _handleCreateSalesInvoiceV2(body, user) {
   let auditAdded = false;
   let itemsAdded = false;
   let movementsAdded = false;
+  let customerPriceSuggestionsWriteStarted = false;
   let boxKeysChanged = [];
   try {
     const prior = _all('Sales_Invoices').find(row =>
@@ -7891,12 +8866,22 @@ function _handleCreateSalesInvoiceV2(body, user) {
       if (!Number.isFinite(available)) {
         throw _apiError('INVALID_CENTRAL_STOCK', 'رصيد المخزون العام غير صالح للمادة ' + code, false);
       }
+      const unit = String(item.unit || product.unit_1 || product.unit || '').trim();
+      const unitFactor = _productFactorForUnit_(product, unit);
+      if (!unit || unitFactor == null) {
+        throw _apiError(
+          'INVALID_PRODUCT_UNIT',
+          'وحدة المادة أو معامل تحويلها غير صالح: ' + code,
+          false
+        );
+      }
       const lineTotal = _roundSalesAmount_(quantity * unitPrice, 'USD');
       subtotal += lineTotal;
       preparedItems.push({
         code: code,
         name: String(product.name || code),
-        unit: String(item.unit || product.unit_1 || ''),
+        unit: unit,
+        unit_factor: unitFactor,
         quantity: quantity,
         unit_price: _roundSalesAmount_(unitPrice, 'USD'),
         line_total: lineTotal,
@@ -7995,6 +8980,25 @@ function _handleCreateSalesInvoiceV2(body, user) {
       client_request_id: requestId,
     };
 
+    const customerPriceSuggestionRecords = isWalkIn
+      ? []
+      : _prepareCustomerPriceSuggestionRecords_(
+          {
+            customer_id: customerId,
+            order_id: invoiceId,
+            order_number: invoiceNumber,
+            currency: 'USD',
+          },
+          preparedItems.map(item => ({
+            code: item.code,
+            unit: item.unit,
+            final_price: item.unit_price,
+          })),
+          user,
+          productMap,
+          'invoice'
+        );
+
     preparedItems.forEach(item => {
       stockChanges.push({ code: item.code, before: item.available });
       _setProductStockQuantity_(item.code, item.available - item.quantity);
@@ -8078,6 +9082,10 @@ function _handleCreateSalesInvoiceV2(body, user) {
       }),
     });
     auditAdded = true;
+    if (customerPriceSuggestionRecords.length) {
+      customerPriceSuggestionsWriteStarted = true;
+      _saveCustomerPriceSuggestions_(customerPriceSuggestionRecords);
+    }
     if (creatorRole === 'salesperson') {
       _sendNotificationToRoles(
         'admin,accountant',
@@ -8144,6 +9152,17 @@ function _handleCreateSalesInvoiceV2(body, user) {
     if (auditAdded) {
       try { _deleteRowsByField_('Sales_Invoice_Audit', 'invoice_id', invoiceId); }
       catch (rollbackError) { rollbackErrors.push(String(rollbackError)); }
+    }
+    if (customerPriceSuggestionsWriteStarted) {
+      try {
+        _deleteRowsByField_(
+          'Customer_Product_Prices',
+          'source_id',
+          invoiceId
+        );
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
     }
     if (rollbackErrors.length) {
       Logger.log('Sales invoice v2 rollback failed for ' + invoiceId + ': ' + rollbackErrors.join('; '));
@@ -9607,7 +10626,9 @@ function _shipmentWithSummary_(shipment, orderById, invoiceById) {
   if (order) {
     copy.order_number = order.order_number || order.order_id || '';
     copy.customer_name = order.customer_name || '';
-    copy.accounting_invoice_no = order.accounting_invoice_no || '';
+    copy.accounting_invoice_no = order.accounting_invoice_no == null
+      ? ''
+      : String(order.accounting_invoice_no);
   } else if (invoice) {
     copy.order_number = '';
     copy.customer_name = invoice.customer_name || invoice.buyer_name || '';
@@ -11003,46 +12024,230 @@ function _handleSyncFromDrive(body, user) {
 
     if (csvData.length < 2) throw new Error('ملف CSV فارغ أو غير صالح');
 
-    const csvHeaders = csvData.shift().map(h => h.trim().toLowerCase());
+    const csvHeaders = csvData.shift().map(h => String(h).trim().toLowerCase());
+    const duplicateHeaders = csvHeaders.filter((header, index) =>
+      csvHeaders.indexOf(header) !== index
+    );
+    if (duplicateHeaders.length || !csvHeaders.includes('code')) {
+      throw _apiError(
+        'INVALID_PRODUCT_IMPORT_HEADERS',
+        'يجب أن يحتوي CSV على عمود code واحد فقط وألا تتكرر أسماء الأعمدة',
+        false
+      );
+    }
+
+    const restrictedPriceColumns = [
+      'display_price',
+      'price_2',
+      'price_3',
+      'factor_2',
+      'factor_3',
+      'wholesale_price',
+      'quantity_price',
+      'quantity_threshold',
+      'quantity_unit',
+    ];
+    if (restrictedPriceColumns.some(header => csvHeaders.includes(header)) &&
+        !['admin', 'accountant'].includes(_normalizeRole(user && user.role))) {
+      throw _apiError(
+        'FORBIDDEN',
+        'لا تملك صلاحية استيراد أسعار المنتجات',
+        false
+      );
+    }
+
     const productsSheet = _ss().getSheetByName('Products');
+    if (!productsSheet) {
+      throw _apiError('PRODUCTS_SHEET_MISSING', 'ورقة Products غير موجودة', false);
+    }
     const sheetData = productsSheet.getDataRange().getValues();
-    const sheetHeaders = sheetData[0];
+    if (!sheetData.length || !sheetData[0].length) {
+      throw _apiError('PRODUCTS_SCHEMA_NOT_READY', 'ورقة Products بلا عناوين', false);
+    }
+    const sheetHeaders = sheetData[0].map(header => String(header).trim());
+    const headerIndexes = {};
+    sheetHeaders.forEach((header, index) => {
+      headerIndexes[header.toLowerCase()] = index;
+    });
     const codeIdx = sheetHeaders.indexOf('code');
+    const unknownHeaders = csvHeaders.filter(header =>
+      !Object.prototype.hasOwnProperty.call(headerIndexes, header)
+    );
+    if (codeIdx < 0 || unknownHeaders.length) {
+      throw _apiError(
+        'INVALID_PRODUCT_IMPORT_HEADERS',
+        unknownHeaders.length
+          ? 'أعمدة CSV غير معروفة: ' + unknownHeaders.join(', ')
+          : 'ورقة Products لا تحتوي عمود code',
+        false
+      );
+    }
+
+    const numericColumns = new Set([
+      'quantity',
+      'minimum_stock',
+      'display_price',
+      'factor_2',
+      'factor_3',
+      'wholesale_price',
+      'quantity_price',
+      'quantity_threshold',
+    ]);
+    const nonNegativeColumns = new Set([
+      'quantity',
+      'minimum_stock',
+      'display_price',
+      'wholesale_price',
+      'quantity_price',
+    ]);
+    const positiveColumns = new Set([
+      'factor_2',
+      'factor_3',
+      'quantity_threshold',
+    ]);
+    const knownProducts = new Map();
+    for (let i = 1; i < sheetData.length; i++) {
+      const code = String(sheetData[i][codeIdx] || '').trim();
+      if (code) knownProducts.set(code, { rowIndex: i + 1, row: sheetData[i] });
+    }
+
+    const rowsToWrite = [];
+    const errors = [];
+    const warnings = [];
+    const importedCodes = new Set();
+    csvData.forEach((row, rowIndex) => {
+      if (!row.some(value => String(value || '').trim())) return;
+      const rowData = {};
+      csvHeaders.forEach((h, i) => { rowData[h] = row[i]; });
+      const code = String(rowData.code || '').trim();
+      const csvRow = rowIndex + 2;
+      const rowErrors = [];
+      if (!code) rowErrors.push('code مطلوب');
+      if (importedCodes.has(code)) rowErrors.push('رمز المنتج مكرر داخل الملف');
+      if (code) importedCodes.add(code);
+      const existing = knownProducts.get(code);
+      const nextRow = sheetHeaders.map((header, columnIndex) => {
+        const key = header.toLowerCase();
+        const value = rowData[key];
+        if (key === 'updated_at') return _now();
+        if (key === 'updated_by') return user ? user.user_id : 'SYSTEM';
+        if (key === 'price_2' || key === 'price_3') {
+          return existing ? existing.row[columnIndex] : '';
+        }
+        if (value === undefined) {
+          return existing ? existing.row[columnIndex] : '';
+        }
+        if (key === 'code') return code;
+        if (numericColumns.has(key)) {
+          const text = String(value == null ? '' : value).trim();
+          if (!text) {
+            return key === 'quantity' || key === 'minimum_stock' ? 0 : '';
+          }
+          const number = Number(text.replace(/,/g, ''));
+          if (!Number.isFinite(number) ||
+              (positiveColumns.has(key)
+                ? number <= 0
+                : (nonNegativeColumns.has(key) && number < 0))) {
+            rowErrors.push(key + ' يجب أن يكون رقمًا صالحًا وموجبًا عند الحاجة');
+            return '';
+          }
+          return number;
+        }
+        return value;
+      });
+
+      const valueFor = (key) => {
+        const index = headerIndexes[key];
+        return index === undefined ? '' : nextRow[index];
+      };
+      const unit1 = String(valueFor('unit_1') || '').trim();
+      const unit2 = String(valueFor('unit_2') || '').trim();
+      const unit3 = String(valueFor('unit_3') || '').trim();
+      const factor2 = valueFor('factor_2');
+      const factor3 = valueFor('factor_3');
+      const quantityPrice = valueFor('quantity_price');
+      const quantityThreshold = valueFor('quantity_threshold');
+      const quantityUnit = String(valueFor('quantity_unit') || '').trim();
+      const displayPrice = valueFor('display_price');
+      const wholesalePrice = valueFor('wholesale_price');
+
+      if (!unit1) rowErrors.push('unit_1 مطلوب');
+      if (unit2 &&
+          !rowErrors.some(message => message.startsWith('factor_2 ')) &&
+          (!Number.isFinite(Number(factor2)) || Number(factor2) <= 0)) {
+        rowErrors.push('factor_2 يجب أن يكون موجبًا عند استخدام unit_2');
+      }
+      if (unit3 &&
+          !rowErrors.some(message => message.startsWith('factor_3 ')) &&
+          (!Number.isFinite(Number(factor3)) || Number(factor3) <= 0)) {
+        rowErrors.push('factor_3 يجب أن يكون موجبًا عند استخدام unit_3');
+      }
+      const hasQuantityPrice = quantityPrice !== '' && quantityPrice != null;
+      const hasQuantityThreshold =
+        quantityThreshold !== '' && quantityThreshold != null;
+      if (hasQuantityPrice !== hasQuantityThreshold) {
+        rowErrors.push('quantity_price و quantity_threshold مطلوبان معًا');
+      }
+      if (hasQuantityPrice &&
+          ![unit1, unit2, unit3].filter(Boolean).includes(quantityUnit)) {
+        rowErrors.push('quantity_unit يجب أن يطابق إحدى وحدات المنتج');
+      }
+
+      if (!rowErrors.length) {
+        const price = Number(displayPrice);
+        const wholesale = wholesalePrice === '' ? null : Number(wholesalePrice);
+        const quantity = hasQuantityPrice ? Number(quantityPrice) : null;
+        const rowWarnings = [];
+        ['price_2', 'price_3'].forEach(key => {
+          if (csvHeaders.includes(key) && String(rowData[key] || '').trim()) {
+            rowWarnings.push(
+              key + ' حقل قديم وتم تجاهله؛ استخدم display_price مع معامل التحويل'
+            );
+          }
+        });
+        if (quantity != null && wholesale != null && quantity > wholesale) {
+          rowWarnings.push('سعر الكمية أعلى من سعر الجملة');
+        }
+        if (wholesale != null && Number.isFinite(price) && wholesale > price) {
+          rowWarnings.push('سعر الجملة أعلى من سعر المفرق');
+        }
+        if (quantity != null && Number.isFinite(price) && quantity > price) {
+          rowWarnings.push('سعر الكمية أعلى من سعر المفرق');
+        }
+        rowWarnings.forEach(message =>
+          warnings.push({ row: csvRow, code: code, message: message })
+        );
+        rowsToWrite.push({
+          rowIndex: existing ? existing.rowIndex : -1,
+          row: nextRow,
+        });
+      }
+      rowErrors.forEach(message =>
+        errors.push({ row: csvRow, code: code, message: message })
+      );
+    });
+
+    if (errors.length) {
+      return {
+        success: false,
+        message: 'لم تُستورد البيانات لوجود أخطاء في الملف',
+        details: { updated: 0, created: 0, errors: errors, warnings: warnings },
+      };
+    }
 
     let updated = 0;
     let created = 0;
-
-    csvData.forEach(row => {
-      const rowData = {};
-      csvHeaders.forEach((h, i) => { rowData[h] = row[i]; });
-      const code = rowData['code'];
-      if (!code) return;
-
-      let rowIndex = -1;
-      for (let i = 1; i < sheetData.length; i++) {
-        if (String(sheetData[i][codeIdx]) === String(code)) {
-          rowIndex = i + 1;
-          break;
-        }
-      }
-
-      const newRow = sheetHeaders.map(h => {
-        let val = rowData[h.toLowerCase()];
-        if (['quantity', 'display_price', 'factor_2', 'factor_3'].indexOf(h.toLowerCase()) > -1) {
-          return val ? Number(String(val).replace(/[^0-9.]/g, '')) : 0;
-        }
-        if (val !== undefined) return val;
-        if (h === 'updated_at') return _now();
-        if (h === 'updated_by') return user ? user.user_id : 'SYSTEM';
-        if (rowIndex > 0) return sheetData[rowIndex - 1][sheetHeaders.indexOf(h)];
-        return '';
-      });
-
-      if (rowIndex > 0) {
-        productsSheet.getRange(rowIndex, 1, 1, sheetHeaders.length).setValues([newRow]);
+    rowsToWrite.forEach(entry => {
+      if (entry.rowIndex > 0) {
+        productsSheet.getRange(
+          entry.rowIndex,
+          1,
+          1,
+          sheetHeaders.length
+        ).setValues([entry.row]);
         updated++;
       } else {
-        productsSheet.appendRow(newRow);
+        productsSheet.appendRow(entry.row);
         created++;
       }
     });
@@ -11050,9 +12255,10 @@ function _handleSyncFromDrive(body, user) {
     return {
       success: true,
       message: 'تمت المزامنة بنجاح: تحديث ' + updated + '، إضافة ' + created,
-      details: { updated, created }
+      details: { updated, created, errors: [], warnings: warnings }
     };
   } catch (e) {
+    if (e && e.code) throw e;
     throw new Error('خطأ في مزامنة Drive: ' + e.message);
   }
 }

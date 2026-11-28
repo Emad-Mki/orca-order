@@ -84,8 +84,7 @@ void main() {
     expect(item.stockAvailable, 12);
   });
 
-  test('product exposes only configured units and keeps independent prices',
-      () {
+  test('product derives alternate unit prices from the base unit price', () {
     final product = Product.fromJson({
       'code': 'MULTI',
       'name': 'Multi unit',
@@ -106,8 +105,8 @@ void main() {
       selectedUnit: 'box',
     );
     expect(boxItem.unitFactor, 12);
-    expect(boxItem.priceOffer, 25);
-    expect(boxItem.total, 50);
+    expect(boxItem.priceOffer, 36);
+    expect(boxItem.total, 72);
   });
 
   test('missing unit price is distinct from a configured zero price', () {
@@ -120,7 +119,7 @@ void main() {
       'price_2': '',
     });
     expect(product.priceForUnit('piece'), 0);
-    expect(product.priceForUnit('case'), isNull);
+    expect(product.priceForUnit('case'), 0);
     expect(product.availableUnits, ['piece', 'case']);
 
     final cachedMissingPrice = Product.fromJson({
@@ -128,6 +127,59 @@ void main() {
       'price_configured': false,
     });
     expect(cachedMissingPrice.priceForUnit('piece'), isNull);
+  });
+
+  test(
+      'fractional factors derive prices and compare tier quantities in base units',
+      () {
+    final product = Product.fromJson({
+      'code': 'FRACTIONAL',
+      'unit_1': 'piece',
+      'price': 2.35,
+      'unit_2': 'half-case',
+      'factor_2': 0.5,
+      'unit_3': 'case',
+      'factor_3': 2.5,
+      'quantity_price': 1.8,
+      'quantity_threshold': 12,
+      'quantity_unit': 'case',
+    });
+
+    expect(product.priceForUnit('half-case'), 1.18);
+    expect(product.priceForUnit('case'), 5.88);
+    expect(
+      product.qualifiesForQuantityPrice(quantity: 29, selectedUnit: 'piece'),
+      isFalse,
+    );
+    expect(
+      product.qualifiesForQuantityPrice(quantity: 30, selectedUnit: 'piece'),
+      isTrue,
+    );
+    expect(product.quantityPriceForUnit('case'), 4.5);
+  });
+
+  test('restricted cached pricing can be redacted without losing retail prices',
+      () {
+    final product = Product.fromJson({
+      'code': 'PRIVATE',
+      'unit_1': 'piece',
+      'price': 10,
+      'unit_2': 'box',
+      'factor_2': 2,
+      'wholesale_price': 7,
+      'quantity_price': 6,
+      'quantity_threshold': 4,
+      'quantity_unit': 'box',
+    });
+
+    final visibleProduct = product.withoutRestrictedPricing();
+
+    expect(visibleProduct.price, 10);
+    expect(visibleProduct.priceForUnit('box'), 20);
+    expect(visibleProduct.wholesalePrice, isNull);
+    expect(visibleProduct.quantityPrice, isNull);
+    expect(visibleProduct.quantityThreshold, isNull);
+    expect(visibleProduct.quantityUnit, isNull);
   });
 
   test('conflicting duplicate unit definitions are surfaced', () {

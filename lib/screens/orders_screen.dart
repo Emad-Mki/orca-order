@@ -631,15 +631,39 @@ class _OrdersScreenState extends State<OrdersScreen>
                                                 .isNotEmpty ==
                                             true)
                                       Padding(
-                                        padding: const EdgeInsets.only(top: 8),
-                                        child: Text(
-                                          'الفاتورة المحاسبية: ${order.accountingInvoiceNo}',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall,
+                                        padding:
+                                            const EdgeInsetsDirectional.only(
+                                                top: 4, start: 22),
+                                        child: Align(
+                                          alignment:
+                                              AlignmentDirectional.centerStart,
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceContainerHighest,
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
+                                            ),
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 3,
+                                              ),
+                                              child: Text(
+                                                'رقم الفاتورة الأصلي: ${order.accountingInvoiceNo}',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .labelSmall,
+                                              ),
+                                            ),
+                                          ),
                                         ),
                                       ),
-                                    const SizedBox(height: 12),
+                                    const SizedBox(height: 8),
                                     if (canViewAll) ...[
                                       Row(
                                         children: [

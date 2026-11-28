@@ -138,7 +138,7 @@ void main() {
     expect(rows.single.items.first.price, 5);
     expect(rows.single.items.last.unit, 'علبة');
     expect(rows.single.items.last.quantity, 1);
-    expect(rows.single.items.last.price, 40);
+    expect(rows.single.items.last.price, 50);
     await tester.longPress(find.byType(ProductCardWidget).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('إضافة إلى طلب جديد'));

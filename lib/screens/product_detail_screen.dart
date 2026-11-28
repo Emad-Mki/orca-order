@@ -5,13 +5,14 @@ import '../models/models.dart';
 import '../utils/utils.dart';
 import '../widgets/product_availability_badge.dart';
 import '../widgets/product_image_widget.dart';
+import '../services/api_service.dart';
 import 'new_order_screen.dart';
 
 String _formatProductQuantity(double value) => value == value.roundToDouble()
     ? value.toInt().toString()
     : value.toString();
 
-class ProductDetailScreen extends StatelessWidget {
+class ProductDetailScreen extends StatefulWidget {
   final Product product;
   final Map<String, dynamic>? session;
   final VoidCallback? onAddToOrder;
@@ -24,10 +25,25 @@ class ProductDetailScreen extends StatelessWidget {
   });
 
   @override
+  State<ProductDetailScreen> createState() => _ProductDetailScreenState();
+}
+
+class _ProductDetailScreenState extends State<ProductDetailScreen> {
+  late Product _product;
+
+  Product get product => _product;
+
+  @override
+  void initState() {
+    super.initState();
+    _product = widget.product;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final role = PermissionHelper.fromString(
-      session?['role']?.toString() ?? 'user',
+      widget.session?['role']?.toString() ?? 'user',
     );
     final canSeeStock = PermissionHelper.hasPermission(
       role,
@@ -41,6 +57,14 @@ class ProductDetailScreen extends StatelessWidget {
           role,
           AppPermission.viewSellingPriceOnly,
         );
+    final wholesalePermission = widget.session?['can_view_wholesale_price'];
+    final canSeeWholesalePrice = role == AppRole.admin ||
+        role == AppRole.accountant ||
+        wholesalePermission == true ||
+        wholesalePermission == 1 ||
+        wholesalePermission == '1' ||
+        wholesalePermission == 'true';
+    final canEditPrices = role == AppRole.admin || role == AppRole.accountant;
     final canCreateOrder = PermissionHelper.hasPermission(
       role,
       AppPermission.createOrder,
@@ -53,7 +77,7 @@ class ProductDetailScreen extends StatelessWidget {
       backgroundColor: theme.colorScheme.surface,
       body: CustomScrollView(
         slivers: [
-          _buildImageAppBar(context),
+          _buildImageAppBar(context, canEditPrices: canEditPrices),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
@@ -63,7 +87,12 @@ class ProductDetailScreen extends StatelessWidget {
                   _buildTitleAndStatus(context, availability),
                   if (canSeePrice) ...[
                     const SizedBox(height: 18),
-                    _buildPriceCard(context),
+                    _buildPriceCard(
+                      context,
+                      canViewWholesale: canSeeWholesalePrice,
+                      canViewQuantityPrice:
+                          role == AppRole.admin || role == AppRole.accountant,
+                    ),
                   ],
                   if (canSeeStock && product.stockQuantity != null) ...[
                     const SizedBox(height: 12),
@@ -103,12 +132,252 @@ class ProductDetailScreen extends StatelessWidget {
       product.unit.trim().isNotEmpty ||
       product.minOrderQuantity != null;
 
+  Future<void> _showEditPricesDialog() async {
+    final retail = TextEditingController(
+      text: product.priceConfigured ? product.price.toString() : '',
+    );
+    final wholesale = TextEditingController(
+      text: product.wholesalePrice?.toString() ?? '',
+    );
+    final quantityPrice = TextEditingController(
+      text: product.quantityPrice?.toString() ?? '',
+    );
+    final quantityThreshold = TextEditingController(
+      text: product.quantityThreshold?.toString() ?? '',
+    );
+    var selectedQuantityUnit = product.quantityUnit ?? product.unit;
+    var saving = false;
+    String? errorText;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final retailValue = double.tryParse(retail.text.trim());
+          final wholesaleValue = double.tryParse(wholesale.text.trim());
+          final quantityValue = double.tryParse(quantityPrice.text.trim());
+          final priceWarning = (retailValue != null &&
+                  wholesaleValue != null &&
+                  wholesaleValue > retailValue) ||
+              (retailValue != null &&
+                  quantityValue != null &&
+                  quantityValue > retailValue) ||
+              (wholesaleValue != null &&
+                  quantityValue != null &&
+                  quantityValue > wholesaleValue);
+          return AlertDialog(
+            title: const Text('أسعار المنتج للوحدة الأساسية'),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: retail,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: 'السعر (${product.unit})',
+                        suffixText: product.currency,
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    TextField(
+                      controller: wholesale,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: 'سعر الجملة (${product.unit})',
+                        suffixText: product.currency,
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    TextField(
+                      controller: quantityPrice,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: 'سعر الكمية (${product.unit})',
+                        suffixText: product.currency,
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    TextField(
+                      controller: quantityThreshold,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'حد الكمية',
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    if (product.availableUnits.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        initialValue: product.availableUnits
+                                .contains(selectedQuantityUnit)
+                            ? selectedQuantityUnit
+                            : product.unit,
+                        decoration:
+                            const InputDecoration(labelText: 'وحدة حد الكمية'),
+                        items: product.availableUnits
+                            .map((unit) => DropdownMenuItem(
+                                  value: unit,
+                                  child: Text(unit),
+                                ))
+                            .toList(),
+                        onChanged: saving
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  setDialogState(
+                                      () => selectedQuantityUnit = value);
+                                }
+                              },
+                      ),
+                    if (priceWarning)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          'تحقق من ترتيب الأسعار الافتراضية (الكمية ≤ الجملة ≤ السعر).',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.tertiary,
+                          ),
+                        ),
+                      ),
+                    if (errorText != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          errorText!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed:
+                    saving ? null : () => Navigator.pop(dialogContext, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final retailValue = double.tryParse(retail.text.trim());
+                        final wholesaleValue =
+                            double.tryParse(wholesale.text.trim());
+                        final quantityValue =
+                            double.tryParse(quantityPrice.text.trim());
+                        final thresholdValue =
+                            double.tryParse(quantityThreshold.text.trim());
+                        final hasQuantityPrice =
+                            quantityPrice.text.trim().isNotEmpty;
+                        final hasThreshold =
+                            quantityThreshold.text.trim().isNotEmpty;
+                        if (retailValue == null ||
+                            !retailValue.isFinite ||
+                            retailValue < 0 ||
+                            (wholesale.text.trim().isNotEmpty &&
+                                (wholesaleValue == null ||
+                                    !wholesaleValue.isFinite ||
+                                    wholesaleValue < 0)) ||
+                            hasQuantityPrice != hasThreshold ||
+                            (hasQuantityPrice &&
+                                (quantityValue == null ||
+                                    !quantityValue.isFinite ||
+                                    quantityValue < 0 ||
+                                    thresholdValue == null ||
+                                    !thresholdValue.isFinite ||
+                                    thresholdValue <= 0 ||
+                                    selectedQuantityUnit.isEmpty))) {
+                          setDialogState(() => errorText =
+                              'تحقق من الأسعار، وحدد السعر والحد معًا لسعر الكمية.');
+                          return;
+                        }
+                        setDialogState(() {
+                          saving = true;
+                          errorText = null;
+                        });
+                        try {
+                          final response =
+                              await ApiService().products.updateProductPrice(
+                                    code: product.code,
+                                    price: retailValue,
+                                    currency: product.currency,
+                                    wholesalePrice: wholesaleValue,
+                                    quantityPrice: quantityValue,
+                                    quantityThreshold: thresholdValue,
+                                    quantityUnit: selectedQuantityUnit,
+                                    clearWholesalePrice:
+                                        wholesale.text.trim().isEmpty,
+                                    clearQuantityPricing: !hasQuantityPrice,
+                                  );
+                          if (response['ok'] != true &&
+                              response['success'] != true) {
+                            throw Exception(
+                                response['error'] ?? 'تعذر تحديث أسعار المنتج');
+                          }
+                          if (!mounted) return;
+                          setState(() {
+                            _product = Product.fromJson({
+                              ...product.toJson(),
+                              'price': retailValue,
+                              'price_configured': true,
+                              'wholesale_price': wholesaleValue,
+                              'quantity_price': quantityValue,
+                              'quantity_threshold': thresholdValue,
+                              'quantity_unit': selectedQuantityUnit,
+                            });
+                          });
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext, true);
+                          }
+                        } catch (error) {
+                          setDialogState(() {
+                            saving = false;
+                            errorText = error.toString();
+                          });
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('حفظ'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    retail.dispose();
+    wholesale.dispose();
+    quantityPrice.dispose();
+    quantityThreshold.dispose();
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تحديث أسعار المنتج')),
+      );
+    }
+  }
+
   String? get _heroTag {
     if (product.id == null && product.code.isEmpty) return null;
     return 'product_image_${product.id ?? product.code}';
   }
 
-  Widget _buildImageAppBar(BuildContext context) {
+  Widget _buildImageAppBar(
+    BuildContext context, {
+    required bool canEditPrices,
+  }) {
     final height = (MediaQuery.sizeOf(context).width * 0.78)
         .clamp(260.0, 360.0)
         .toDouble();
@@ -123,6 +392,14 @@ class ProductDetailScreen extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
+      actions: [
+        if (canEditPrices)
+          IconButton(
+            tooltip: 'تعديل أسعار المنتج',
+            onPressed: _showEditPricesDialog,
+            icon: const Icon(Icons.edit_outlined),
+          ),
+      ],
       flexibleSpace: FlexibleSpaceBar(
         background: Semantics(
           label: 'عرض صورة المنتج بالحجم الكامل',
@@ -213,7 +490,11 @@ class ProductDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildPriceCard(BuildContext context) {
+  Widget _buildPriceCard(
+    BuildContext context, {
+    required bool canViewWholesale,
+    required bool canViewQuantityPrice,
+  }) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     return Container(
@@ -228,13 +509,21 @@ class ProductDetailScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'سعر البيع',
+            'السعر${product.unit.isEmpty ? '' : ' (${product.unit})'}',
             style: theme.textTheme.labelLarge?.copyWith(
               color: colors.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 5),
-          if (!product.priceConfigured)
+          if (product.price == 0)
+            Text(
+              'يرجى التواصل لمعرفة السعر',
+              style: theme.textTheme.titleLarge?.copyWith(
+                color: colors.error,
+                fontWeight: FontWeight.bold,
+              ),
+            )
+          else if (!product.priceConfigured)
             Text(
               'السعر غير مضبوط',
               style: theme.textTheme.titleLarge?.copyWith(
@@ -273,6 +562,57 @@ class ProductDetailScreen extends StatelessWidget {
                   ),
               ],
             ),
+          for (final unit in product.availableUnits.where(
+            (unit) => unit != product.unit,
+          ))
+            if (product.priceForUnit(unit) case final unitPrice?)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'السعر ($unit): ${formatMoneyShort(unitPrice, currency: product.currency)}',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+          if (canViewWholesale && product.wholesalePrice != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'سعر الجملة (${product.unit}): ${formatMoneyShort(product.wholesalePrice!, currency: product.currency)}',
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: theme.brightness == Brightness.dark
+                    ? Colors.green.shade300
+                    : Colors.green.shade800,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            for (final unit in product.availableUnits.where(
+              (unit) => unit != product.unit,
+            ))
+              if (product.wholesalePriceForUnit(unit) case final unitPrice?)
+                Text(
+                  'الجملة ($unit): ${formatMoneyShort(unitPrice, currency: product.currency)}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.brightness == Brightness.dark
+                        ? Colors.green.shade300
+                        : Colors.green.shade800,
+                  ),
+                ),
+          ],
+          if (canViewQuantityPrice &&
+              product.quantityPrice != null &&
+              product.quantityThreshold != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'سعر الكمية: ${formatMoneyShort(product.quantityPrice!, currency: product.currency)} / ${product.unit} عند ${_formatProductQuantity(product.quantityThreshold!)} ${product.quantityUnit ?? product.unit}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.brightness == Brightness.dark
+                    ? colors.tertiary
+                    : colors.tertiary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -471,16 +811,16 @@ class ProductDetailScreen extends StatelessWidget {
             height: 50,
             child: FilledButton.icon(
               onPressed: () {
-                if (onAddToOrder != null) {
+                if (widget.onAddToOrder != null) {
                   Navigator.pop(context);
-                  onAddToOrder!();
+                  widget.onAddToOrder!();
                   return;
                 }
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => NewOrderScreen(
-                      session: session ?? {},
+                      session: widget.session ?? {},
                       initialProduct: product,
                     ),
                   ),

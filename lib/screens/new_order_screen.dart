@@ -1708,8 +1708,22 @@ class _NewOrderScreenState extends State<NewOrderScreen>
                                     itemCount: _filteredProducts.length,
                                     itemBuilder: (context, index) {
                                       final p = _filteredProducts[index];
+                                      final role = PermissionHelper.fromString(
+                                        widget.session['role']?.toString() ??
+                                            '',
+                                      );
+                                      final wholesalePermission =
+                                          widget.session[
+                                              'can_view_wholesale_price'];
                                       return ProductCardWidget(
                                         product: p,
+                                        canViewWholesale:
+                                            role == AppRole.admin ||
+                                                role == AppRole.accountant ||
+                                                wholesalePermission == true ||
+                                                wholesalePermission == 1 ||
+                                                wholesalePermission == '1' ||
+                                                wholesalePermission == 'true',
                                         onTap: () => _showAddItemDialog(p),
                                         onLongPress: () =>
                                             _showProductDetails(p),

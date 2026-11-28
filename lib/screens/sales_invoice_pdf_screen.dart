@@ -43,12 +43,16 @@ class _SalesInvoicePdfScreenState extends State<SalesInvoicePdfScreen> {
     final exportedAt = DateTime.now();
     final items = widget.invoice['items'];
     if (items is! List) throw StateError('بنود الفاتورة غير متوفرة');
+    final invoiceForPdf = Map<String, dynamic>.from(widget.invoice);
+    if (!const {'admin', 'manager', 'accountant'}.contains(roleName)) {
+      invoiceForPdf.remove('accounting_invoice_no');
+    }
     final codes = items
         .whereType<Map>()
         .map((item) => item['code']?.toString() ?? '')
         .where((code) => code.isNotEmpty);
     final images = await imageStore.read(invoiceId, codes);
-    final bytes = await SalesInvoicePdf.build(widget.invoice,
+    final bytes = await SalesInvoicePdf.build(invoiceForPdf,
         template: template.toMap(),
         logoBytes: template.logoBytes,
         productImages: images,
@@ -64,7 +68,7 @@ class _SalesInvoicePdfScreenState extends State<SalesInvoicePdfScreen> {
             role: role,
           );
     final version = SalesInvoicePdf.templateVersion;
-    final fileName = SalesInvoicePdf.exportFileName(widget.invoice, exportedAt);
+    final fileName = SalesInvoicePdf.exportFileName(invoiceForPdf, exportedAt);
     if (archive != null) {
       await archive.save(
           bytes: bytes, invoiceId: invoiceId, templateVersion: version);

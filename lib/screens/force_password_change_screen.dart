@@ -16,6 +16,7 @@ class _ForcePasswordChangeScreenState extends State<ForcePasswordChangeScreen> {
   final _newPassword = TextEditingController();
   final _confirmPassword = TextEditingController();
   bool _saving = false;
+  bool _showPasswords = false;
   String? _error;
 
   @override
@@ -28,12 +29,21 @@ class _ForcePasswordChangeScreenState extends State<ForcePasswordChangeScreen> {
 
   Future<void> _submit() async {
     final nextPassword = _newPassword.text;
-    if (nextPassword.length < 8 ||
+    if (nextPassword.length < 10 ||
         !RegExp('[A-Za-z]').hasMatch(nextPassword) ||
-        !RegExp(r'\d').hasMatch(nextPassword)) {
+        !RegExp(r'\d').hasMatch(nextPassword) ||
+        RegExp(
+          r'^(password|password123|1234567890|qwerty123|admin123|welcome1)$',
+          caseSensitive: false,
+        ).hasMatch(nextPassword)) {
       setState(() {
-        _error = 'استخدم 8 محارف على الأقل مع حرف إنجليزي ورقم.';
+        _error =
+            'استخدم 10 محارف على الأقل مع أحرف وأرقام وتجنب الكلمات الشائعة.';
       });
+      return;
+    }
+    if (nextPassword == _oldPassword.text) {
+      setState(() => _error = 'اختر كلمة مرور مختلفة عن الحالية.');
       return;
     }
     if (nextPassword != _confirmPassword.text) {
@@ -102,21 +112,35 @@ class _ForcePasswordChangeScreenState extends State<ForcePasswordChangeScreen> {
                     const SizedBox(height: 16),
                     TextField(
                       controller: _oldPassword,
-                      obscureText: true,
+                      obscureText: !_showPasswords,
                       decoration: const InputDecoration(
                           labelText: 'كلمة المرور الحالية'),
                     ),
                     TextField(
                       controller: _newPassword,
-                      obscureText: true,
+                      obscureText: !_showPasswords,
                       decoration: const InputDecoration(
                           labelText: 'كلمة المرور الجديدة'),
                     ),
                     TextField(
                       controller: _confirmPassword,
-                      obscureText: true,
+                      obscureText: !_showPasswords,
                       decoration:
                           const InputDecoration(labelText: 'تأكيد كلمة المرور'),
+                    ),
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: TextButton.icon(
+                        onPressed: () => setState(
+                          () => _showPasswords = !_showPasswords,
+                        ),
+                        icon: Icon(_showPasswords
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        label: Text(_showPasswords
+                            ? 'إخفاء كلمات المرور'
+                            : 'إظهار كلمات المرور'),
+                      ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),

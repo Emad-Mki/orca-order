@@ -11,7 +11,7 @@ import '../utils/shipment_summary.dart';
 
 /// Renders the invoice using the HTML template and Headless WebView for PDF generation.
 class SalesInvoicePdf {
-  static const templateVersion = 'orca-invoice-a4-v2';
+  static const templateVersion = 'orca-invoice-a4-v3';
 
   // Keep these constants for backward compatibility if referenced elsewhere.
   static const defaultColumns = [
@@ -162,6 +162,8 @@ class SalesInvoicePdf {
       'font_times_regular_src': fontTimesRegular,
       'font_times_bold_src': fontTimesBold,
       'invoice_number': (invoice['invoice_number'] ?? '').toString(),
+      'accounting_invoice_no':
+          (invoice['accounting_invoice_no'] ?? '').toString().trim(),
       'invoice_date': (invoice['invoice_date'] ?? '').toString(),
       'customer_name': (invoice['customer_name'] ?? '').toString(),
       'invoice_type': invoiceType,

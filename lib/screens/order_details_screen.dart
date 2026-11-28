@@ -1117,6 +1117,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
       await provider.fetchOrderDetails(order.orderId);
       if (mounted) {
+        await context.read<OrdersProvider>().syncAfterMutation();
+      }
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('تم حفظ رقم الفاتورة المحاسبي'),
         ));
@@ -1297,7 +1300,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           order: provider.currentOrder!,
         ),
       ),
-    ).then((_) => _fetchDetails()); // Refresh when back
+    ).then((saved) async {
+      await _fetchDetails();
+      if (saved == true && mounted) {
+        await context.read<OrdersProvider>().syncAfterMutation();
+      }
+    });
   }
 
   Future<void> _editOrder(
@@ -1337,10 +1345,18 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         PermissionHelper.hasPermission(
             role, AppPermission.viewSellingPriceOnly);
     final hasPricing = OrderStatusMapper.hasPricing(order.status);
+    final canViewAccountingInvoiceNo = const {
+      AppRole.admin,
+      AppRole.manager,
+      AppRole.accountant,
+    }.contains(role);
     final snapshot = <String, dynamic>{
       'invoice_id': 'order-${order.orderId}',
       'invoice_number': order.orderNumber,
       'kind': 'order',
+      if (canViewAccountingInvoiceNo &&
+          order.accountingInvoiceNo?.trim().isNotEmpty == true)
+        'accounting_invoice_no': order.accountingInvoiceNo!.trim(),
       'status': order.status,
       'status_label': _getStatusText(order.status),
       'invoice_date': order.createdAt?.toIso8601String(),

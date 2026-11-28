@@ -206,7 +206,10 @@ void main() {
                 context,
                 MaterialPageRoute(
                   builder: (_) => const ProfileScreen(
-                    session: {'full_name': 'الاسم الأصلي'},
+                    session: {
+                      'full_name': 'الاسم الأصلي',
+                      'role': 'accountant',
+                    },
                   ),
                 ),
               ),
@@ -231,6 +234,19 @@ void main() {
     await tester.tap(find.text('تجاهل التعديلات'));
     await tester.pumpAndSettle();
     expect(find.text('open profile'), findsOneWidget);
+  });
+
+  testWidgets('ordinary users cannot edit their full name', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ProfileScreen(
+          session: {'full_name': 'الاسم الأصلي', 'role': 'customer'},
+        ),
+      ),
+    );
+    final nameField = tester.widget<TextField>(find.byType(TextField).first);
+    expect(nameField.readOnly, isTrue);
+    expect(nameField.controller!.text, 'الاسم الأصلي');
   });
 }
 

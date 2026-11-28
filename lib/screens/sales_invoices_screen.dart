@@ -1038,309 +1038,371 @@ class _SalesInvoicesScreenState extends State<SalesInvoicesScreen> {
               label: const Text('فاتورة جديدة'),
             )
           : null,
-      body: Column(
-        children: [
+      body: CustomScrollView(
+        slivers: [
           if (_offline)
-            const Padding(
-              padding: EdgeInsets.all(8),
-              child: Text(
-                  'دون اتصال: البيانات المحفوظة قديمة وغير مكتملة، وقد توجد فواتير غير معروضة. التحصيل والإلغاء متوقفان.'),
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(8),
+                child: Text(
+                    'دون اتصال: البيانات المحفوظة قديمة وغير مكتملة، وقد توجد فواتير غير معروضة. التحصيل والإلغاء متوقفان.'),
+              ),
             ),
           if (_storageError != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(_storageError!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(_storageError!,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
             ),
           if (!_loading && _error == null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (!_offline && _summary.isNotEmpty) ...[
-                        Text('الفواتير: ${_summary['invoices_count'] ?? 0}'),
-                        Text(
-                          'المحصل ${formatMoneyShort(financial['paid_usd'] ?? 0, currency: 'USD')} · '
-                          'المتبقي ${formatMoneyShort(financial['outstanding_usd'] ?? 0, currency: 'USD')}',
-                        ),
-                        Text(
-                          'جزئية ${financial['partial_count'] ?? 0} · '
-                          'غير مدفوعة ${financial['unpaid_count'] ?? 0}',
-                        ),
-                        ...sales.entries.map(
-                          (entry) => Text(
-                            'مبيعات ${entry.key}: '
-                            '${(entry.value as num).toStringAsFixed(2)}',
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (!_offline && _summary.isNotEmpty) ...[
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 4,
+                            children: [
+                              Text(
+                                  'الفواتير: ${_summary['invoices_count'] ?? 0}'),
+                              Text(
+                                'المحصل ${formatMoneyShort(financial['paid_usd'] ?? 0, currency: 'USD')}',
+                              ),
+                              Text(
+                                'المتبقي ${formatMoneyShort(financial['outstanding_usd'] ?? 0, currency: 'USD')}',
+                              ),
+                              Text('جزئية ${financial['partial_count'] ?? 0}'),
+                              Text(
+                                  'غير مدفوعة ${financial['unpaid_count'] ?? 0}'),
+                            ],
                           ),
-                        ),
-                      ] else if (!_offline)
-                        const Text('الملخص غير متاح'),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final width = constraints.maxWidth < 380
-                                ? constraints.maxWidth
-                                : 180.0;
-                            return Wrap(
-                              spacing: 8,
-                              runSpacing: 4,
-                              crossAxisAlignment: WrapCrossAlignment.center,
+                          if (sales.isNotEmpty || receipts.isNotEmpty)
+                            ExpansionTile(
+                              tilePadding: EdgeInsets.zero,
+                              childrenPadding:
+                                  const EdgeInsetsDirectional.only(start: 8),
+                              visualDensity: VisualDensity.compact,
+                              title: const Text('تفاصيل المبيعات والقبض'),
                               children: [
-                                if (_canFilterAllSales)
-                                  SizedBox(
-                                    width: width,
-                                    child: DropdownButtonFormField<String?>(
-                                      initialValue: _sellerFilter,
-                                      isExpanded: true,
-                                      decoration: const InputDecoration(
-                                          labelText: 'المندوب'),
-                                      items: [
-                                        const DropdownMenuItem<String?>(
-                                          value: null,
-                                          child: Text('كل المندوبين'),
-                                        ),
-                                        ..._salespeople.map((seller) =>
-                                            DropdownMenuItem<String?>(
-                                              value:
-                                                  seller['user_id'].toString(),
-                                              child: Text(
-                                                seller['full_name']
-                                                        ?.toString() ??
-                                                    '',
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            )),
-                                      ],
-                                      onChanged: (value) {
-                                        setState(() => _sellerFilter = value);
-                                        _load();
-                                      },
+                                ...sales.entries.map(
+                                  (entry) => ListTile(
+                                    dense: true,
+                                    title: Text('مبيعات ${entry.key}'),
+                                    trailing: Text(
+                                      (entry.value as num).toStringAsFixed(2),
                                     ),
                                   ),
-                                if (_canFilterAllSales &&
-                                    widget.customerId == null)
-                                  SizedBox(
-                                    width: width,
-                                    child: DropdownButtonFormField<String?>(
-                                      initialValue: _customerFilter,
-                                      isExpanded: true,
-                                      decoration: const InputDecoration(
-                                          labelText: 'الزبون'),
-                                      items: [
-                                        const DropdownMenuItem<String?>(
-                                          value: null,
-                                          child: Text('كل الزبائن'),
-                                        ),
-                                        ..._customers.map((customer) =>
-                                            DropdownMenuItem<String?>(
-                                              value: customer['customer_id']
-                                                  .toString(),
-                                              child: Text(
-                                                customer['full_name']
-                                                        ?.toString() ??
-                                                    '',
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            )),
-                                      ],
-                                      onChanged: (value) {
-                                        setState(() => _customerFilter = value);
-                                        _load();
-                                      },
+                                ),
+                                ...receipts.entries.map(
+                                  (entry) => ListTile(
+                                    dense: true,
+                                    title: Text('مقبوض ${entry.key}'),
+                                    trailing: Text(
+                                      (entry.value as num).toStringAsFixed(2),
                                     ),
                                   ),
-                                SizedBox(
-                                  width: width,
-                                  child: DropdownButtonFormField<String>(
-                                    initialValue: _statusFilter,
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                        labelText: 'حالة الفاتورة'),
-                                    items: const [
-                                      DropdownMenuItem(
-                                          value: 'all',
-                                          child: Text('كل الحالات')),
-                                      DropdownMenuItem(
-                                          value: 'posted',
-                                          child: Text('مرحلة')),
-                                      DropdownMenuItem(
-                                          value: 'voided',
-                                          child: Text('ملغاة')),
-                                    ],
-                                    onChanged: (value) {
-                                      setState(
-                                          () => _statusFilter = value ?? 'all');
-                                      _load();
-                                    },
-                                  ),
                                 ),
-                                SizedBox(
-                                  width: width,
-                                  child: DropdownButtonFormField<String>(
-                                    initialValue: _financialFilter,
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                        labelText: 'حالة السداد'),
-                                    items: const [
-                                      DropdownMenuItem(
-                                          value: 'all',
-                                          child: Text('كل السداد')),
-                                      DropdownMenuItem(
-                                          value: 'unpaid',
-                                          child: Text('غير مدفوعة')),
-                                      DropdownMenuItem(
-                                          value: 'partial',
-                                          child: Text('جزئية')),
-                                      DropdownMenuItem(
-                                          value: 'paid', child: Text('مسددة')),
-                                    ],
-                                    onChanged: (value) {
-                                      setState(() =>
-                                          _financialFilter = value ?? 'all');
-                                      _load();
-                                    },
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: width,
-                                  child: DropdownButtonFormField<String>(
-                                    initialValue: _paymentFilter,
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                        labelText: 'طريقة القبض'),
-                                    items: const [
-                                      DropdownMenuItem(
-                                          value: 'all',
-                                          child: Text('كل الطرق')),
-                                      DropdownMenuItem(
-                                          value: 'cash_syp',
-                                          child: Text('نقدي سوري')),
-                                      DropdownMenuItem(
-                                          value: 'cash_usd',
-                                          child: Text('نقدي دولار')),
-                                      DropdownMenuItem(
-                                          value: 'sham_cash_syp',
-                                          child: Text('شام كاش سوري')),
-                                      DropdownMenuItem(
-                                          value: 'sham_cash_usd',
-                                          child: Text('شام كاش دولار')),
-                                    ],
-                                    onChanged: (value) {
-                                      setState(() =>
-                                          _paymentFilter = value ?? 'all');
-                                      _load();
-                                    },
-                                  ),
-                                ),
-                                TextButton.icon(
-                                  onPressed: _selectDateRange,
-                                  icon: const Icon(Icons.date_range),
-                                  label: Text(_dateRange == null
-                                      ? 'الفترة'
-                                      : '${_dateRange!.start.toString().substring(0, 10)} – '
-                                          '${_dateRange!.end.toString().substring(0, 10)}'),
-                                ),
-                                if (_dateRange != null)
-                                  IconButton(
-                                    onPressed: () {
-                                      setState(() => _dateRange = null);
-                                      _load();
-                                    },
-                                    tooltip: 'مسح الفترة',
-                                    icon: const Icon(Icons.clear),
-                                  ),
                               ],
-                            );
-                          },
-                        ),
-                      ),
-                      if (!_offline && _summary.isNotEmpty)
-                        ...receipts.entries.map(
-                          (entry) => Text(
-                            'مقبوض ${entry.key}: '
-                            '${(entry.value as num).toStringAsFixed(2)}',
+                            ),
+                        ] else if (!_offline)
+                          const Text('الملخص غير متاح'),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final width = constraints.maxWidth < 380
+                                  ? constraints.maxWidth
+                                  : 180.0;
+                              return Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  if (_canFilterAllSales)
+                                    SizedBox(
+                                      width: width,
+                                      child: DropdownButtonFormField<String?>(
+                                        initialValue: _sellerFilter,
+                                        isExpanded: true,
+                                        decoration: const InputDecoration(
+                                            labelText: 'المندوب'),
+                                        items: [
+                                          const DropdownMenuItem<String?>(
+                                            value: null,
+                                            child: Text('كل المندوبين'),
+                                          ),
+                                          ..._salespeople.map((seller) =>
+                                              DropdownMenuItem<String?>(
+                                                value: seller['user_id']
+                                                    .toString(),
+                                                child: Text(
+                                                  seller['full_name']
+                                                          ?.toString() ??
+                                                      '',
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              )),
+                                        ],
+                                        onChanged: (value) {
+                                          setState(() => _sellerFilter = value);
+                                          _load();
+                                        },
+                                      ),
+                                    ),
+                                  if (_canFilterAllSales &&
+                                      widget.customerId == null)
+                                    SizedBox(
+                                      width: width,
+                                      child: DropdownButtonFormField<String?>(
+                                        initialValue: _customerFilter,
+                                        isExpanded: true,
+                                        decoration: const InputDecoration(
+                                            labelText: 'الزبون'),
+                                        items: [
+                                          const DropdownMenuItem<String?>(
+                                            value: null,
+                                            child: Text('كل الزبائن'),
+                                          ),
+                                          ..._customers.map((customer) =>
+                                              DropdownMenuItem<String?>(
+                                                value: customer['customer_id']
+                                                    .toString(),
+                                                child: Text(
+                                                  customer['full_name']
+                                                          ?.toString() ??
+                                                      '',
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              )),
+                                        ],
+                                        onChanged: (value) {
+                                          setState(
+                                              () => _customerFilter = value);
+                                          _load();
+                                        },
+                                      ),
+                                    ),
+                                  SizedBox(
+                                    width: width,
+                                    child: DropdownButtonFormField<String>(
+                                      initialValue: _statusFilter,
+                                      isExpanded: true,
+                                      decoration: const InputDecoration(
+                                          labelText: 'حالة الفاتورة'),
+                                      items: const [
+                                        DropdownMenuItem(
+                                            value: 'all',
+                                            child: Text('كل الحالات')),
+                                        DropdownMenuItem(
+                                            value: 'posted',
+                                            child: Text('مرحلة')),
+                                        DropdownMenuItem(
+                                            value: 'voided',
+                                            child: Text('ملغاة')),
+                                      ],
+                                      onChanged: (value) {
+                                        setState(() =>
+                                            _statusFilter = value ?? 'all');
+                                        _load();
+                                      },
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: width,
+                                    child: DropdownButtonFormField<String>(
+                                      initialValue: _financialFilter,
+                                      isExpanded: true,
+                                      decoration: const InputDecoration(
+                                          labelText: 'حالة السداد'),
+                                      items: const [
+                                        DropdownMenuItem(
+                                            value: 'all',
+                                            child: Text('كل السداد')),
+                                        DropdownMenuItem(
+                                            value: 'unpaid',
+                                            child: Text('غير مدفوعة')),
+                                        DropdownMenuItem(
+                                            value: 'partial',
+                                            child: Text('جزئية')),
+                                        DropdownMenuItem(
+                                            value: 'paid',
+                                            child: Text('مسددة')),
+                                      ],
+                                      onChanged: (value) {
+                                        setState(() =>
+                                            _financialFilter = value ?? 'all');
+                                        _load();
+                                      },
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: width,
+                                    child: DropdownButtonFormField<String>(
+                                      initialValue: _paymentFilter,
+                                      isExpanded: true,
+                                      decoration: const InputDecoration(
+                                          labelText: 'طريقة القبض'),
+                                      items: const [
+                                        DropdownMenuItem(
+                                            value: 'all',
+                                            child: Text('كل الطرق')),
+                                        DropdownMenuItem(
+                                            value: 'cash_syp',
+                                            child: Text('نقدي سوري')),
+                                        DropdownMenuItem(
+                                            value: 'cash_usd',
+                                            child: Text('نقدي دولار')),
+                                        DropdownMenuItem(
+                                            value: 'sham_cash_syp',
+                                            child: Text('شام كاش سوري')),
+                                        DropdownMenuItem(
+                                            value: 'sham_cash_usd',
+                                            child: Text('شام كاش دولار')),
+                                      ],
+                                      onChanged: (value) {
+                                        setState(() =>
+                                            _paymentFilter = value ?? 'all');
+                                        _load();
+                                      },
+                                    ),
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: _selectDateRange,
+                                    icon: const Icon(Icons.date_range),
+                                    label: Text(_dateRange == null
+                                        ? 'الفترة'
+                                        : '${_dateRange!.start.toString().substring(0, 10)} – '
+                                            '${_dateRange!.end.toString().substring(0, 10)}'),
+                                  ),
+                                  if (_dateRange != null)
+                                    IconButton(
+                                      onPressed: () {
+                                        setState(() => _dateRange = null);
+                                        _load();
+                                      },
+                                      tooltip: 'مسح الفترة',
+                                      icon: const Icon(Icons.clear),
+                                    ),
+                                ],
+                              );
+                            },
                           ),
                         ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-            child: TextField(
-              controller: _search,
-              onSubmitted: (_) => _load(),
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: 'بحث برقم الفاتورة أو المشتري أو طريقة القبض',
-                suffixIcon: IconButton(
-                  onPressed: _load,
-                  icon: const Icon(Icons.search),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: TextField(
+                controller: _search,
+                onSubmitted: (_) => _load(),
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: 'بحث برقم الفاتورة أو المشتري أو طريقة القبض',
+                  suffixIcon: IconButton(
+                    onPressed: _load,
+                    icon: const Icon(Icons.search),
+                  ),
+                  border: const OutlineInputBorder(),
                 ),
-                border: const OutlineInputBorder(),
               ),
             ),
           ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('تعذر تحميل الفواتير: $_error'),
-                            OutlinedButton(
-                              onPressed: _load,
-                              child: const Text('إعادة المحاولة'),
-                            ),
-                          ],
+          if (_loading)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_error != null)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('تعذر تحميل الفواتير: $_error'),
+                    OutlinedButton(
+                      onPressed: _load,
+                      child: const Text('إعادة المحاولة'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (_invoices.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Text(_offline
+                    ? 'لا توجد فواتير محفوظة تطابق المرشحات؛ قد توجد فواتير أخرى على الخادم.'
+                    : 'لا توجد فواتير بعد'),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.only(bottom: 88),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final invoice = _invoices[index];
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          child: Icon(Icons.receipt_long),
                         ),
-                      )
-                    : _invoices.isEmpty
-                        ? Center(
-                            child: Text(_offline
-                                ? 'لا توجد فواتير محفوظة تطابق المرشحات؛ قد توجد فواتير أخرى على الخادم.'
-                                : 'لا توجد فواتير بعد'))
-                        : ListView.builder(
-                            padding: const EdgeInsets.only(bottom: 88),
-                            itemCount: _invoices.length,
-                            itemBuilder: (context, index) {
-                              final invoice = _invoices[index];
-                              return Card(
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 4,
-                                ),
-                                child: ListTile(
-                                  leading: const CircleAvatar(
-                                    child: Icon(Icons.receipt_long),
-                                  ),
-                                  title: Text(
-                                    '${invoice['invoice_number'] ?? invoice['invoice_id']} · '
-                                    '${formatMoneyShort(invoice['net_total'], currency: invoice['currency']?.toString() ?? 'USD')}',
-                                  ),
-                                  subtitle: Text(
-                                    '${invoice['customer_name'] ?? invoice['buyer_name'] ?? 'زبائن محل'} · '
-                                    '${invoice['creator_name'] ?? invoice['seller_name'] ?? ''} · '
-                                    '${invoice['invoice_date'] ?? ''} · '
-                                    '${_financialStatusName(invoice['financial_status']?.toString())} · '
-                                    'مدفوع ${formatMoneyShort(invoice['total_paid_usd'] ?? invoice['net_received'] ?? 0, currency: 'USD')} · '
-                                    'متبقٍ ${formatMoneyShort(invoice['balance_due_usd'] ?? 0, currency: 'USD')}',
-                                  ),
-                                  trailing: const Icon(Icons.chevron_left),
-                                  onTap: () => _showDetails(invoice),
-                                ),
-                              );
-                            },
-                          ),
-          ),
+                        title: Text(
+                          '${invoice['invoice_number'] ?? invoice['invoice_id']} · '
+                          '${formatMoneyShort(invoice['net_total'], currency: invoice['currency']?.toString() ?? 'USD')}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${invoice['customer_name'] ?? invoice['buyer_name'] ?? 'زبائن محل'} · '
+                          '${invoice['creator_name'] ?? invoice['seller_name'] ?? ''} · '
+                          '${invoice['invoice_date'] ?? ''} · '
+                          '${_financialStatusName(invoice['financial_status']?.toString())} · '
+                          'مدفوع ${formatMoneyShort(invoice['total_paid_usd'] ?? invoice['net_received'] ?? 0, currency: 'USD')} · '
+                          'متبقٍ ${formatMoneyShort(invoice['balance_due_usd'] ?? 0, currency: 'USD')}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        minVerticalPadding: 4,
+                        contentPadding: const EdgeInsetsDirectional.only(
+                          start: 10,
+                          end: 8,
+                          top: 2,
+                          bottom: 2,
+                        ),
+                        trailing: const Icon(Icons.chevron_left),
+                        onTap: () => _showDetails(invoice),
+                      ),
+                    );
+                  },
+                  childCount: _invoices.length,
+                ),
+              ),
+            ),
         ],
       ),
     );

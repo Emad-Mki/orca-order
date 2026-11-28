@@ -1162,8 +1162,10 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
                     enabled: !_isSubmissionLocked,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    decoration:
-                        const InputDecoration(labelText: 'الحسم الثابت USD'),
+                    decoration: const InputDecoration(
+                      labelText: 'الحسم الثابت (USD)',
+                      isDense: true,
+                    ),
                     onChanged: (_) => setState(() {}),
                   ),
                   SwitchListTile(
@@ -1196,36 +1198,29 @@ class _SalesInvoiceScreenState extends State<SalesInvoiceScreen> {
                           ? null
                           : (value) => setState(() => _confirmCredit = value),
                     ),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                              'إجمالي المواد: ${formatMoneyShort(_subtotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          Text(
-                              'الحسم: ${formatMoneyShort(_discountValue, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          Text(
-                              'صافي الفاتورة: ${formatMoneyShort(_netTotal, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          Text(
-                              'المستلم مكافئًا: ${formatMoneyShort(_receivedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          Text(
-                              'المعاد مكافئًا: ${formatMoneyShort(_refundedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          Text(
-                              'صافي المسدد: ${formatMoneyShort(previewPaid, currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          Text(
-                              'المتبقي: ${formatMoneyShort(max(0, _netTotal - previewPaid), currency: 'USD', decimalPlaces: _decimals('USD'))}'),
-                          const SizedBox(height: 4),
-                          Text(
-                            'حالة السداد: $paymentStatus',
-                            style: TextStyle(
-                                color: statusColor,
-                                fontWeight: FontWeight.bold),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 4,
+                      children: [
+                        Text(
+                          'مستلم ${formatMoneyShort(_receivedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}',
+                        ),
+                        Text(
+                          'معاد ${formatMoneyShort(_refundedUsd, currency: 'USD', decimalPlaces: _decimals('USD'))}',
+                        ),
+                        Text(
+                          'صافي المسدد ${formatMoneyShort(previewPaid, currency: 'USD', decimalPlaces: _decimals('USD'))}',
+                        ),
+                        Text(
+                          'حالة السداد: $paymentStatus',
+                          style: TextStyle(
+                            color: statusColor,
+                            fontWeight: FontWeight.bold,
                           ),
-                          const Text('حالة تنفيذ الطلب مستقلة عن حالة السداد.'),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                   if (_error != null)

@@ -51,6 +51,20 @@ class _ProductsScreenState extends State<ProductsScreen>
   );
   bool _entranceScheduled = false;
 
+  bool get _canViewWholesalePrices {
+    final session = widget.session ?? const <String, dynamic>{};
+    final role = PermissionHelper.fromString(
+      session['role']?.toString() ?? '',
+    );
+    final permission = session['can_view_wholesale_price'];
+    return role == AppRole.admin ||
+        role == AppRole.accountant ||
+        permission == true ||
+        permission == 1 ||
+        permission == '1' ||
+        permission == 'true';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -799,6 +813,7 @@ class _ProductsScreenState extends State<ProductsScreen>
                   (open) => ProductCardWidget(
                     product: product,
                     canViewPrice: canViewPrices,
+                    canViewWholesale: _canViewWholesalePrices,
                     onTap: open,
                   ),
                 ),
@@ -832,7 +847,13 @@ class _ProductsScreenState extends State<ProductsScreen>
           child: _productTransition(
             product,
             (open) =>
-                _buildListTile(product, canViewPrices, canViewStock, open),
+                _buildListTile(
+                  product,
+                  canViewPrices,
+                  canViewStock,
+                  open,
+                  canViewWholesale: _canViewWholesalePrices,
+                ),
           ),
         );
       },
@@ -876,6 +897,7 @@ class _ProductsScreenState extends State<ProductsScreen>
     bool canViewPrices,
     bool canViewStock,
     VoidCallback onTap,
+    {required bool canViewWholesale}
   ) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -950,19 +972,30 @@ class _ProductsScreenState extends State<ProductsScreen>
                         if (canViewPrices)
                           Text(
                             product.priceConfigured
-                                ? formatMoneyShort(
+                                ? 'السعر: ${formatMoneyShort(
                                     product.offerPrice != null &&
                                             product.offerPrice! > 0
                                         ? product.offerPrice!
                                         : product.price,
                                     currency: product.currency,
-                                  )
+                                  )}'
                                 : 'السعر غير مضبوط',
                             style: theme.textTheme.labelLarge?.copyWith(
                               color: product.priceConfigured
                                   ? colors.primary
                                   : colors.error,
                               fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        if (canViewWholesale &&
+                            product.wholesalePrice != null)
+                          Text(
+                            'الجملة: ${formatMoneyShort(product.wholesalePrice!, currency: product.currency)}',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: theme.brightness == Brightness.dark
+                                  ? Colors.green.shade300
+                                  : Colors.green.shade800,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                       ],

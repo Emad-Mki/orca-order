@@ -38,6 +38,13 @@ class PricingItem {
   List<String> availableUnits;
   Map<String, double> unitFactors;
   double basePriceSnapshot;
+  final double? customerSuggestedPrice;
+  final double? customerSuggestedFactor;
+  final double? wholesaleBasePrice;
+  final double? quantityBasePrice;
+  final double? quantityThreshold;
+  final String? quantityUnit;
+  final String currency;
 
   late TextEditingController quantityController;
   late TextEditingController priceController;
@@ -59,6 +66,13 @@ class PricingItem {
     this.availableUnits = const [],
     this.unitFactors = const {},
     this.basePriceSnapshot = 0.0,
+    this.customerSuggestedPrice,
+    this.customerSuggestedFactor,
+    this.wholesaleBasePrice,
+    this.quantityBasePrice,
+    this.quantityThreshold,
+    this.quantityUnit,
+    this.currency = 'USD',
   }) {
     quantityController = TextEditingController(text: _formatNum(quantity));
     priceController = TextEditingController(
@@ -156,8 +170,65 @@ class PricingItem {
       availableUnits: units,
       unitFactors: factors,
       basePriceSnapshot: bPrice,
+      customerSuggestedPrice: item.suggestedPrice,
+      customerSuggestedFactor: item.suggestedPriceFactor,
+      wholesaleBasePrice: product?.wholesalePrice ??
+          (item.wholesalePrice == null
+              ? null
+              : item.wholesalePrice! /
+                  (item.unitFactor ?? factors[item.unit] ?? 1)),
+      quantityBasePrice: product?.quantityPrice ??
+          (item.quantityPrice == null
+              ? null
+              : item.quantityPrice! /
+                  (item.unitFactor ?? factors[item.unit] ?? 1)),
+      quantityThreshold: product?.quantityThreshold ?? item.quantityThreshold,
+      quantityUnit: product?.quantityUnit ?? item.quantityUnit,
+      currency: item.currency,
     );
   }
+
+  double? _priceForFactor(double? basePrice, String selectedUnit) {
+    final factor = unitFactors[selectedUnit];
+    if (basePrice == null || factor == null || factor <= 0) return null;
+    return Product.roundProductPrice(basePrice * factor);
+  }
+
+  double? get customerSuggestedPriceForUnit {
+    final factor = unitFactors[unit];
+    final savedFactor = customerSuggestedFactor;
+    if (customerSuggestedPrice == null ||
+        factor == null ||
+        savedFactor == null ||
+        savedFactor <= 0) {
+      return null;
+    }
+    return Product.roundProductPrice(
+      customerSuggestedPrice! / savedFactor * factor,
+    );
+  }
+
+  double? get wholesalePriceForUnit =>
+      _priceForFactor(wholesaleBasePrice, unit);
+
+  double? get quantityPriceForUnit => _priceForFactor(quantityBasePrice, unit);
+
+  bool get qualifiesForQuantityPrice {
+    final threshold = quantityThreshold;
+    final thresholdFactor = unitFactors[quantityUnit ?? availableUnits.first];
+    final selectedFactor = unitFactors[unit];
+    if (threshold == null ||
+        threshold <= 0 ||
+        thresholdFactor == null ||
+        thresholdFactor <= 0 ||
+        selectedFactor == null ||
+        selectedFactor <= 0) {
+      return false;
+    }
+    return quantity * selectedFactor >= threshold * thresholdFactor;
+  }
+
+  String get selectedUnitLabel => unit;
 
   Map<String, dynamic> toJson() {
     return {
@@ -213,6 +284,13 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                   'available_units': item.availableUnits,
                   'unit_factors': item.unitFactors,
                   'base_price_snapshot': item.basePriceSnapshot,
+                  'customer_suggested_price': item.customerSuggestedPrice,
+                  'customer_suggested_factor': item.customerSuggestedFactor,
+                  'wholesale_base_price': item.wholesaleBasePrice,
+                  'quantity_base_price': item.quantityBasePrice,
+                  'quantity_threshold': item.quantityThreshold,
+                  'quantity_unit': item.quantityUnit,
+                  'currency': item.currency,
                   'quantity_input': item.quantityController.text,
                   'price_input': item.priceController.text,
                 })
@@ -297,7 +375,9 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
     _discountController.addListener(_scheduleLocalDraftSave);
     _discountReasonController.addListener(_scheduleLocalDraftSave);
     _accountingInvoiceController.addListener(_scheduleLocalDraftSave);
-    _loadData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadData();
+    });
   }
 
   Future<void> _loadData() async {
@@ -409,6 +489,8 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
         final priceText = item['price_input']?.toString() ?? '';
         final quantity = double.tryParse(quantityText);
         final price = priceText.isEmpty ? null : double.tryParse(priceText);
+        double? optionalNumber(dynamic value) =>
+            value == null ? null : number(value);
         if (quantity == null || (priceText.isNotEmpty && price == null)) {
           throw const FormatException(
               'تعذر استعادة كمية أو سعر من مسودة التسعير');
@@ -437,6 +519,15 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
           availableUnits: availableUnits.isEmpty ? [unit] : availableUnits,
           unitFactors: unitFactors.isEmpty ? {unit: 1} : unitFactors,
           basePriceSnapshot: number(item['base_price_snapshot']),
+          customerSuggestedPrice:
+              optionalNumber(item['customer_suggested_price']),
+          customerSuggestedFactor:
+              optionalNumber(item['customer_suggested_factor']),
+          wholesaleBasePrice: optionalNumber(item['wholesale_base_price']),
+          quantityBasePrice: optionalNumber(item['quantity_base_price']),
+          quantityThreshold: optionalNumber(item['quantity_threshold']),
+          quantityUnit: item['quantity_unit']?.toString(),
+          currency: item['currency']?.toString() ?? widget.order.currency,
         ));
       }
       for (final item in _pricingItems) {
@@ -541,6 +632,11 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                                     p.unit3!: p.factor3 ?? 1.0,
                                 },
                                 basePriceSnapshot: p.price,
+                                wholesaleBasePrice: p.wholesalePrice,
+                                quantityBasePrice: p.quantityPrice,
+                                quantityThreshold: p.quantityThreshold,
+                                quantityUnit: p.quantityUnit,
+                                currency: p.currency,
                                 isNewlyAdded: true,
                               );
                               if (_draftReady) {
@@ -772,7 +868,8 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
       item.unit = newUnit;
       // Suggest new price based on base price and new factor
       if (item.basePriceSnapshot > 0) {
-        item.unitPrice = item.basePriceSnapshot * newFactor;
+        item.unitPrice =
+            Product.roundProductPrice(item.basePriceSnapshot * newFactor);
         item.priceController.text = PricingItem._formatNum(item.unitPrice!);
       }
     });
@@ -814,18 +911,24 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                     children: [
                       _buildHeaderCard(),
                       Expanded(
-                        child: _pricingItems.isEmpty
-                            ? const Center(
-                                child: Text('لا توجد بنود في هذه الطلبية'))
-                            : ListView.builder(
-                                padding: const EdgeInsets.all(8),
-                                itemCount: _pricingItems.length,
-                                itemBuilder: (context, index) {
-                                  return _buildPricingItemCard(index);
-                                },
+                        child: ListView(
+                          padding: const EdgeInsets.all(8),
+                          children: [
+                            if (_pricingItems.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: Center(
+                                  child: Text('لا توجد بنود في هذه الطلبية'),
+                                ),
                               ),
+                            for (var index = 0;
+                                index < _pricingItems.length;
+                                index++)
+                              _buildPricingItemCard(index),
+                            _buildSummarySection(),
+                          ],
+                        ),
                       ),
-                      _buildSummarySection(),
                     ],
                   ),
         bottomNavigationBar: SafeArea(
@@ -877,24 +980,35 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
       margin: const EdgeInsets.all(8),
       color: colors.primaryContainer.withValues(alpha: 0.45),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              alignment: WrapAlignment.spaceBetween,
               children: [
-                Text('رقم الطلب: ${widget.order.orderNumber}',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                Text(widget.order.status,
-                    style: TextStyle(
-                        color: colors.primary, fontWeight: FontWeight.bold)),
+                Text(
+                  'رقم الطلب: ${widget.order.orderNumber}',
+                  softWrap: true,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  widget.order.status,
+                  softWrap: true,
+                  style: TextStyle(
+                      color: colors.primary, fontWeight: FontWeight.bold),
+                ),
               ],
             ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            const Divider(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              alignment: WrapAlignment.spaceBetween,
               children: [
-                Text('الزبون: ${widget.order.customerName}'),
+                Text('الزبون: ${widget.order.customerName}', softWrap: true),
                 Text(widget.order.createdAt.toString().split(' ')[0]),
               ],
             ),
@@ -932,12 +1046,15 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                       Icon(Icons.warning_amber_rounded,
                           size: 16, color: colors.error),
                       const SizedBox(width: 8),
-                      Text(
-                        'الكمية المطلوبة تتجاوز المخزون المتاح (${item.stockAvailable})',
-                        style: TextStyle(
-                            color: colors.onSurface,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold),
+                      Expanded(
+                        child: Text(
+                          'الكمية المطلوبة تتجاوز المخزون المتاح (${item.stockAvailable})',
+                          softWrap: true,
+                          style: TextStyle(
+                              color: colors.onSurface,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold),
+                        ),
                       ),
                     ],
                   ),
@@ -965,8 +1082,11 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                                 fontWeight: FontWeight.w600,
                                 fontSize: 13)),
                         const SizedBox(height: 4),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          runSpacing: 4,
                           children: [
                             if (item.availableUnits.length <= 1)
                               Text('الوحدة: ${item.unit}',
@@ -1029,8 +1149,11 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 4,
+                          runSpacing: 2,
                           children: [
                             Text('الكمية',
                                 style: TextStyle(
@@ -1115,8 +1238,11 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 4,
+                          runSpacing: 2,
                           children: [
                             Text('سعر الوحدة',
                                 style: TextStyle(
@@ -1168,14 +1294,66 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                             },
                           ),
                         ),
+                        if (item.customerSuggestedPriceForUnit != null ||
+                            item.wholesalePriceForUnit != null ||
+                            (item.qualifiesForQuantityPrice &&
+                                item.quantityPriceForUnit != null)) ...[
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 5,
+                            runSpacing: 4,
+                            children: [
+                              if (item.customerSuggestedPriceForUnit != null)
+                                _buildPriceSuggestion(
+                                  item,
+                                  'السعر السابق للزبون',
+                                  item.customerSuggestedPriceForUnit!,
+                                  Colors.orange,
+                                ),
+                              if (item.wholesalePriceForUnit != null)
+                                _buildPriceSuggestion(
+                                  item,
+                                  'سعر الجملة',
+                                  item.wholesalePriceForUnit!,
+                                  Colors.green,
+                                ),
+                              if (item.qualifiesForQuantityPrice &&
+                                  item.quantityPriceForUnit != null)
+                                _buildPriceSuggestion(
+                                  item,
+                                  'سعر الكمية',
+                                  item.quantityPriceForUnit!,
+                                  colors.tertiary,
+                                ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              if (item.available &&
+                  item.unitPrice != null &&
+                  item.wholesalePriceForUnit != null &&
+                  item.unitPrice! < item.wholesalePriceForUnit!)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'تنبيه: السعر المحدد أقل من سعر الجملة',
+                    style: TextStyle(
+                      color: colors.tertiary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
                 children: [
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1194,7 +1372,8 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
                                 fontWeight: FontWeight.bold)),
                     ],
                   ),
-                  Row(
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       if (!item.available)
                         Text('غير متوفر',
@@ -1234,6 +1413,42 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
     );
   }
 
+  Widget _buildPriceSuggestion(
+    PricingItem item,
+    String label,
+    double price,
+    Color color,
+  ) {
+    final theme = Theme.of(context);
+    final foreground = theme.brightness == Brightness.dark
+        ? Color.lerp(color, Colors.white, 0.3)!
+        : Color.lerp(color, Colors.black, 0.15)!;
+    return ActionChip(
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      side: BorderSide(color: foreground.withValues(alpha: 0.45)),
+      backgroundColor: foreground.withValues(alpha: 0.1),
+      label: Text(
+        '$label: ${_formatPriceSuggestion(price)} ${item.currency} / ${item.selectedUnitLabel}',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: foreground,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      onPressed: () {
+        setState(() {
+          item.unitPrice = price;
+          item.priceController.text = PricingItem._formatNum(price);
+        });
+      },
+    );
+  }
+
+  String _formatPriceSuggestion(double price) => price == price.roundToDouble()
+      ? price.toInt().toString()
+      : price.toStringAsFixed(2);
+
   Widget _buildStockBadge(PricingItem item) {
     final bool isLowStock = item.stockAvailable <= 0;
     final bool isOverStock = item.quantity > item.stockAvailable;
@@ -1264,12 +1479,16 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
             color: statusColor,
           ),
           const SizedBox(width: 4),
-          Text(
-            'المخزون: ${item.stockAvailable}',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: colors.onSurface,
+          Flexible(
+            child: Text(
+              'المخزون: ${item.stockAvailable}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: colors.onSurface,
+              ),
             ),
           ),
         ],
@@ -1281,7 +1500,6 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
     final double previousBalance = widget.order.previousBalance ?? 0.0;
     final discountCalculation = _discountCalculation;
     final netTotal = discountCalculation?.netTotal ?? _subtotal;
-    final double totalWithBalance = previousBalance + netTotal;
     final currentOrder =
         Provider.of<OrderDetailProvider>(context, listen: false).currentOrder;
     final oldDiscountType = currentOrder?.discountType ??
@@ -1296,120 +1514,138 @@ class _OrderPricingScreenState extends State<OrderPricingScreen> {
             oldDiscountInput != discountCalculation.input);
     final colors = Theme.of(context).colorScheme;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(top: BorderSide(color: colors.outline)),
-        boxShadow: [
-          BoxShadow(
-            color: colors.shadow.withValues(alpha: 0.08),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          _buildSummaryRow('إجمالي البنود:', _subtotal,
-              isBold: true, currency: widget.order.currency),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _discountController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: 'حسم إجمالي الفاتورة',
-              hintText: '10% أو 25.50',
-              helperText:
-                  'النسبة من إجمالي البنود قبل الحسم، والمبلغ بعملة ${widget.order.currency}. تدخل أسعار العروض وخصومات البنود ضمن الإجمالي؛ والحسم العام يطبق يدوياً بعد ذلك.',
-              errorText: discountCalculation == null &&
-                      _discountController.text.isNotEmpty
-                  ? 'أدخل مبلغاً أو نسبة صحيحة غير سالبة، ولا تتجاوز قيمة الحسم الإجمالي'
-                  : null,
-              border: const OutlineInputBorder(),
-              isDense: true,
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 12,
+              runSpacing: 4,
+              children: [
+                _buildCompactSummaryCell(
+                    'الإجمالي', _subtotal, widget.order.currency),
+                _buildCompactSummaryCell(
+                  'الحسم',
+                  discountCalculation?.amount ?? 0,
+                  widget.order.currency,
+                  color: discountCalculation?.amount == 0 ? null : colors.error,
+                ),
+                _buildCompactSummaryCell(
+                  'الصافي',
+                  netTotal,
+                  widget.order.currency,
+                  color: colors.primary,
+                ),
+                if (previousBalance != 0)
+                  _buildCompactSummaryCell(
+                    'مع الرصيد السابق',
+                    previousBalance + netTotal,
+                    widget.order.currency,
+                    color: colors.primary,
+                  ),
+              ],
             ),
-            onChanged: (_) => setState(() {}),
-          ),
-          if (discountCalculation != null && discountCalculation.amount > 0)
-            _buildSummaryRow('الحسم:', -discountCalculation.amount,
-                color: colors.error, currency: widget.order.currency),
-          _buildSummaryRow('صافي الفاتورة:', netTotal,
-              isBold: true,
-              color: colors.primary,
-              currency: widget.order.currency),
-          if (discountChangedForPreview)
+            const SizedBox(height: 4),
             TextField(
-              controller: _discountReasonController,
-              decoration: const InputDecoration(
-                labelText: 'سبب الحسم أو تعديله',
-                border: OutlineInputBorder(),
+              controller: _discountController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: 'الحسم',
+                hintText: '10% أو 25.50',
+                helperText:
+                    'النسبة من إجمالي البنود؛ والمبلغ بعملة ${widget.order.currency}. أسعار العروض داخلة في الإجمالي.',
+                helperMaxLines: 2,
+                errorText: discountCalculation == null &&
+                        _discountController.text.isNotEmpty
+                    ? 'أدخل مبلغاً أو نسبة صحيحة غير سالبة ولا تتجاوز الإجمالي'
+                    : null,
+                border: const OutlineInputBorder(),
                 isDense: true,
               ),
-              maxLength: 200,
+              onChanged: (_) => setState(() {}),
             ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _accountingInvoiceController,
-            maxLength: 64,
-            decoration: const InputDecoration(
-              labelText: 'رقم الفاتورة الأصلي في البرنامج المحاسبي (اختياري)',
-              border: OutlineInputBorder(),
-              isDense: true,
+            if (discountChangedForPreview)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: TextField(
+                  controller: _discountReasonController,
+                  decoration: const InputDecoration(
+                    labelText: 'سبب الحسم أو تعديله',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    counterText: '',
+                  ),
+                  maxLength: 200,
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: TextField(
+                controller: _accountingInvoiceController,
+                maxLength: 64,
+                decoration: const InputDecoration(
+                  labelText: 'رقم الفاتورة الأصلي (اختياري)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  counterText: '',
+                ),
+              ),
             ),
-          ),
-          if (previousBalance != 0)
-            _buildSummaryRow('الرصيد السابق:', previousBalance,
-                color: previousBalance > 0 ? colors.error : colors.primary,
-                currency: widget.order.currency),
-          const Divider(height: 16),
-          _buildSummaryRow('الإجمالي النهائي:', totalWithBalance,
-              isBold: true,
-              fontSize: 18,
-              color: colors.primary,
-              currency: widget.order.currency),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _noteController,
-            decoration: InputDecoration(
-              labelText: 'ملاحظات المحاسب العامة',
-              border: OutlineInputBorder(),
-              fillColor: colors.surfaceContainerHighest,
-              filled: true,
-              isDense: true,
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 6),
+              visualDensity: VisualDensity.compact,
+              title: const Text('ملاحظات المحاسب'),
+              subtitle: _noteController.text.trim().isEmpty
+                  ? null
+                  : Text(
+                      _noteController.text.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+              children: [
+                TextField(
+                  controller: _noteController,
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات المحاسب العامة',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  maxLines: 2,
+                ),
+              ],
             ),
-            maxLines: 2,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildSummaryRow(String label, double amount,
-      {bool isBold = false,
-      double fontSize = 14,
-      Color? color,
-      String currency = 'USD'}) {
+  Widget _buildCompactSummaryCell(
+    String label,
+    double amount,
+    String currency, {
+    Color? color,
+  }) {
     final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: TextStyle(
-                fontSize: fontSize,
-                fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-              )),
-          Text(formatMoneyShort(amount, currency: currency),
-              style: TextStyle(
-                fontSize: fontSize + 2,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelSmall),
+        Text(
+          formatMoneyShort(amount, currency: currency),
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: color ?? colors.onSurface,
                 fontWeight: FontWeight.bold,
-                color: color ??
-                    (isBold ? colors.onSurface : colors.onSurfaceVariant),
-              )),
-        ],
-      ),
+              ),
+        ),
+      ],
     );
   }
 }

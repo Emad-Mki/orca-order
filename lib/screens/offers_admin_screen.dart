@@ -251,16 +251,28 @@ class _OffersAdminScreenState extends State<OffersAdminScreen> {
                         final product =
                             matching.isEmpty ? null : matching.first;
                         return Card(
+                          margin: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 3),
                           child: ListTile(
                             leading: ProductImageWidget(
                                 imageUrl: product?.imageUrl,
-                                width: 52,
-                                height: 52),
-                            title: Text(offer['title']?.toString() ?? ''),
+                                width: 40,
+                                height: 40),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                            minVerticalPadding: 4,
+                            contentPadding: const EdgeInsetsDirectional.only(
+                                start: 8, end: 4),
+                            title: Text(
+                              offer['title']?.toString() ?? '',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             subtitle: Text(
                                 '${product?.name ?? offer['product_code'] ?? ''}\n'
-                                '${offer['offer_price'] ?? ''} ${offer['currency'] ?? ''} / ${offer['unit'] ?? ''} • ${_statusLabel(offer['status']?.toString() ?? '')}'),
-                            isThreeLine: true,
+                                '${offer['offer_price'] ?? ''} ${offer['currency'] ?? ''} / ${offer['unit'] ?? ''} · ${_statusLabel(offer['status']?.toString() ?? '')}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis),
                             onTap: () => _preview(context, offer, product),
                             trailing: PopupMenuButton<String>(
                               enabled: !_busy && !_loading,

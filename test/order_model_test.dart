@@ -35,6 +35,23 @@ void main() {
     expect(order.isRead, isFalse);
   });
 
+  test('accounting invoice numbers are preserved from text or numeric cells',
+      () {
+    final legacyOrder = Order.fromJson({'order_id': 'OLD-1'});
+    final textNumber = Order.fromJson({
+      'order_id': 'ORD-1',
+      'accounting_invoice_no': '  INV-0021  ',
+    });
+    final numericNumber = Order.fromJson({
+      'order_id': 'ORD-2',
+      'accounting_invoice_no': 12345.0,
+    });
+
+    expect(legacyOrder.accountingInvoiceNo, isNull);
+    expect(textNumber.accountingInvoiceNo, '  INV-0021  ');
+    expect(numericNumber.accountingInvoiceNo, '12345');
+  });
+
   test('malformed order item structures are reported, not dropped', () {
     expect(
       () => Order.fromJson({

@@ -129,7 +129,8 @@ class Order {
       currency: textValue(json['currency'], fallback: 'USD'),
       note: _nullableText(json['note']),
       accountantNotes: _nullableText(json['accountant_notes']),
-      accountingInvoiceNo: _nullableText(json['accounting_invoice_no']),
+      accountingInvoiceNo: _nullableInvoiceNumber(
+          json['accounting_invoice_no'] ?? json['accountingInvoiceNo']),
       accountingInvoiceNoUpdatedBy:
           _nullableText(json['accounting_invoice_no_updated_by']),
       accountingInvoiceNoUpdatedAt:
@@ -232,6 +233,14 @@ class Order {
 
   static String? _nullableText(dynamic value) =>
       value is String && value.isNotEmpty ? value : null;
+
+  static String? _nullableInvoiceNumber(dynamic value) {
+    if (value is String) return value.isEmpty ? null : value;
+    if (value is num && value.isFinite) {
+      return value % 1 == 0 ? value.toInt().toString() : value.toString();
+    }
+    return null;
+  }
 
   Map<String, dynamic> toJson() => {
         'order_id': orderId,

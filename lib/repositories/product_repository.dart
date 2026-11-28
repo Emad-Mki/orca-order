@@ -12,13 +12,23 @@ class ProductRepository {
 
   ProductRepository(AppDatabase db) : _localRepo = LocalRepository(db);
 
+  bool get _requiresFreshPrices {
+    final user = _apiService.currentUser ?? const <String, dynamic>{};
+    final role = user['role']?.toString().trim().toLowerCase();
+    final permission = user['can_view_wholesale_price'] == true ||
+        user['can_view_wholesale_price'] == 1 ||
+        user['can_view_wholesale_price'] == '1' ||
+        user['can_view_wholesale_price'] == 'true';
+    return role == 'admin' || role == 'accountant' || permission;
+  }
+
   /// جلب قائمة المنتجات
   Future<List<Product>> getProducts({bool forceRefresh = false}) async {
     final requestToken = _apiService.token;
     try {
-      if (!forceRefresh) {
+      if (!forceRefresh && !_requiresFreshPrices) {
         final localData = await _localRepo.getProducts();
-        if (localData.isNotEmpty) return localData;
+        if (localData.isNotEmpty) return _visibleProducts(localData);
       }
 
       final response =
@@ -38,15 +48,26 @@ class ProductRepository {
       await _localRepo.saveProducts(products);
       await _localRepo.updateLastSync('products');
 
-      return products;
+      return _visibleProducts(products);
     } catch (e) {
       print('Error fetching products: $e');
       if (_apiService.token != requestToken) rethrow;
       if (forceRefresh) rethrow;
       final cachedProducts = await _localRepo.getProducts();
-      if (cachedProducts.isNotEmpty) return cachedProducts;
+      if (cachedProducts.isNotEmpty) {
+        return _requiresFreshPrices
+            ? cachedProducts
+                .map((product) => product.withoutRestrictedPricing())
+                .toList()
+            : _visibleProducts(cachedProducts);
+      }
       rethrow;
     }
+  }
+
+  List<Product> _visibleProducts(List<Product> products) {
+    if (_requiresFreshPrices) return products;
+    return products.map((product) => product.withoutRestrictedPricing()).toList();
   }
 
   /// البحث عن منتج

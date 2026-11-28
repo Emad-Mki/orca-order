@@ -9,6 +9,7 @@ class ProductCardWidget extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final bool canViewPrice;
+  final bool canViewWholesale;
 
   const ProductCardWidget({
     super.key,
@@ -16,6 +17,7 @@ class ProductCardWidget extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.canViewPrice = true,
+    this.canViewWholesale = false,
   });
 
   @override
@@ -51,7 +53,7 @@ class ProductCardWidget extends StatelessWidget {
                   color: colorScheme.surfaceContainerHighest
                       .withValues(alpha: 0.35),
                   child: AspectRatio(
-                    aspectRatio: 1.12,
+                    aspectRatio: 1.3,
                     child: ProductImageWidget(
                       imageUrl: product.imageUrl,
                       fit: BoxFit.contain,
@@ -76,7 +78,7 @@ class ProductCardWidget extends StatelessWidget {
             // معلومات المنتج
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.all(10.0),
+                padding: const EdgeInsets.all(8.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -95,7 +97,7 @@ class ProductCardWidget extends StatelessWidget {
                             height: 1.2,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Text(
                           product.code.trim().isEmpty
                               ? '—'
@@ -108,24 +110,42 @@ class ProductCardWidget extends StatelessWidget {
                       ],
                     ),
                     if (canViewPrice)
-                      Text(
-                        product.priceConfigured
-                            ? formatMoneyShort(
-                                product.offerPrice != null &&
-                                        product.offerPrice! > 0
-                                    ? product.offerPrice!
-                                    : product.price,
-                                currency: product.currency,
-                              )
-                            : 'السعر غير مضبوط',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          color: product.priceConfigured
-                              ? colorScheme.primary
-                              : colorScheme.error,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            product.priceConfigured
+                                ? 'السعر: ${formatMoneyShort(
+                                    product.offerPrice != null &&
+                                            product.offerPrice! > 0
+                                        ? product.offerPrice!
+                                        : product.price,
+                                    currency: product.currency,
+                                  )}'
+                                : 'السعر غير مضبوط',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: product.priceConfigured
+                                  ? colorScheme.primary
+                                  : colorScheme.error,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          if (canViewWholesale &&
+                              product.wholesalePrice != null)
+                            Text(
+                              'الجملة: ${formatMoneyShort(product.wholesalePrice!, currency: product.currency)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.brightness == Brightness.dark
+                                    ? Colors.green.shade300
+                                    : Colors.green.shade800,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                        ],
                       ),
                   ],
                 ),

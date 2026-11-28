@@ -231,9 +231,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SettingDefinitions.syncFileId.key: _csvIdCtrl.text.trim(),
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(response['message'] ?? 'تمت المزامنة')),
-        );
+        final details = response['details'];
+        final errors = details is Map && details['errors'] is List
+            ? details['errors'] as List
+            : const <dynamic>[];
+        final warnings = details is Map && details['warnings'] is List
+            ? details['warnings'] as List
+            : const <dynamic>[];
+        if (errors.isNotEmpty || warnings.isNotEmpty) {
+          String formatEntry(dynamic entry) {
+            if (entry is! Map) return entry.toString();
+            final row = entry['row'];
+            final code = entry['code'];
+            final message = entry['message'] ?? entry.toString();
+            return [
+              if (row != null) 'السطر $row',
+              if (code != null && code.toString().isNotEmpty)
+                'المنتج $code',
+              message.toString(),
+            ].join(' — ');
+          }
+
+          final reportLines = <String>[
+            if (response['message'] != null)
+              response['message'].toString(),
+            if (errors.isNotEmpty) 'الأخطاء:',
+            ...errors.map(formatEntry),
+            if (warnings.isNotEmpty) 'التنبيهات:',
+            ...warnings.map(formatEntry),
+          ];
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: Text(errors.isEmpty
+                  ? 'تقرير المزامنة'
+                  : 'تقرير أخطاء الاستيراد'),
+              content: SizedBox(
+                width: 440,
+                height: 320,
+                child: SingleChildScrollView(
+                  child: Text(reportLines.join('\n')),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('إغلاق'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(response['message'] ?? 'تمت المزامنة')),
+          );
+        }
       }
     } catch (error) {
       if (mounted) {

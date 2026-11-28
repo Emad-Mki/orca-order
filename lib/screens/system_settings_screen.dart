@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'sales_settings_screen.dart';
 import 'settings_screen.dart';
+import 'contact_settings_screen.dart';
+import '../utils/permissions.dart';
 
 /// Entry point for settings that already have a real implementation.
 class SystemSettingsScreen extends StatelessWidget {
@@ -16,6 +18,24 @@ class SystemSettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (PermissionHelper.fromString(session['role']?.toString() ?? '') ==
+              AppRole.admin)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.contact_phone_outlined),
+                title: const Text('التواصل ومحتوى التطبيق'),
+                subtitle: const Text(
+                  'قنوات التواصل وساعات الدعم والشروط والخصوصية والأسئلة الشائعة',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ContactSettingsScreen(session: session),
+                  ),
+                ),
+              ),
+            ),
           Card(
             child: ListTile(
               leading: const Icon(Icons.currency_exchange),

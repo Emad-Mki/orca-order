@@ -248,13 +248,33 @@ class ProductApiService {
     required String code,
     required double price,
     String? currency,
+    double? wholesalePrice,
+    double? quantityPrice,
+    double? quantityThreshold,
+    String? quantityUnit,
+    bool clearWholesalePrice = false,
+    bool clearQuantityPricing = false,
   }) async {
-    return _apiService.post({
+    final response = await _apiService.post({
       'action': 'product_price_update',
       'code': code,
       'display_price': price,
       if (currency != null) 'currency': currency,
+      if (wholesalePrice != null) 'wholesale_price': wholesalePrice,
+      if (clearWholesalePrice) 'wholesale_price': '',
+      if (quantityPrice != null) 'quantity_price': quantityPrice,
+      if (quantityThreshold != null) 'quantity_threshold': quantityThreshold,
+      if (quantityUnit != null) 'quantity_unit': quantityUnit,
+      if (clearQuantityPricing) ...{
+        'quantity_price': '',
+        'quantity_threshold': '',
+        'quantity_unit': '',
+      },
     });
+    if (response['ok'] == true || response['success'] == true) {
+      clearCachedResponses();
+    }
+    return response;
   }
 }
 

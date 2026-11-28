@@ -85,6 +85,7 @@ void main() {
     expect(template, contains('.discount-value,.net-value{color:#f00000}'));
     expect(template, contains('{{#shipment_summary}}'));
     expect(template, contains('الشحن: {{shipment_summary}}'));
+    expect(template, contains('{{#accounting_invoice_no}}'));
     expect(template, isNot(contains('رصيد السابق:')));
     expect(template, isNot(contains('رصيد نهائي مع السابق:')));
     expect(template, isNot(contains('المدفوع:')));

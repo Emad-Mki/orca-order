@@ -314,8 +314,8 @@ class _OffersSectionState extends State<OffersSection>
           )
         else if (entries.isNotEmpty)
           SizedBox(
-            height: (390 * MediaQuery.textScalerOf(context).scale(1))
-                .clamp(390.0, 650.0),
+            height: (360 * MediaQuery.textScalerOf(context).scale(1))
+                .clamp(360.0, 600.0),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: entries.length,
@@ -379,7 +379,7 @@ class OfferCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SizedBox(
-              height: 144,
+              height: 112,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -388,7 +388,7 @@ class OfferCard extends StatelessWidget {
                     child: Center(
                       child: ProductImageWidget(
                         imageUrl: product.imageUrl,
-                        height: 124,
+                        height: 96,
                         width: double.infinity,
                       ),
                     ),
@@ -428,7 +428,7 @@ class OfferCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -440,7 +440,7 @@ class OfferCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                   ],
                   Text(
                     product.name,
@@ -448,10 +448,10 @@ class OfferCard extends StatelessWidget {
                         ?.copyWith(fontWeight: FontWeight.w700),
                     softWrap: true,
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
+                    spacing: 6,
+                    runSpacing: 4,
                     children: [
                       _InfoChip(
                         icon: Icons.qr_code_rounded,
@@ -480,13 +480,13 @@ class OfferCard extends StatelessWidget {
                     ],
                   ),
                   if (isBundle) ...[
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 6),
                     Text(
                       'محتويات العرض',
                       style: theme.textTheme.labelLarge
                           ?.copyWith(fontWeight: FontWeight.w700),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     for (final item in bundleItems.whereType<Map>())
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 2),
@@ -509,10 +509,10 @@ class OfferCard extends StatelessWidget {
                       ),
                   ],
                   if (note.isNotEmpty) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Text(note, softWrap: true),
                   ],
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
@@ -535,19 +535,17 @@ class OfferCard extends StatelessWidget {
                     ],
                   ),
                   Text(
-                    isBundle
-                        ? 'سعر المجموعة'
-                        : 'سعر العرض: $price $currency للوحدة',
+                    isBundle ? 'سعر المجموعة' : 'سعر الوحدة',
                     style: theme.textTheme.bodySmall
                         ?.copyWith(color: colors.onSurfaceVariant),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Text(
                     'ينتهي: ${end.year}-${end.month.toString().padLeft(2, '0')}-${end.day.toString().padLeft(2, '0')} ${end.hour.toString().padLeft(2, '0')}:${end.minute.toString().padLeft(2, '0')}',
                     style: theme.textTheme.bodySmall
                         ?.copyWith(color: colors.onSurfaceVariant),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
                   FilledButton.icon(
                     onPressed: onOpen,
                     icon: const Icon(Icons.shopping_cart_outlined),
@@ -580,7 +578,7 @@ class _OfferBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: background,
           borderRadius: BorderRadius.circular(30),
@@ -612,7 +610,7 @@ class _InfoChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: colors.secondaryContainer.withValues(alpha: .65),
         borderRadius: BorderRadius.circular(10),

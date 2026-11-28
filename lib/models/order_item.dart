@@ -28,6 +28,15 @@ class OrderItem {
   final String? imageName;
   final OrderOffer? offer;
   final double? expectedUnitPrice;
+  final double? suggestedPrice;
+  final double? suggestedPriceFactor;
+  final String? suggestedPriceCurrency;
+  final String? suggestedPriceUpdatedAt;
+  final String? suggestedPriceSource;
+  final double? wholesalePrice;
+  final double? quantityPrice;
+  final double? quantityThreshold;
+  final String? quantityUnit;
 
   // New fields for multi-unit and historical tracking
   final double?
@@ -71,6 +80,15 @@ class OrderItem {
     this.imageName,
     this.offer,
     this.expectedUnitPrice,
+    this.suggestedPrice,
+    this.suggestedPriceFactor,
+    this.suggestedPriceCurrency,
+    this.suggestedPriceUpdatedAt,
+    this.suggestedPriceSource,
+    this.wholesalePrice,
+    this.quantityPrice,
+    this.quantityThreshold,
+    this.quantityUnit,
     this.unitFactor,
     this.basePriceSnapshot,
     this.unit1,
@@ -167,6 +185,16 @@ class OrderItem {
                 })
               : null,
       expectedUnitPrice: parseNullableDouble(json['expected_unit_price']),
+      suggestedPrice: parseNullableDouble(json['suggested_price']),
+      suggestedPriceFactor: parseNullableDouble(json['suggested_price_factor']),
+      suggestedPriceCurrency: _nullableText(json['suggested_price_currency']),
+      suggestedPriceUpdatedAt:
+          _nullableText(json['suggested_price_updated_at']),
+      suggestedPriceSource: _nullableText(json['suggested_price_source']),
+      wholesalePrice: parseNullableDouble(json['wholesale_price']),
+      quantityPrice: parseNullableDouble(json['quantity_price']),
+      quantityThreshold: parseNullableDouble(json['quantity_threshold']),
+      quantityUnit: _nullableText(json['quantity_unit']),
       unitFactor: parseNullableDouble(json['unit_factor']),
       basePriceSnapshot: parseNullableDouble(json['base_price_snapshot']),
       unit1: _nullableText(json['unit_1']),
@@ -294,6 +322,15 @@ class OrderItem {
     String? imageName,
     OrderOffer? offer,
     double? expectedUnitPrice,
+    double? suggestedPrice,
+    double? suggestedPriceFactor,
+    String? suggestedPriceCurrency,
+    String? suggestedPriceUpdatedAt,
+    String? suggestedPriceSource,
+    double? wholesalePrice,
+    double? quantityPrice,
+    double? quantityThreshold,
+    String? quantityUnit,
     double? unitFactor,
     double? basePriceSnapshot,
     String? unit1,
@@ -334,6 +371,17 @@ class OrderItem {
       imageName: imageName ?? this.imageName,
       offer: offer ?? this.offer,
       expectedUnitPrice: expectedUnitPrice ?? this.expectedUnitPrice,
+      suggestedPrice: suggestedPrice ?? this.suggestedPrice,
+      suggestedPriceFactor: suggestedPriceFactor ?? this.suggestedPriceFactor,
+      suggestedPriceCurrency:
+          suggestedPriceCurrency ?? this.suggestedPriceCurrency,
+      suggestedPriceUpdatedAt:
+          suggestedPriceUpdatedAt ?? this.suggestedPriceUpdatedAt,
+      suggestedPriceSource: suggestedPriceSource ?? this.suggestedPriceSource,
+      wholesalePrice: wholesalePrice ?? this.wholesalePrice,
+      quantityPrice: quantityPrice ?? this.quantityPrice,
+      quantityThreshold: quantityThreshold ?? this.quantityThreshold,
+      quantityUnit: quantityUnit ?? this.quantityUnit,
       unitFactor: unitFactor ?? this.unitFactor,
       basePriceSnapshot: basePriceSnapshot ?? this.basePriceSnapshot,
       unit1: unit1 ?? this.unit1,
@@ -379,6 +427,19 @@ class OrderItem {
           'offer_snapshot': offer!.data,
         },
         if (expectedUnitPrice != null) 'expected_unit_price': expectedUnitPrice,
+        if (suggestedPrice != null) 'suggested_price': suggestedPrice,
+        if (suggestedPriceFactor != null)
+          'suggested_price_factor': suggestedPriceFactor,
+        if (suggestedPriceCurrency != null)
+          'suggested_price_currency': suggestedPriceCurrency,
+        if (suggestedPriceUpdatedAt != null)
+          'suggested_price_updated_at': suggestedPriceUpdatedAt,
+        if (suggestedPriceSource != null)
+          'suggested_price_source': suggestedPriceSource,
+        if (wholesalePrice != null) 'wholesale_price': wholesalePrice,
+        if (quantityPrice != null) 'quantity_price': quantityPrice,
+        if (quantityThreshold != null) 'quantity_threshold': quantityThreshold,
+        if (quantityUnit != null) 'quantity_unit': quantityUnit,
         'unit_factor': unitFactor,
         'base_price_snapshot': basePriceSnapshot,
         'unit_1': unit1,
